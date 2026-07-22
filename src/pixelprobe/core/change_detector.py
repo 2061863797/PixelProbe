@@ -92,11 +92,11 @@ def detect_changes(
               (("point", point), ("rect", rect), ("grid", grid)) if v is not None]
     if len(chosen) > 1:
         raise InvalidRangeError(
-            "--point / --rect / --grid 最多只能指定一个（都不给时默认整帧）"
+            "point / rect / grid 最多只能指定一个（都不给时默认整帧）"
         )
     mode: ChangeMode = chosen[0] if chosen else "full"  # type: ignore[assignment]
     if mode != "grid" and step is not None:
-        raise InvalidRangeError("--step 必须与 --grid 搭配使用")
+        raise InvalidRangeError("step 必须与 grid 搭配使用")
 
     with VideoReader() as reader:
         reader.open(Path(path))
@@ -172,7 +172,7 @@ def detect_changes(
             raise DecodeError("指定范围内没有解码出任何帧")
         if done < 2:
             raise InvalidRangeError(
-                "变化检测至少需要两帧，请扩大帧范围或减小 --sample-every"
+                "变化检测至少需要两帧，请扩大帧范围或减小 sample_every"
             )
         return ChangesResult(
             mode=mode,
@@ -193,6 +193,7 @@ class ChangeEvent:
     start_time: float
     end_time: float
     peak_frame: int
+    peak_time: float
     peak_score: float
     peak_normalized: float
     mean_normalized: float
@@ -205,6 +206,7 @@ class ChangeEvent:
             "start_time": self.start_time,
             "end_time": self.end_time,
             "peak_frame": self.peak_frame,
+            "peak_time": self.peak_time,
             "peak_score": self.peak_score,
             "peak_normalized": self.peak_normalized,
             "mean_normalized": self.mean_normalized,
@@ -220,9 +222,11 @@ def segment_events(
 ) -> tuple[list[ChangeEvent], float]:
     """把变化记录按阈值合并为事件区间，返回 (事件列表, 实际使用的阈值)。
 
-    阈值作用于 normalized_score；缺省自动取 mean + 3*std（数据平坦时
-    可能没有任何记录超阈，返回空列表）。相邻两条超阈记录在记录序列中的
-    下标间隔 <= min_gap 时并入同一事件；记录数少于 min_records 的事件被丢弃。
+    阈值作用于 normalized_score；缺省自动取"剔除最大记录后的 mean + 3*std"
+    （若用全部记录，n 个样本的最大 z 分数上界为 (n-1)/√n，记录数 <= 10 时
+    尖峰会抬高自身阈值导致永远检不出事件）。数据平坦时可能没有任何记录
+    超阈，返回空列表。相邻两条超阈记录在记录序列中的下标间隔 <= min_gap
+    时并入同一事件；记录数少于 min_records 的事件被丢弃。
     """
     if min_gap < 1:
         raise InvalidRangeError(f"min_gap {min_gap} 无效，必须 >= 1")
@@ -232,7 +236,12 @@ def segment_events(
         return [], threshold if threshold is not None else 0.0
     scores = np.array([r.normalized_score for r in records], dtype=np.float64)
     if threshold is None:
-        threshold = float(scores.mean() + 3.0 * scores.std())
+        if len(scores) >= 2:
+            rest = np.delete(scores, int(scores.argmax()))
+            threshold = float(rest.mean() + 3.0 * rest.std())
+        else:
+            # 单条记录无对比基准：阈值取其自身，不产生事件
+            threshold = float(scores[0])
     above = [i for i, s in enumerate(scores) if s > threshold]
 
     groups: list[list[int]] = []
@@ -256,6 +265,7 @@ def segment_events(
                 start_time=members[0].time_seconds,
                 end_time=members[-1].time_seconds,
                 peak_frame=peak.frame,
+                peak_time=peak.time_seconds,
                 peak_score=peak.score,
                 peak_normalized=peak.normalized_score,
                 mean_normalized=round(

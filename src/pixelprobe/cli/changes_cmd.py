@@ -41,7 +41,7 @@ def changes(
     top: int = typer.Option(10, "--top", help="返回变化最大的前 N 帧"),
     threshold: Optional[float] = typer.Option(
         None, "--threshold",
-        help="事件分段阈值（作用于归一化得分；缺省自动取 mean + 3*std）",
+        help="事件分段阈值（作用于归一化得分；缺省自动取剔除最大记录后的 mean + 3*std）",
     ),
     curve_image: Optional[Path] = typer.Option(
         None, "--curve-image", help="导出完整变化曲线 PNG（事件区间描色）"

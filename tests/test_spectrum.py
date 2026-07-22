@@ -67,6 +67,31 @@ def test_spatial_spectrum_detects_stripes(tmp_path: Path) -> None:
     assert abs(top["angle_deg"]) < 1e-6  # 水平频率向量 → 垂直条纹
 
 
+def test_spatial_spectrum_nyquist_stripes(tmp_path: Path) -> None:
+    """周期 2px 条纹（Nyquist 列 u=-w/2 自共轭）必须能检出且不重复。"""
+    width = height = 16
+    arr = np.zeros((height, width), dtype=np.uint8)
+    arr[:, ::2] = 255  # 交替列：周期 2px 竖条纹
+    image_path = tmp_path / "奈奎斯特条纹.png"
+    Image.fromarray(np.repeat(arr[:, :, None], 3, axis=2)).save(image_path)
+
+    result = spatial_spectrum(image_path)
+    assert result.peaks, "Nyquist 频率的条纹被共轭去重整体丢弃"
+    top = result.peaks[0]
+    assert top["period_px"] == pytest.approx(2.0, abs=0.1)
+    # 真实峰只有一个：不应出现浮点残渣凑数，也不应共轭重复
+    strong = [p for p in result.peaks
+              if p["magnitude"] > top["magnitude"] * 1e-6]
+    assert len(strong) == 1
+
+
+def test_temporal_spectrum_reports_nyquist(blink_video: Path) -> None:
+    result = temporal_spectrum(blink_video, source="luma", sample_every=2)
+    # 30fps、每隔 2 帧采样 → 有效 15fps，可检上限 7.5Hz
+    assert result.effective_fps == pytest.approx(15.0, abs=0.5)
+    assert result.nyquist_hz == pytest.approx(7.5, abs=0.25)
+
+
 def test_cli_spectrum_and_2d(blink_video: Path, tmp_path: Path) -> None:
     data = run_json(
         "spectrum", blink_video, "--rect", ",".join(map(str, BLINK_RECT)),

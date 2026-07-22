@@ -27,7 +27,11 @@ _AFFINE_GRID_STEP = 8
 
 @dataclass
 class FlowResult:
-    """光流结果。位移单位为像素；角度 0°=向右，y 向下为正方向。"""
+    """光流结果。位移单位为像素；角度 0°=向右，y 向下为正方向。
+
+    dominant_angle_deg 是运动区域（幅度 > mag_threshold）内的幅度加权
+    主方向；无运动区域或区域内向量相互抵消（如两块反向运动）时为 None。
+    """
 
     flow_image: np.ndarray
     magnitude_image: np.ndarray
@@ -186,20 +190,22 @@ def compute_flow(
     magnitude = np.hypot(fx, fy)
     mean_mag = float(magnitude.mean())
     max_mag = float(magnitude.max())
-    mean_fx, mean_fy = float(fx.mean()), float(fy.mean())
-    dominant = (
-        float(np.degrees(np.arctan2(mean_fy, mean_fx)))
-        if np.hypot(mean_fx, mean_fy) > 1e-6 else None
-    )
 
     mask = magnitude > mag_threshold
     bbox: tuple[int, int, int, int] | None = None
+    dominant: float | None = None
     if mask.any():
         ys, xs = np.nonzero(mask)
         bbox = (
             int(xs.min()), int(ys.min()),
             int(xs.max() - xs.min()) + 1, int(ys.max() - ys.min()) + 1,
         )
+        # 主方向 = 运动区域内的向量和方向（即幅度加权平均方向）。
+        # 平均向量模过小（反向运动对消、纯噪声）时不给出方向，避免误导
+        sum_fx = float(fx[mask].sum())
+        sum_fy = float(fy[mask].sum())
+        if np.hypot(sum_fx, sum_fy) / int(mask.sum()) > 0.05:
+            dominant = float(np.degrees(np.arctan2(sum_fy, sum_fx)))
 
     # HSV 方向着色：hue=方向，value=幅度
     hsv = np.zeros((*magnitude.shape, 3), dtype=np.uint8)

@@ -43,14 +43,14 @@ PixelProbe 是 AI 原生视觉理解的**精确数据辅助工具**，不是替�
 ## 判读速查
 
 - **temporal_reduce 图**：亮=统计值高。std 图暗区=时间上更静止；diff 图亮区=运动能量集中处。
-- **optical_flow 流场图**：hue=运动方向（0°=向右，y 向下为正），亮度=速度。幅度伪彩图亮=快。`global_motion` 的 dx/dy/rotation/scale 是镜头运动估计。
-- **temporal_spectrum**：主频为 None=序列平坦无周期；`vfr_warning=true` 时频率按实测平均帧间隔换算，仅供参考。`peak_ratio` 低说明周期性弱。
+- **optical_flow 流场图**：hue=运动方向（0°=向右，y 向下为正），亮度=速度。幅度伪彩图亮=快。`dominant_angle_deg` 是运动区域内幅度加权方向，为 null 表示无显著运动或方向相互抵消（如两块反向运动）。`global_motion` 的 dx/dy/rotation/scale 是镜头运动估计。
+- **temporal_spectrum**：主频为 None=序列平坦无周期；频率一律按实测平均帧间隔换算，`vfr_warning=true` 表示帧间隔波动大、均值不可靠仅供参考。`peak_ratio` 低说明周期性弱。
 - **X-T/Y-T 切片**：斜线=匀速运动，竖直条带=静止物，水平横条=全画面事件（闪光/切镜头）。
 - **detect_changes 事件**：`start_frame` 是变化前最后一帧；`peak_frame` 适合与 `previous_frame` 做 `compare_frames`。
 
 ## 实用参数经验
 
-- 长视频一律加 `sample_every` 降采样（`scan_media` 会自动，约 1800 帧封顶）。
+- 长视频一律加 `sample_every` 降采样（`scan_media` 会自动，约 1800 帧封顶）。**例外：用 `temporal_spectrum` 检测周期闪烁时慎用**——高于 `nyquist_hz`（有效采样率一半）的闪烁会混叠成假频率或完全漏采，优先 `sample_every=1` 并用帧范围缩小时间窗。
 - 所有坐标基于原始分辨率、原点左上、帧号从 0 起、范围闭区间、时间单位秒。
 - 返回图像可能被缩放（看 `display_scale`/`returned_width`），精确像素值永远用 `inspect_pixels`。
 - 只有用户明确要文件时才调用 `save_*` 工具。

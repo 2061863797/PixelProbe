@@ -30,7 +30,8 @@ def scan(
         help="每隔 N 帧采样一次（缺省自动：全片约 1800 帧封顶）",
     ),
     threshold: Optional[float] = typer.Option(
-        None, "--threshold", help="事件分段阈值（缺省自动 mean + 3*std）"
+        None, "--threshold",
+        help="事件分段阈值（缺省自动取剔除最大记录后的 mean + 3*std）",
     ),
     sheet_output: Optional[Path] = typer.Option(
         None, "--sheet-output", help="概览网格图 PNG 输出路径"

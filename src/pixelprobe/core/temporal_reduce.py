@@ -26,6 +26,8 @@ REDUCE_OPS: tuple[ReduceOp, ...] = ("mean", "median", "min", "max", "std", "diff
 
 # median 需要在内存中持有全部采样帧，缺省上限 1GB（含工作拷贝按 2 倍估算）
 DEFAULT_MAX_MEDIAN_BYTES = 1_073_741_824
+# smooth 邻域边长上限（过大只会把结构糊掉，且与 MCP/Web 层约束一致）
+MAX_SMOOTH = 64
 
 
 @dataclass
@@ -43,6 +45,9 @@ class TemporalReduceResult:
     stat_mean: list[float]
     stretch_low_value: float
     stretch_high_value: float
+    # 拉伸端点所在数值空间：raw=原始统计量；detrended_residual=去条纹
+    # 零中心残差（0=符合行列趋势）；smoothed=邻域平滑后；可用 + 组合
+    stretch_domain: str
     p_low: float
     p_high: float
     destripe: bool
@@ -115,6 +120,10 @@ def temporal_reduce(
             f"百分位范围无效：p_low={p_low}, p_high={p_high}"
             "（要求 0 <= p_low < p_high <= 100）"
         )
+    if not (0 <= smooth <= MAX_SMOOTH):
+        raise InvalidRangeError(
+            f"smooth {smooth} 无效，必须在 0～{MAX_SMOOTH} 内"
+        )
     if smooth < 0:
         raise InvalidRangeError(f"smooth {smooth} 无效，必须 >= 0")
 
@@ -131,7 +140,7 @@ def temporal_reduce(
         total = frame_range.count
         if op in ("std", "diff") and total < 2:
             raise InvalidRangeError(
-                f"op={op} 至少需要两帧，请扩大帧范围或减小 --sample-every"
+                f"op={op} 至少需要两帧，请扩大帧范围或减小 sample_every"
             )
 
         rw = rect[2] if rect is not None else width
@@ -212,7 +221,7 @@ def temporal_reduce(
         elif op == "diff":
             if acc_diff is None:
                 raise InvalidRangeError(
-                    "op=diff 至少需要两帧，请扩大帧范围或减小 --sample-every"
+                    "op=diff 至少需要两帧，请扩大帧范围或减小 sample_every"
                 )
             stat = acc_diff / (done - 1)
         else:
@@ -220,14 +229,22 @@ def temporal_reduce(
 
         display_stat = stat
         if destripe:
+            # 双向去趋势（零中心残差）：0=符合行列趋势，负=低于趋势（更静止），
+            # 正=高于趋势。补回全局均值以消除"均值被减两次"的系统性偏移。
             display_stat = (
                 display_stat
                 - display_stat.mean(axis=0, keepdims=True)
                 - display_stat.mean(axis=1, keepdims=True)
+                + display_stat.mean(axis=(0, 1), keepdims=True)
             )
         if smooth >= 2:
             display_stat = _box_mean(display_stat, smooth)
         image, lo, hi = _stretch(display_stat, p_low, p_high)
+        domain_parts = []
+        if destripe:
+            domain_parts.append("detrended_residual")
+        if smooth >= 2:
+            domain_parts.append("smoothed")
         return TemporalReduceResult(
             op=op,
             image=image,
@@ -236,6 +253,7 @@ def temporal_reduce(
             stat_mean=[round(float(v), 4) for v in stat.mean(axis=(0, 1))],
             stretch_low_value=round(lo, 4),
             stretch_high_value=round(hi, 4),
+            stretch_domain="+".join(domain_parts) if domain_parts else "raw",
             p_low=p_low,
             p_high=p_high,
             destripe=destripe,

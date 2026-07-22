@@ -133,7 +133,8 @@ def sample_frames(
                 t, arr = reader.get_frame_by_index(f)
                 frames.append(f)
                 times.append(t)
-                tiles.append(arr)
+                # 收集时即缩放：避免长视频/高分辨率下囤积全分辨率帧
+                tiles.append(fit_within(arr, tile_max_dim, tile_max_dim))
                 if progress is not None:
                     progress(i + 1, len(targets))
         else:
@@ -145,7 +146,7 @@ def sample_frames(
                 if idx in wanted:
                     frames.append(idx)
                     times.append(t)
-                    tiles.append(arr.copy())
+                    tiles.append(fit_within(arr, tile_max_dim, tile_max_dim))
                     done += 1
                     if progress is not None:
                         progress(done, len(targets))

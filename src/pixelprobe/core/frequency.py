@@ -33,7 +33,11 @@ _TOP_PEAKS = 5
 
 @dataclass
 class TemporalSpectrumResult:
-    """时间域频谱结果。频率单位 Hz（按真实 fps 与 sample_every 换算）。"""
+    """时间域频谱结果。频率单位 Hz（按实测平均帧间隔换算）。
+
+    nyquist_hz 是可检测频率上限（有效采样率的一半）：sample_every > 1
+    时高于该值的周期成分会混叠或完全漏采。
+    """
 
     source: SpectrumSource
     dominant_freq_hz: float | None
@@ -44,6 +48,7 @@ class TemporalSpectrumResult:
     spectrum_image: np.ndarray
     vfr_warning: bool
     effective_fps: float
+    nyquist_hz: float
     frame_range: FrameRange
     samples: int
 
@@ -152,6 +157,10 @@ def temporal_spectrum(
 
     series = np.asarray(values, dtype=np.float64)
     spectrum = np.abs(np.fft.rfft(series - series.mean()))
+    if n % 2 == 0:
+        # 实信号单侧幅度谱中 Nyquist bin 不折半，天然双倍计权；
+        # 减半后与其他 bin 可比，避免 dominant 判定偏向 Nyquist 频率
+        spectrum[-1] *= 0.5
     freqs = np.fft.rfftfreq(n, d=mean_interval)
     body = spectrum[1:]  # 去掉直流分量
     body_freqs = freqs[1:]
@@ -198,6 +207,7 @@ def temporal_spectrum(
         spectrum_image=image,
         vfr_warning=vfr,
         effective_fps=round(effective_fps, 4),
+        nyquist_hz=round(effective_fps / 2.0, 4),
         frame_range=frame_range,
         samples=n,
     )
@@ -239,18 +249,31 @@ def spatial_spectrum(
     masked = magnitude.copy()
     masked[cy - block : cy + block + 1, cx - block : cx + block + 1] = 0.0
 
+    # 偶数尺寸下 fftshift 后 Nyquist 行/列只有负半边且 bin 自共轭
+    ny_u = -(w // 2) if w % 2 == 0 else None
+    ny_v = -(h // 2) if h % 2 == 0 else None
+
     peaks: list[dict] = []
+    top_value: float | None = None
     flat_order = np.argsort(masked.ravel())[::-1]
     for flat in flat_order:
         if len(peaks) >= _TOP_PEAKS:
             break
-        value = masked.ravel()[flat]
+        value = float(masked.ravel()[flat])
         if value <= 0:
             break
+        if top_value is not None and value < top_value * 1e-6:
+            break  # FFT 数值残渣（~1e-12），不足以构成真实峰
         py, px = divmod(int(flat), w)
         u, v = px - cx, py - cy
-        # 频谱共轭对称：只保留上半平面代表
-        if v > 0 or (v == 0 and u < 0):
+        # 频谱共轭对称去重：保留 v<0 半平面代表；v=0 行与偶数尺寸的
+        # Nyquist 行（v=-h/2）是自共轭行，只保留 u>=0 一侧——但 Nyquist
+        # 列 bin（u=-w/2）自身即自共轭且正半边不存在，必须保留
+        self_conjugate_row = v == 0 or (ny_v is not None and v == ny_v)
+        if v > 0:
+            continue
+        if (self_conjugate_row and u < 0
+                and (ny_u is None or u != ny_u)):
             continue
         fx, fy = u / w, v / h
         freq = float(np.hypot(fx, fy))
@@ -263,6 +286,8 @@ def spatial_spectrum(
             "angle_deg": round(float(np.degrees(np.arctan2(v, u))), 2),
             "magnitude": round(float(value), 2),
         })
+        if top_value is None:
+            top_value = value
 
     return SpatialSpectrumResult(
         spectrum_image=image,

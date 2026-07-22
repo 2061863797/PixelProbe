@@ -75,8 +75,25 @@ def test_explicit_threshold_and_min_records() -> None:
 def test_segment_events_empty_and_flat() -> None:
     assert segment_events([]) == ([], 0.0)
     flat = [_record(i, 0.5) for i in range(1, 6)]
-    events, _ = segment_events(flat)  # 全平序列：无人超过 mean+3std
+    events, _ = segment_events(flat)  # 全平序列：无人超阈
     assert events == []
+
+
+def test_auto_threshold_works_on_small_samples() -> None:
+    """记录数 <= 10 时尖峰仍须可检出（阈值剔除最大值后计算）。
+
+    若用全部记录算 mean+3*std，n 个样本最大 z 分数上界 (n-1)/sqrt(n)，
+    n<=10 时任何尖峰都不可能超阈。
+    """
+    records = [_record(i, 0.005) for i in range(1, 10)] + [_record(10, 0.9)]
+    events, threshold = segment_events(records)
+    assert len(events) == 1
+    assert events[0].peak_frame == 10
+    assert events[0].peak_time == records[-1].time_seconds
+    assert 0.005 <= threshold < 0.9  # 背景恒值时阈值恰为背景值（std=0）
+    # 单条记录：无对比基准，不产生事件也不报错
+    single, threshold_single = segment_events([_record(1, 0.9)])
+    assert single == [] and threshold_single == 0.9
 
 
 def test_cli_changes_default_full_with_events(test_video: Path) -> None:

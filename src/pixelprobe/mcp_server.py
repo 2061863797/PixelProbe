@@ -710,7 +710,8 @@ def pixelprobe_detect_changes(
         description="返回变化最大的前 N 帧", ge=1, le=100,
     )] = 10,
     event_threshold: Annotated[Optional[float], Field(
-        description="事件分段阈值（作用于归一化得分；缺省自动取 mean + 3*std）",
+        description="事件分段阈值（作用于归一化得分；缺省自动取"
+                    "剔除最大记录后的 mean + 3*std）",
         ge=0,
     )] = None,
     include_curve: Annotated[bool, Field(
@@ -820,10 +821,10 @@ def pixelprobe_temporal_reduce(
     end: _EndSec = None,
     sample_every: _SampleEvery = 1,
     p_low: Annotated[float, Field(
-        description="对比度拉伸低百分位（0-100）", ge=0, le=100,
+        description="对比度拉伸低百分位（0-100，须 < p_high）", ge=0, le=100,
     )] = 1.0,
     p_high: Annotated[float, Field(
-        description="对比度拉伸高百分位（0-100）", ge=0, le=100,
+        description="对比度拉伸高百分位（0-100，须 > p_low）", ge=0, le=100,
     )] = 99.0,
     destripe: Annotated[bool, Field(
         description="扣除逐列/逐行均值，抑制噪声生成或传感器带来的条纹伪影"
@@ -875,6 +876,7 @@ def pixelprobe_temporal_reduce(
             "stat_mean": result.stat_mean,
             "stretch_low_value": result.stretch_low_value,
             "stretch_high_value": result.stretch_high_value,
+            "stretch_domain": result.stretch_domain,
             "p_low": result.p_low,
             "p_high": result.p_high,
             "destripe": result.destripe,
@@ -884,7 +886,12 @@ def pixelprobe_temporal_reduce(
             "returned_width": int(preview.shape[1]),
             "returned_height": int(preview.shape[0]),
             "display_scale": display_scale,
-            "note": "亮=统计值高，暗=统计值低（已按 p_low/p_high 百分位拉伸）",
+            "note": (
+                "亮=统计值高，暗=统计值低（已按 p_low/p_high 百分位拉伸）；"
+                "stat_* 始终为原始统计摘要。stretch_domain=detrended_residual"
+                "（destripe 启用）时拉伸端点是零中心残差：0=符合行列趋势，"
+                "负=低于趋势（更静止，如隐藏图案区），正=高于趋势"
+            ),
         }
         return [_json(meta), _png_image(preview)]
     except PixelProbeError as exc:
@@ -916,10 +923,10 @@ def pixelprobe_save_temporal_reduce(
     end: _EndSec = None,
     sample_every: _SampleEvery = 1,
     p_low: Annotated[float, Field(
-        description="对比度拉伸低百分位（0-100）", ge=0, le=100,
+        description="对比度拉伸低百分位（0-100，须 < p_high）", ge=0, le=100,
     )] = 1.0,
     p_high: Annotated[float, Field(
-        description="对比度拉伸高百分位（0-100）", ge=0, le=100,
+        description="对比度拉伸高百分位（0-100，须 > p_low）", ge=0, le=100,
     )] = 99.0,
     destripe: Annotated[bool, Field(
         description="扣除逐列/逐行均值，抑制条纹伪影",
@@ -951,6 +958,7 @@ def pixelprobe_save_temporal_reduce(
             "frames_analyzed": result.frames_analyzed,
             "stretch_low_value": result.stretch_low_value,
             "stretch_high_value": result.stretch_high_value,
+            "stretch_domain": result.stretch_domain,
             "destripe": result.destripe,
             "smooth": result.smooth,
             "raw_width": int(result.image.shape[1]),
@@ -1038,6 +1046,7 @@ def pixelprobe_compare_frames(
             "returned_width": int(preview.shape[1]),
             "returned_height": int(preview.shape[0]),
             "display_scale": display_scale,
+            "note": "热力图按最大差归一化：最亮处 = max_abs_diff；精确数值以本 JSON 为准",
         }
         return [_json(meta), _png_image(preview)]
     except PixelProbeError as exc:
@@ -1130,14 +1139,16 @@ def pixelprobe_scan_media(
         description="每隔 N 帧采样一次（缺省自动：全片约 1800 帧封顶）", ge=1,
     )] = None,
     event_threshold: Annotated[Optional[float], Field(
-        description="事件分段阈值（缺省自动 mean + 3*std）", ge=0,
+        description="事件分段阈值（缺省自动取剔除最大记录后的 mean + 3*std）",
+        ge=0,
     )] = None,
 ):
     """未知视频的第一步概览工具：一次调用产出信息 + 代表帧网格 + 变化事件 + 异常帧。
 
     内部单遍解码同时完成整帧变化曲线、等距抽帧和亮度异常检测（黑帧/白帧/
     纯色帧/闪帧），比分别调用 get_media_info + sample_frames + detect_changes
-    快得多。返回 [JSON 摘要, 网格图 PNG, 变化曲线 PNG]。
+    快得多。返回 [JSON 摘要, 网格图 PNG, 变化曲线 PNG]（帧数不足两帧时
+    无变化曲线，只返回前两项）。
     概览只是候选证据：对感兴趣的事件仍需 extract_frame 查看前后帧确认语义。
 
     扫描后按发现选择下一步：有事件 → compare_frames 定位变化区域再
@@ -1214,7 +1225,10 @@ def pixelprobe_temporal_spectrum(
 
     用于判断"噪声是否周期生成、某区域是否固定频率闪烁、是否存在编码或
     显示器刷新干扰"。返回 [JSON, 谱线图 PNG]；主频为 None 表示序列平坦。
-    频率相关性不等于语义结论；vfr_warning=true 时频率按平均帧率换算，仅供参考。
+    频率相关性不等于语义结论。频率一律按实测平均帧间隔换算；
+    vfr_warning=true 表示帧间隔波动大，均值不可靠，结果仅供参考。
+    注意混叠：sample_every > 1 时高于 nyquist_hz（有效采样率一半）的
+    周期成分会混叠或完全漏采——检测闪烁时优先用 sample_every=1。
     """
     try:
         result = core.temporal_spectrum(
@@ -1232,6 +1246,7 @@ def pixelprobe_temporal_spectrum(
             "source": result.source,
             "samples": result.samples,
             "effective_fps": result.effective_fps,
+            "nyquist_hz": result.nyquist_hz,
             "dominant_freq_hz": result.dominant_freq_hz,
             "period_seconds": result.period_seconds,
             "period_frames": result.period_frames,
@@ -1283,7 +1298,9 @@ def pixelprobe_spatial_spectrum(
             "height": result.height,
             "peaks": result.peaks,
             "display_scale": display_scale,
-            "axis": "谱图中心=零频，亮点离中心的距离=频率，方向=频率向量方向",
+            "axis": "谱图中心=零频，亮点离中心的距离=频率，方向=频率向量方向；"
+                    "亮度为 log 幅度归一化（仅供定位），线性幅度见 peaks；"
+                    "width/height 为分析区域尺寸（配 rect 时非原始帧尺寸）",
         }
         return [_json(meta), _png_image(preview)]
     except PixelProbeError as exc:
@@ -1367,7 +1384,9 @@ def pixelprobe_optical_flow(
             "max_magnitude": result.max_magnitude,
             "p95_magnitude": result.p95_magnitude,
             "dominant_angle_deg": result.dominant_angle_deg,
-            "angle_convention": "0°=向右，y 向下为正方向（逆时针为负）",
+            "angle_convention": "0°=向右，y 向下为正方向（逆时针为负）；"
+                                "主方向为运动区域内幅度加权方向，"
+                                "无显著运动或方向相互抵消时为 null",
             "global_motion": result.global_motion,
             "compensated": result.compensated,
             "motion_bbox": (
@@ -1378,7 +1397,9 @@ def pixelprobe_optical_flow(
             ),
             "mag_threshold": result.mag_threshold,
             "display_scale": display_scale,
-            "images": "第 1 张=方向着色流场（hue=方向，亮=快），第 2 张=幅度伪彩图",
+            "images": "第 1 张=方向着色流场（hue=方向，亮=快），第 2 张=幅度伪彩图；"
+                      "两张图亮度均按 max_magnitude 归一化（最亮 = max_magnitude 像素位移），"
+                      "精确数值以本 JSON 为准",
         }
         return [_json(meta), _png_image(flow_preview), _png_image(mag_preview)]
     except PixelProbeError as exc:

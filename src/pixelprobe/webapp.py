@@ -342,6 +342,7 @@ def _api_reduce(q: _Query) -> dict:
         "stat_mean": result.stat_mean,
         "stretch_low_value": result.stretch_low_value,
         "stretch_high_value": result.stretch_high_value,
+        "stretch_domain": result.stretch_domain,
         "destripe": result.destripe,
         "smooth": result.smooth,
         "raw_width": int(result.image.shape[1]),

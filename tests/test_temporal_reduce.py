@@ -44,6 +44,18 @@ def test_destripe_keeps_hidden_region_visible(noise_video: Path) -> None:
     # 去条纹只影响可视化，藏图区域仍应显著偏暗；统计摘要保持原始数值
     assert inside < outside - 40
     assert result.stat_mean[0] > 0
+    # 去条纹后是零中心残差空间：低端为负（藏图区低于趋势），高端为正
+    assert result.stretch_domain == "detrended_residual"
+    assert result.stretch_low_value < 0 < result.stretch_high_value
+    # 无 destripe 时端点在原始统计空间
+    raw = temporal_reduce(noise_video, op="std")
+    assert raw.stretch_domain == "raw"
+    assert raw.stretch_low_value > 0
+    # smooth 也改变分布，domain 必须如实标注；与 destripe 可组合
+    smoothed = temporal_reduce(noise_video, op="std", smooth=5)
+    assert smoothed.stretch_domain == "smoothed"
+    both = temporal_reduce(noise_video, op="std", destripe=True, smooth=5)
+    assert both.stretch_domain == "detrended_residual+smoothed"
 
 
 def test_mean_and_min_on_fixed_green_pixel(test_video: Path) -> None:

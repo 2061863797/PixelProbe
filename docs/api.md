@@ -84,10 +84,12 @@ mean_lab、mean_luminance、std_luminance`。注意 `mean_hsv.h` 为算术平均
 ### segment_events(records, threshold=None, min_gap=1, min_records=1) -> (list[ChangeEvent], float)
 
 把变化记录按阈值合并为事件区间。阈值作用于 `normalized_score`，
-缺省自动取 `mean + 3*std`；相邻超阈记录下标间隔 <= `min_gap` 时并入
+缺省自动取"剔除最大记录后的 `mean + 3*std`"（避免小样本时尖峰抬高
+自身阈值）；相邻超阈记录下标间隔 <= `min_gap` 时并入
 同一事件。返回 `(事件列表, 实际使用的阈值)`。`ChangeEvent`：
 `start_frame`（变化前最后一帧）、`end_frame`、`start_time/end_time`、
-`peak_frame/peak_score/peak_normalized`、`mean_normalized`、`record_count`。
+`peak_frame/peak_time/peak_score/peak_normalized`、`mean_normalized`、
+`record_count`。
 
 ### temporal_reduce(path, op="std", rect=None, ..., p_low=1.0, p_high=99.0, destripe=False, smooth=0, max_median_bytes=1GB, progress=None) -> TemporalReduceResult
 
@@ -95,11 +97,15 @@ mean_lab、mean_luminance、std_luminance`。注意 `mean_hsv.h` 为算术平均
 `op`: `mean|median|min|max|std|diff`（diff=相邻采样帧绝对差均值，即运动
 能量）。除 median 外全部流式聚合（内存 O(H*W)）；median 需持有全部采样帧，
 超过 `max_median_bytes`（估算含工作拷贝）抛 `InvalidRangeError`。
-`destripe` 扣除逐列/逐行均值（抑制条纹伪影），`smooth=N` 做 N×N 邻域均值
-（N>=2 生效）——两者只影响可视化图像。
+`destripe` 做双向去趋势（抑制条纹伪影；显示统计量变为零中心残差：
+0=符合行列趋势，负=更静止），`smooth=N` 做 N×N 邻域均值（N>=2 生效）
+——两者只影响可视化图像，`stat_*` 始终是原始统计量摘要。
 返回 `TemporalReduceResult`：`image[H,W,3] uint8`（按 `p_low/p_high`
 百分位拉伸）、`stat_min/stat_max/stat_mean`（拉伸前每通道摘要）、
-`stretch_low_value/stretch_high_value`、`frame_range`、`frames_analyzed`。
+`stretch_low_value/stretch_high_value` 与 `stretch_domain`（端点所在
+数值空间：`raw` / `detrended_residual` / `smoothed`，可用 `+` 组合；
+destripe 启用后端点为残差空间数值，可为负）、`frame_range`、
+`frames_analyzed`。
 
 ### compare_frames(path, frame_a|time_a, frame_b|time_b, rect=None, threshold=10, colormap="fire") -> CompareResult
 
@@ -132,8 +138,10 @@ mean_lab、mean_luminance、std_luminance`。注意 `mean_hsv.h` 为算术平均
 （相邻帧变化量序列）；`rect` 与 `point` 最多给一个。采样率与 VFR 判定
 基于解码得到的真实帧时间戳（帧间隔波动 >10% 置 `vfr_warning`）。
 至少需要 8 个采样值。返回：`dominant_freq_hz/period_seconds/period_frames`
-（序列平坦时为 None）、`peak_ratio`、`top_peaks`（幅度并列偏向低频）、
-`spectrum_image`、`effective_fps`、`samples`。
+（序列平坦时为 None）、`peak_ratio`、`top_peaks`（幅度并列偏向低频；
+偶数样本时 Nyquist bin 幅度已折半以与其他 bin 可比）、
+`spectrum_image`、`effective_fps`、`nyquist_hz`（可检测频率上限；
+`sample_every > 1` 时更高频率的成分会混叠或漏采）、`samples`。
 
 ### spatial_spectrum(path, frame=None, time=None, rect=None) -> SpatialSpectrumResult
 
@@ -150,7 +158,8 @@ Farneback 稠密光流。**需要可选依赖**：`pip install "pixelprobe[flow]
 单遍解码）二选一。`compensate_global=True` 时从稠密流网格采样估计全局
 仿射（平移/旋转/缩放）并逐像素扣除。返回 `FlowResult`：
 `flow_image`（HSV 方向着色）、`magnitude_image`（幅度伪彩）、
-`mean/max/p95_magnitude`、`dominant_angle_deg`（0°=向右，y 向下为正）、
+`mean/max/p95_magnitude`、`dominant_angle_deg`（0°=向右，y 向下为正；
+运动区域内幅度加权方向，无运动或方向相互抵消时为 None）、
 `global_motion`（dx/dy/rotation_deg/scale/matrix）、`motion_bbox`、
 `frames_analyzed`。
 

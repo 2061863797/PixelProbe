@@ -99,6 +99,7 @@ def reduce(
             "stat_mean": result.stat_mean,
             "stretch_low_value": result.stretch_low_value,
             "stretch_high_value": result.stretch_high_value,
+            "stretch_domain": result.stretch_domain,
             "p_low": result.p_low,
             "p_high": result.p_high,
             "destripe": result.destripe,
@@ -122,7 +123,9 @@ def reduce(
              f"{min(result.stat_min)} ~ {max(result.stat_max)}"),
             ("拉伸端点",
              f"{result.stretch_low_value} ~ {result.stretch_high_value}"
-             f"（P{result.p_low} ~ P{result.p_high}）"),
+             f"（P{result.p_low} ~ P{result.p_high}"
+             + ("" if result.stretch_domain == "raw"
+                else f"，空间：{result.stretch_domain}") + "）"),
         ]
         if output:
             rows.append(("输出文件", str(output)))

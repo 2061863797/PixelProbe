@@ -26,6 +26,7 @@ from pixelprobe.core.frame_selector import FrameRange, resolve_range
 from pixelprobe.core.video_reader import VideoReader
 from pixelprobe.models.errors import DecodeError, InvalidRangeError
 from pixelprobe.models.media_info import MediaInfo
+from pixelprobe.output.image_writer import fit_within
 
 ProgressCallback = Callable[[int, int], None]
 
@@ -125,9 +126,9 @@ def scan_media(
             prev = arr
             prev_index = idx
 
-            # ② 网格图目标帧
+            # ② 网格图目标帧（收集时即缩放，避免囤积全分辨率帧）
             if idx in targets:
-                tiles.append(arr.copy())
+                tiles.append(fit_within(arr, tile_max_dim, tile_max_dim))
                 tile_frames.append(idx)
                 tile_times.append(t)
 
@@ -151,11 +152,14 @@ def scan_media(
     events, threshold_used = segment_events(records, threshold=event_threshold)
     # 孤立尖峰事件补充标记为闪帧候选
     for event in events:
-        if event.record_count <= 2 and len(anomalies) < _MAX_ANOMALIES:
+        if event.record_count <= 2:
+            if len(anomalies) >= _MAX_ANOMALIES:
+                truncated = True
+                break
             anomalies.append({
                 "type": "flash",
                 "frame": event.peak_frame,
-                "time_seconds": event.end_time,
+                "time_seconds": event.peak_time,
                 "value": event.peak_normalized,
             })
 

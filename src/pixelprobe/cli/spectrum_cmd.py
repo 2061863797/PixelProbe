@@ -75,6 +75,7 @@ def spectrum(
             "source": result.source,
             "samples": result.samples,
             "effective_fps": result.effective_fps,
+            "nyquist_hz": result.nyquist_hz,
             "dominant_freq_hz": result.dominant_freq_hz,
             "period_seconds": result.period_seconds,
             "period_frames": result.period_frames,
@@ -98,6 +99,8 @@ def spectrum(
              f"{result.period_seconds}s / {result.period_frames} 帧"
              if result.period_seconds else "–"),
             ("主峰占比", result.peak_ratio),
+            ("可检上限",
+             f"{result.nyquist_hz} Hz（更高频率会混叠或漏采）"),
         ]
         if result.vfr_warning:
             rows.append(("警告", "可变帧率视频，频率按平均帧率换算"))

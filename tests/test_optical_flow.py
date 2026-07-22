@@ -61,6 +61,13 @@ def test_mode_conflicts_rejected(motion_video: Path) -> None:
         compute_flow(motion_video, frame_a=0)  # 帧 B 未指定
 
 
+def test_static_pair_reports_no_direction(motion_video: Path) -> None:
+    """同一帧与自身比较：无运动区域时主方向必须为 None 而非噪声角度。"""
+    result = compute_flow(motion_video, frame_a=0, frame_b=0)
+    assert result.dominant_angle_deg is None
+    assert result.motion_bbox is None
+
+
 def test_flow_images_shapes(motion_video: Path) -> None:
     result = compute_flow(motion_video, frame_a=0, frame_b=1)
     assert result.flow_image.shape == (64, 64, 3)

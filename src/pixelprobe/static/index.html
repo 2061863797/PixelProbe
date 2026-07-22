@@ -830,7 +830,8 @@ $("runreduce").onclick = async () => {
       $("reducekv").innerHTML = [
         ["统计量", data.op], ["分析帧数", data.frames_analyzed],
         ["原始范围", `${Math.min(...data.stat_min)} ~ ${Math.max(...data.stat_max)}`],
-        ["拉伸端点", `${data.stretch_low_value} ~ ${data.stretch_high_value}`],
+        ["拉伸端点", `${data.stretch_low_value} ~ ${data.stretch_high_value}` +
+          (data.stretch_domain && data.stretch_domain !== "raw" ? `（${data.stretch_domain}）` : "")],
       ].map(([k, v]) => `<label>${k}</label><data>${v}</data>`).join("");
     } catch (e) { toast(e.message, 5000); }
   });

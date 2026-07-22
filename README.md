@@ -20,6 +20,10 @@ MCP 工具交给 AI 调用。媒体文件始终在本机处理。
 - **变化检测**：扫描点、区域或网格，找出变化最明显的帧和时间。
 - **颜色时间线**：观察固定像素或网格区域在整段视频中的颜色变化。
 - **X–T / Y–T 切片**：把空间与时间放在同一张图中，直观看到移动、闪烁和镜头变化。
+- **时间域合成**：把整段视频折叠成一张逐像素统计图，显出噪声中的隐藏图案、慢变水印和运动能量分布。
+- **一键扫描**：单遍解码产出概览网格图、变化事件区间和黑帧/白帧/闪帧等异常。
+- **两帧比较 / 采样网格**：定位任意两帧的差异区域；一张网格图看完整段视频。
+- **光流与频域**：运动方向与幅度、区分镜头运动与物体运动；周期闪烁与条纹检测。
 - **AI 工具调用**：让支持 MCP 的 AI 自动选择分析步骤、查看关键帧并引用精确数据。
 
 ## 三种使用方式
@@ -30,7 +34,54 @@ MCP 工具交给 AI 调用。媒体文件始终在本机处理。
 | 命令行 | 批量处理、脚本调用、导出 PNG/CSV/JSON | `pixelprobe` |
 | MCP | 让 AI 自主分析本地图片和视频 | `pixelprobe-mcp` |
 
-## AI 快速接入 MCP
+## 快速开始：克隆仓库直接用
+
+只需要两个前置条件：[Python](https://www.python.org/downloads/) 3.11 或更高
+（Windows 安装时勾选 "Add python.exe to PATH"）和
+[Git](https://git-scm.com/downloads)。
+
+打开终端（Windows 用 PowerShell），依次执行：
+
+```bash
+# 1. 把仓库克隆到本机
+git clone https://github.com/2061863797/PixelProbe.git
+
+# 2. 进入仓库目录
+cd PixelProbe
+
+# 3. 安装（-e 是可编辑安装：以后更新代码不用重装）
+python -m pip install -e .
+```
+
+装完三种使用方式就都可用了：
+
+```bash
+# 确认安装成功（应显示版本号）
+pixelprobe --version
+
+# 打开可视化界面（浏览器会自动弹出）
+pixelprobe-web
+
+# 命令行：查看一个视频的信息
+pixelprobe info 你的视频.mp4
+```
+
+想交给 Claude Code 使用（注册到全局，任何目录都能用）：
+
+```bash
+claude mcp add --scope user pixelprobe -- pixelprobe-mcp
+```
+
+可选功能：光流分析需要额外安装 OpenCV：
+
+```bash
+python -m pip install -e ".[flow]"
+```
+
+以后更新：在仓库目录执行 `git pull` 拉取最新代码，然后重启
+`pixelprobe-web`（MCP 则重启 AI 客户端或重连）即可，不需要重新安装。
+
+## AI 快速接入 MCP（不克隆仓库）
 
 最省事的方式是让 AI 客户端通过 `uvx` 直接从 GitHub 获取并运行 PixelProbe，
 不需要先单独安装 PixelProbe。电脑上需要有
@@ -71,15 +122,17 @@ AI 可以读取指定的本地图片和视频。只有名称含 `save` 的五个
 连接 MCP 时，PixelProbe 会自动向 AI 注入协作原则：AI 原有的视觉和视频理解
 负责看懂画面，PixelProbe 负责辅助定位并提供精确数据。
 
-## 安装软件
+## 安装软件（不克隆仓库）
 
-需要 Python 3.11 或更高版本。优先支持 Windows 10/11，同时兼容 Linux 和 macOS。
-从 GitHub 安装完整软件：
+上面「快速开始」的克隆方式适合大多数人。如果不想保留仓库目录，
+也可以直接从 GitHub 一步安装（需要 Python 3.11 或更高版本，
+优先支持 Windows 10/11，同时兼容 Linux 和 macOS）：
 
 ```bash
 python -m pip install "git+https://github.com/2061863797/PixelProbe.git"
 ```
 
+这种方式更新时需要重新执行上面的命令（加 `--upgrade --force-reinstall`）。
 安装后会同时提供可视化界面、命令行和 MCP Server。可以先检查版本：
 
 ```bash

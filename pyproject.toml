@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pixelprobe"
+version = "0.3.0"
+description = "面向人类和 AI Agent 的图片、视频像素分析 CLI 工具"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "PixelProbe" }]
+dependencies = [
+    "typer>=0.9",
+    "rich>=13",
+    "av>=12",
+    "numpy>=1.26",
+    "pillow>=10",
+    "pydantic>=2",
+    "mcp>=1.2",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.urls]
+Homepage = "https://github.com/2061863797/PixelProbe"
+Repository = "https://github.com/2061863797/PixelProbe"
+
+[project.scripts]
+pixelprobe = "pixelprobe.cli.app:main"
+pixelprobe-mcp = "pixelprobe.mcp_server:main"
+pixelprobe-web = "pixelprobe.webapp:main"
+
+[tool.setuptools.package-data]
+pixelprobe = ["static/*"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

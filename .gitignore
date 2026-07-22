@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+tests/assets/
+*.tmp-*
+
+# 本机工具配置
+.mcp.json
+.codegraph/
+.agents/

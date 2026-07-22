@@ -1,0 +1,761 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PixelProbe · 像素探针</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='%230a0d0f'/><rect x='6' y='6' width='4' height='4' fill='%23ffb454'/></svg>">
+<style>
+  :root {
+    --bg: #0a0d0f;
+    --bg-panel: #10151a;
+    --bg-inset: #0d1114;
+    --line: #223038;
+    --line-soft: #1a242b;
+    --text: #c7d4d6;
+    --text-dim: #5d7078;
+    --green: #7fd962;      /* 磷光绿：数值读数 */
+    --amber: #ffb454;      /* 琥珀：焦点与警示 */
+    --cyan: #5ccfe6;       /* 青：链接与坐标 */
+    --red: #f28779;
+    --mono: "Cascadia Code", "Consolas", "SF Mono", "Menlo", monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    background:
+      repeating-linear-gradient(0deg, transparent 0 2px, rgba(255,255,255,.012) 2px 3px),
+      radial-gradient(1200px 600px at 30% -10%, #101820 0%, var(--bg) 60%);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 13px;
+    display: flex; flex-direction: column;
+    min-height: 100vh;
+  }
+  ::selection { background: var(--amber); color: #000; }
+
+  /* ── 顶栏 ─────────────────────────────── */
+  header {
+    display: flex; align-items: center; gap: 14px;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--line);
+    background: linear-gradient(180deg, #131a20, #0e1317);
+  }
+  .brand { display: flex; align-items: baseline; gap: 8px; white-space: nowrap; }
+  .brand b {
+    font-size: 16px; letter-spacing: .28em; color: #eef6f3; font-weight: 600;
+  }
+  .brand b i { color: var(--amber); font-style: normal; }
+  .brand span { color: var(--text-dim); font-size: 10px; letter-spacing: .12em; }
+  #path {
+    flex: 1; min-width: 200px;
+    background: var(--bg-inset); color: var(--green);
+    border: 1px solid var(--line); border-radius: 2px;
+    padding: 7px 10px; font: inherit; outline: none;
+  }
+  #path:focus { border-color: var(--amber); box-shadow: 0 0 0 1px rgba(255,180,84,.25); }
+  button {
+    font: inherit; cursor: pointer; border-radius: 2px;
+    background: #1a242b; color: var(--text);
+    border: 1px solid var(--line);
+    padding: 7px 14px; letter-spacing: .08em;
+    transition: border-color .12s, color .12s, background .12s;
+  }
+  button:hover { border-color: var(--amber); color: var(--amber); }
+  button:disabled { opacity: .35; cursor: default; }
+  button.primary { background: var(--amber); border-color: var(--amber); color: #14100a; font-weight: 600; }
+  button.primary:hover { background: #ffc370; color: #14100a; }
+
+  /* ── 信息带 ───────────────────────────── */
+  #infobar {
+    display: none; gap: 0; border-bottom: 1px solid var(--line);
+    background: var(--bg-panel); overflow-x: auto;
+  }
+  #infobar.on { display: flex; }
+  .stat { padding: 6px 16px; border-right: 1px solid var(--line-soft); white-space: nowrap; }
+  .stat label { display: block; color: var(--text-dim); font-size: 9px; letter-spacing: .18em; }
+  .stat data { color: var(--green); font-size: 13px; }
+
+  /* ── 主体布局 ─────────────────────────── */
+  main { flex: 1; display: grid; grid-template-columns: minmax(0,1fr) 340px; gap: 12px; padding: 12px 16px; }
+  @media (max-width: 980px) { main { grid-template-columns: 1fr; } }
+
+  .panel {
+    background: var(--bg-panel); border: 1px solid var(--line); border-radius: 3px;
+    position: relative;
+  }
+  .panel > h2 {
+    font-size: 10px; font-weight: 600; letter-spacing: .22em;
+    color: var(--text-dim); padding: 8px 12px 6px;
+    border-bottom: 1px solid var(--line-soft);
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .panel > h2 .hint { letter-spacing: .04em; font-weight: 400; color: #45565e; }
+  /* 面板四角刻度 */
+  .panel::before, .panel::after {
+    content: ""; position: absolute; width: 7px; height: 7px; pointer-events: none;
+  }
+  .panel::before { top: -1px; left: -1px; border-top: 1px solid var(--amber); border-left: 1px solid var(--amber); }
+  .panel::after { bottom: -1px; right: -1px; border-bottom: 1px solid var(--amber); border-right: 1px solid var(--amber); }
+
+  /* ── 帧查看器 ─────────────────────────── */
+  #viewerwrap { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+  #stage {
+    position: relative; overflow: hidden;
+    background:
+      conic-gradient(#11171c 0 25%, #0d1114 0 50%, #11171c 0 75%, #0d1114 0) 0 0/16px 16px;
+    min-height: 300px;
+    display: flex; align-items: center; justify-content: center;
+    cursor: crosshair;
+  }
+  #frameimg, #video {
+    display: block; max-width: 100%; max-height: 62vh;
+    user-select: none; -webkit-user-drag: none;
+  }
+  #frameimg { image-rendering: pixelated; }
+  #video { background: #050708; }
+  #stage.playing { cursor: default; }
+  #selbox {
+    position: absolute; border: 1px dashed var(--amber);
+    background: rgba(255,180,84,.10); pointer-events: none; display: none;
+  }
+  #probemark {
+    position: absolute; width: 11px; height: 11px; pointer-events: none; display: none;
+    transform: translate(-50%,-50%);
+  }
+  #probemark::before, #probemark::after { content: ""; position: absolute; background: var(--cyan); }
+  #probemark::before { left: 5px; top: 0; width: 1px; height: 11px; }
+  #probemark::after { top: 5px; left: 0; height: 1px; width: 11px; }
+  #stagehint { color: var(--text-dim); padding: 40px 20px; text-align: center; line-height: 2; }
+
+  /* 传输条 */
+  #transport { display: none; align-items: center; gap: 8px; padding: 10px 12px; flex-wrap: wrap; }
+  #transport.on { display: flex; }
+  #slider { flex: 1; accent-color: var(--amber); }
+  .readout { color: var(--green); white-space: nowrap; }
+  .readout b { color: var(--amber); }
+  .tbtn { padding: 5px 10px; }
+  #playbtn { min-width: 42px; color: var(--amber); }
+  .analysis-rate { color: var(--text-dim); white-space: nowrap; }
+  #samplestep {
+    width: 52px; background: var(--bg-inset); color: var(--green);
+    border: 1px solid var(--line); border-radius: 2px; padding: 4px 6px;
+    font: inherit; outline: none;
+  }
+  button:disabled { opacity: .42; cursor: wait; }
+
+  /* ── 右栏 ─────────────────────────────── */
+  aside { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+  .kv { padding: 10px 12px; display: grid; grid-template-columns: auto 1fr; gap: 3px 14px; }
+  .kv label { color: var(--text-dim); }
+  .kv data { color: var(--green); text-align: right; overflow: hidden; text-overflow: ellipsis; }
+  #swatch {
+    height: 34px; margin: 10px 12px 0; border: 1px solid var(--line);
+    display: flex; align-items: center; justify-content: center;
+    color: #000; font-weight: 600; letter-spacing: .1em; text-shadow: 0 0 4px rgba(255,255,255,.35);
+  }
+  .actions { display: flex; gap: 8px; padding: 10px 12px; flex-wrap: wrap; }
+  .empty { color: #45565e; padding: 14px 12px; }
+
+  /* ── 底部分析区 ───────────────────────── */
+  #analysis { padding: 0 16px 16px; display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  @media (max-width: 980px) { #analysis { grid-template-columns: 1fr; } }
+  #changeschart { width: 100%; height: 72px; display: block; cursor: pointer; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { padding: 4px 12px; text-align: right; border-top: 1px solid var(--line-soft); }
+  th { color: var(--text-dim); font-weight: 400; font-size: 10px; letter-spacing: .14em; }
+  td { color: var(--text); }
+  tbody tr { cursor: pointer; }
+  tbody tr:hover td { color: var(--amber); }
+  td.f { color: var(--cyan); }
+  .sliceimg { display: block; max-width: 100%; image-rendering: pixelated; cursor: pointer; }
+  .slicebody { padding: 10px 12px; overflow: auto; max-height: 420px; }
+  .inline-inputs { display: flex; gap: 8px; align-items: center; padding: 10px 12px 0; flex-wrap: wrap; }
+  .inline-inputs input, .inline-inputs select {
+    width: 74px; background: var(--bg-inset); color: var(--green);
+    border: 1px solid var(--line); border-radius: 2px; padding: 5px 8px; font: inherit; outline: none;
+  }
+  .inline-inputs label { color: var(--text-dim); }
+  #toast {
+    position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%);
+    background: #241a10; color: var(--amber); border: 1px solid var(--amber);
+    padding: 8px 18px; border-radius: 2px; display: none; z-index: 9;
+    max-width: 80vw;
+  }
+  .loading { animation: pulse 1s infinite alternate; }
+  @keyframes pulse { from { opacity: .4; } to { opacity: 1; } }
+  footer { color: #3b4a52; padding: 6px 16px 12px; letter-spacing: .1em; font-size: 10px; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand"><b>PIXEL<i>PROBE</i></b><span>像素探针 · 本地分析台</span></div>
+  <input id="path" placeholder="输入本地图片/视频路径，如 E:\视频\demo.mp4" spellcheck="false">
+  <button id="loadbtn" class="primary">载入</button>
+</header>
+
+<div id="infobar"></div>
+
+<main>
+  <div id="viewerwrap">
+    <div class="panel">
+      <h2>帧查看器 <span class="hint">单击=探测像素 · 拖框=选择区域 · ←/→=步进</span></h2>
+      <div id="stage">
+        <div id="stagehint">输入媒体路径并点击「载入」<br>探针待命中 …</div>
+        <img id="frameimg" alt="" draggable="false" style="display:none">
+        <video id="video" playsinline preload="auto" style="display:none"></video>
+        <div id="selbox"></div>
+        <div id="probemark"></div>
+      </div>
+      <div id="transport">
+        <button class="tbtn" id="prevbtn" title="上一帧">|◀</button>
+        <button class="tbtn" id="playbtn" title="播放/暂停（空格）">▶</button>
+        <button class="tbtn" id="nextbtn" title="下一帧">▶|</button>
+        <input type="range" id="slider" min="0" max="0" value="0">
+        <span class="readout">帧 <b id="fnum">–</b> / <span id="fmax">–</span> · <span id="ftime">–</span> s</span>
+        <label class="analysis-rate">分析每 <input type="number" id="samplestep" min="1" step="1" value="1"> 帧</label>
+      </div>
+    </div>
+
+    <div id="analysis" style="display:none">
+      <div class="panel" id="changespanel">
+        <h2>变化检测 <span class="hint">条形=相邻帧变化量，点击跳转</span></h2>
+        <div class="inline-inputs">
+          <label>目标</label><data id="changetarget" style="color:var(--cyan)">全画面</data>
+          <select id="changemode" title="快速模式使用约 4096 个空间采样点；精确模式分析区域全部像素">
+            <option value="fast">快速</option><option value="exact">精确</option>
+          </select>
+          <button id="runchanges">运行</button>
+        </div>
+        <div style="padding:10px 12px">
+          <canvas id="changeschart" height="72"></canvas>
+        </div>
+        <div style="max-height:210px;overflow:auto">
+          <table id="changestable" style="display:none">
+            <thead><tr><th>帧</th><th>时间 s</th><th>得分</th><th>归一化</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>时空切片 / 时间线 <span class="hint">纵轴=时间 · 点击行跳帧</span></h2>
+        <div class="inline-inputs">
+          <button id="runxt">X–T</button><label>y=</label><input id="xty" value="0">
+          <button id="runyt">Y–T</button><label>x=</label><input id="ytx" value="0">
+          <button id="runtl">时间线</button><label style="color:#45565e">(用当前选区网格)</label>
+        </div>
+        <div class="slicebody"><div class="empty" id="slicehint">选择扫描线坐标后运行；探测像素会自动填入 x/y</div><img class="sliceimg" id="sliceimg" style="display:none"></div>
+      </div>
+    </div>
+  </div>
+
+  <aside>
+    <div class="panel">
+      <h2>像素读数</h2>
+      <div id="swatch" style="display:none"></div>
+      <div class="kv" id="pixelkv"><div class="empty" style="grid-column:1/-1">单击画面探测像素</div></div>
+    </div>
+    <div class="panel">
+      <h2>区域统计</h2>
+      <div class="kv" id="regionkv"><div class="empty" style="grid-column:1/-1">在画面上拖框选择区域</div></div>
+      <div class="actions" id="regionactions" style="display:none">
+        <button id="regionchanges">对选区跑变化检测</button>
+      </div>
+    </div>
+  </aside>
+</main>
+
+<footer>PIXELPROBE LOCAL CONSOLE · 坐标原点=左上 · 帧号从 0 起 · 数据来自本机 HTTP API</footer>
+<div id="toast"></div>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const state = {
+  path: null, info: null, frame: 0,
+  frameTimes: null,
+  previewMode: "image", previewReady: false,
+  videoToken: 0, scrubRaf: 0, resumeAfterScrub: false,
+  imageRequest: 0, frameObjectUrl: null, analysisBusy: false,
+  imgScale: 1,             // 原始像素 / 显示像素
+  selRect: null,           // 原始坐标系 [x,y,w,h]
+  changes: null,           // 变化检测记录
+  sliceFrames: null, sliceScale: 1, sliceKind: null,
+};
+
+function toast(msg, ms = 3200) {
+  const t = $("toast"); t.textContent = msg; t.style.display = "block";
+  clearTimeout(t._h); t._h = setTimeout(() => t.style.display = "none", ms);
+}
+async function api(route, params) {
+  const q = new URLSearchParams({ path: state.path, ...params });
+  const res = await fetch(`/api/${route}?${q}`);
+  const body = await res.json();
+  if (!body.success) throw new Error(`${body.error.code}: ${body.error.message}`);
+  return body.data;
+}
+const fmt = v => v === null || v === undefined ? "–" : v;
+
+/* ── 载入媒体 ── */
+$("loadbtn").onclick = load;
+$("path").addEventListener("keydown", e => { if (e.key === "Enter") load(); });
+async function load() {
+  const p = $("path").value.trim();
+  if (!p) return toast("请先输入媒体路径");
+  state.path = p;
+  try {
+    $("loadbtn").classList.add("loading");
+    const info = await api("info", {});
+    state.info = info; state.frame = 0; state.frameTimes = null; state.selRect = null;
+    const isVideo = info.media_type === "video";
+    if (isVideo) {
+      try {
+        const timing = await api("frame-times", {});
+        if (!Array.isArray(timing.times) || !timing.times.length) {
+          throw new Error("未返回逐帧时间戳");
+        }
+        state.frameTimes = timing.times;
+        info.frame_count = timing.frame_count;
+        info.frame_count_estimated = false;
+      } catch (timingError) {
+        toast(`无法建立精确帧映射，将使用单帧预览：${timingError.message}`, 5000);
+      }
+      info.frame_count = Math.max(1, info.frame_count || 1);
+    }
+    renderInfo(info);
+    $("transport").classList.toggle("on", isVideo);
+    $("analysis").style.display = isVideo ? "grid" : "none";
+    if (isVideo) {
+      $("slider").max = info.frame_count - 1;
+      $("slider").value = 0;
+      $("fmax").textContent = info.frame_count - 1;
+      $("xty").value = Math.floor(info.height / 2);
+      $("ytx").value = Math.floor(info.width / 2);
+      $("samplestep").value = Math.max(1, Math.ceil(info.frame_count / 600));
+      setChangeTarget(null);
+    }
+    if (isVideo && state.frameTimes) {
+      try {
+        await loadVideoPreview();
+      } catch (videoError) {
+        state.previewMode = "frame";
+        await showFrame(0);
+        toast(`浏览器无法直接播放该编码，已切换单帧预览：${videoError.message}`, 5000);
+      }
+    } else if (isVideo) {
+      state.previewMode = "frame";
+      await showFrame(0);
+    } else {
+      state.previewMode = "image";
+      await showFrame(0);
+    }
+    toast(`已载入 ${info.width}×${info.height} ${info.media_type === "video" ? info.frame_count + " 帧" : "图片"}`);
+  } catch (e) { toast(e.message, 5000); }
+  finally { $("loadbtn").classList.remove("loading"); }
+}
+function renderInfo(i) {
+  const items = i.media_type === "video" ? [
+    ["类型", "视频"], ["尺寸", `${i.width}×${i.height}`], ["帧率", i.fps],
+    ["总帧数", `${i.frame_count}${i.frame_count_estimated ? "≈" : ""}`],
+    ["时长", `${i.duration_seconds}s`], ["编码", i.codec], ["像素格式", i.pixel_format],
+    ["VFR", i.is_vfr === null ? "?" : i.is_vfr ? "是" : "否"],
+  ] : [
+    ["类型", "图片"], ["尺寸", `${i.width}×${i.height}`],
+    ["模式", i.color_mode], ["格式", i.codec],
+  ];
+  $("infobar").innerHTML = items.map(([k, v]) =>
+    `<div class="stat"><label>${k}</label><data>${fmt(v)}</data></div>`).join("");
+  $("infobar").classList.add("on");
+}
+
+/* ── 帧显示与步进 ── */
+function clampFrame(n) {
+  return Math.max(0, Math.min(Math.round(n), state.info.frame_count - 1));
+}
+function timeForFrame(n) {
+  if (!state.frameTimes || !state.frameTimes.length) return null;
+  return state.frameTimes[clampFrame(n)];
+}
+function frameForTime(seconds) {
+  const times = state.frameTimes;
+  if (!times || !times.length) return null;
+  let low = 0, high = times.length;
+  while (low < high) {
+    const mid = Math.floor((low + high) / 2);
+    if (times[mid] <= seconds + 1e-6) low = mid + 1;
+    else high = mid;
+  }
+  return Math.max(0, low - 1);
+}
+function setFrameReadout(n, seconds = null) {
+  state.frame = n;
+  $("slider").value = n; $("fnum").textContent = n;
+  const t = seconds === null ? timeForFrame(n) : seconds;
+  $("ftime").textContent = t === null ? "–" : t.toFixed(3);
+}
+function activeVisual() {
+  return state.previewMode === "video" ? $("video") : $("frameimg");
+}
+function updatePlayButton() {
+  const playing = state.previewMode === "video" && !$("video").paused;
+  $("playbtn").textContent = playing ? "Ⅱ" : "▶";
+  stage.classList.toggle("playing", playing);
+}
+function syncVideoPosition(seconds = $("video").currentTime) {
+  if (!state.info || state.previewMode !== "video") return;
+  const frame = frameForTime(seconds);
+  if (frame === null) return;
+  setFrameReadout(frame, seconds);
+  state.previewReady = true;
+}
+function monitorVideoFrames(token) {
+  const video = $("video");
+  if (!video.requestVideoFrameCallback) return;
+  video.requestVideoFrameCallback((_now, metadata) => {
+    if (token !== state.videoToken || state.previewMode !== "video") return;
+    syncVideoPosition(metadata.mediaTime);
+    monitorVideoFrames(token);
+  });
+}
+async function loadVideoPreview() {
+  const video = $("video"), img = $("frameimg");
+  const token = ++state.videoToken;
+  state.previewReady = false;
+  video.pause(); img.style.display = "none";
+  video.style.display = "block";
+  const q = new URLSearchParams({ path: state.path });
+  await new Promise((resolve, reject) => {
+    const cleanup = () => {
+      video.removeEventListener("loadeddata", ready);
+      video.removeEventListener("error", failed);
+    };
+    const ready = () => { cleanup(); resolve(); };
+    const failed = () => { cleanup(); reject(new Error("不支持的视频容器或编码")); };
+    video.addEventListener("loadeddata", ready);
+    video.addEventListener("error", failed);
+    video.src = `/api/media?${q}`;
+    video.load();
+  });
+  if (token !== state.videoToken) return;
+  state.previewMode = "video";
+  $("stagehint").style.display = "none";
+  syncVideoPosition(0);
+  state.imgScale = state.info.width / video.videoWidth;
+  drawOverlay(); updatePlayButton(); monitorVideoFrames(token);
+}
+async function showFrameImage(n) {
+  const requestId = ++state.imageRequest;
+  const img = $("frameimg"), video = $("video");
+  if (state.info.media_type === "video") n = clampFrame(n);
+  state.previewReady = false;
+  const q = new URLSearchParams({ path: state.path, max_dim: 1024 });
+  if (state.info.media_type === "video") q.set("frame", n);
+  const res = await fetch(`/api/frame.png?${q}`);
+  if (!res.ok) throw new Error("帧加载失败");
+  const url = URL.createObjectURL(await res.blob());
+  const decoded = new Image(); decoded.src = url;
+  await decoded.decode();
+  if (requestId !== state.imageRequest) { URL.revokeObjectURL(url); return; }
+  if (state.frameObjectUrl) URL.revokeObjectURL(state.frameObjectUrl);
+  state.frameObjectUrl = url;
+  img.src = url; video.pause(); video.style.display = "none";
+  img.style.display = "block"; $("stagehint").style.display = "none";
+  if (decoded.naturalWidth < 480) {
+    const stageW = Math.max(240, stage.clientWidth - 8);
+    const k = Math.max(1, Math.floor(Math.min(480, stageW) / decoded.naturalWidth));
+    img.style.width = decoded.naturalWidth * k + "px";
+  } else {
+    img.style.width = "";
+  }
+  state.imgScale = state.info.width / decoded.naturalWidth;
+  if (state.info.media_type === "video") setFrameReadout(n);
+  state.previewReady = true;
+  drawOverlay(); updatePlayButton();
+}
+async function showFrame(n) {
+  if (!state.info) return;
+  if (state.info.media_type === "video" && state.previewMode === "video") {
+    n = clampFrame(n);
+    const video = $("video");
+    video.pause(); state.previewReady = false;
+    setFrameReadout(n);
+    const target = timeForFrame(n);
+    if (target === null) {
+      state.previewMode = "frame";
+      await showFrameImage(n);
+      return;
+    }
+    if (Math.abs(video.currentTime - target) < 0.0005) {
+      syncVideoPosition(target); drawOverlay();
+    } else {
+      video.currentTime = target;
+    }
+    updatePlayButton();
+    return;
+  }
+  await showFrameImage(n).catch(e => toast(e.message));
+}
+function togglePlayback() {
+  if (state.previewMode !== "video") return toast("当前编码仅支持单帧预览");
+  const video = $("video");
+  if (video.paused) {
+    if (video.ended) video.currentTime = 0;
+    video.play().catch(e => toast(`播放失败：${e.message}`));
+  } else video.pause();
+}
+$("slider").oninput = e => {
+  const n = +e.target.value;
+  setFrameReadout(n);
+  cancelAnimationFrame(state.scrubRaf);
+  state.scrubRaf = requestAnimationFrame(() => showFrame(n));
+};
+$("slider").addEventListener("pointerdown", () => {
+  state.resumeAfterScrub = state.previewMode === "video" && !$("video").paused;
+  if (state.resumeAfterScrub) $("video").pause();
+});
+$("slider").addEventListener("pointerup", () => {
+  if (state.resumeAfterScrub) $("video").play().catch(() => {});
+  state.resumeAfterScrub = false;
+});
+$("prevbtn").onclick = () => showFrame(state.frame - 1);
+$("nextbtn").onclick = () => showFrame(state.frame + 1);
+$("playbtn").onclick = togglePlayback;
+$("video").addEventListener("play", updatePlayButton);
+$("video").addEventListener("pause", updatePlayButton);
+$("video").addEventListener("seeked", () => { syncVideoPosition(); drawOverlay(); });
+$("video").addEventListener("timeupdate", () => {
+  if (!$("video").requestVideoFrameCallback) syncVideoPosition();
+});
+document.addEventListener("keydown", e => {
+  if (["INPUT", "SELECT", "TEXTAREA"].includes(e.target.tagName)) return;
+  if (e.key === "ArrowLeft") { e.preventDefault(); showFrame(state.frame - 1); }
+  if (e.key === "ArrowRight") { e.preventDefault(); showFrame(state.frame + 1); }
+  if (e.code === "Space") { e.preventDefault(); togglePlayback(); }
+});
+
+/* ── 画面交互：点击探针 / 拖框 ── */
+const stage = $("stage");
+let dragStart = null;
+function evtToOrig(e) {
+  const r = activeVisual().getBoundingClientRect();
+  const dx = e.clientX - r.left, dy = e.clientY - r.top;
+  const scale = state.info.width / r.width;
+  return [Math.floor(dx * scale), Math.floor(dy * scale), dx, dy];
+}
+stage.addEventListener("mousedown", e => {
+  if (!state.info || e.target !== activeVisual()) return;
+  if (!state.previewReady) return toast("画面正在定位，请稍候");
+  if (state.previewMode === "video" && !$("video").paused) return toast("请先暂停再探测画面");
+  dragStart = evtToOrig(e);
+});
+stage.addEventListener("mousemove", e => {
+  if (!dragStart || e.target !== activeVisual()) return;
+  const cur = evtToOrig(e);
+  if (Math.abs(cur[2] - dragStart[2]) + Math.abs(cur[3] - dragStart[3]) < 4) return;
+  showSelBox(dragStart, cur);
+});
+stage.addEventListener("mouseup", async e => {
+  if (!dragStart || !state.info) return;
+  const start = dragStart; dragStart = null;
+  if (e.target !== activeVisual()) { return; }
+  const end = evtToOrig(e);
+  const moved = Math.abs(end[2] - start[2]) + Math.abs(end[3] - start[3]) >= 4;
+  if (!moved) { hideSelBox(); await probePixel(start[0], start[1], end[2], end[3]); return; }
+  const x = Math.max(0, Math.min(start[0], end[0]));
+  const y = Math.max(0, Math.min(start[1], end[1]));
+  const w = Math.min(state.info.width - x, Math.abs(end[0] - start[0]) + 1);
+  const h = Math.min(state.info.height - y, Math.abs(end[1] - start[1]) + 1);
+  if (w < 1 || h < 1) return;
+  state.selRect = [x, y, w, h];
+  setChangeTarget(state.selRect);
+  await analyzeRegion();
+});
+function showSelBox(a, b) {
+  const box = $("selbox"), r = activeVisual().getBoundingClientRect(), sr = stage.getBoundingClientRect();
+  box.style.display = "block";
+  box.style.left = Math.min(a[2], b[2]) + (r.left - sr.left) + "px";
+  box.style.top = Math.min(a[3], b[3]) + (r.top - sr.top) + "px";
+  box.style.width = Math.abs(b[2] - a[2]) + "px";
+  box.style.height = Math.abs(b[3] - a[3]) + "px";
+}
+function hideSelBox() { $("selbox").style.display = "none"; }
+function drawOverlay() { hideSelBox(); $("probemark").style.display = "none"; }
+
+/* ── 像素探针 ── */
+async function probePixel(x, y, dispX, dispY) {
+  try {
+    const params = { points: `${x},${y}` };
+    if (state.info.media_type === "video") params.frame = state.frame;
+    const data = await api("pixels", params);
+    const p = data.pixels[0];
+    const sw = $("swatch");
+    sw.style.display = "flex"; sw.style.background = p.hex; sw.textContent = p.hex;
+    $("pixelkv").innerHTML = [
+      ["坐标", `(${p.x}, ${p.y})`], ["pixel_id", p.pixel_id],
+      ["帧 / 时间", p.frame === null ? "图片" : `${p.frame} / ${p.time_seconds}s`],
+      ["RGB", `${p.rgb.r}, ${p.rgb.g}, ${p.rgb.b}`],
+      ["HSV", `${p.hsv.h}°, ${p.hsv.s}, ${p.hsv.v}`],
+      ["Lab", `${p.lab.l}, ${p.lab.a}, ${p.lab.b}`],
+      ["亮度(加权)", p.luminance], ["亮度(线性)", p.luminance_linear],
+    ].map(([k, v]) => `<label>${k}</label><data>${v}</data>`).join("");
+    $("xty").value = y; $("ytx").value = x;
+    const mark = $("probemark"), r = activeVisual().getBoundingClientRect(), sr = stage.getBoundingClientRect();
+    mark.style.display = "block";
+    mark.style.left = dispX + (r.left - sr.left) + "px";
+    mark.style.top = dispY + (r.top - sr.top) + "px";
+  } catch (e) { toast(e.message); }
+}
+
+/* ── 区域统计 ── */
+async function analyzeRegion() {
+  const [x, y, w, h] = state.selRect;
+  try {
+    const params = { rect: `${x},${y},${w},${h}` };
+    if (state.info.media_type === "video") params.frame = state.frame;
+    const s = (await api("region", params)).statistics;
+    const f = o => `${o.r ?? o.h ?? o.l}, ${o.g ?? o.s ?? o.a}, ${o.b ?? o.v ?? o.b}`;
+    $("regionkv").innerHTML = [
+      ["选区", `(${x},${y}) ${w}×${h}`], ["像素数", s.pixel_count],
+      ["均值 RGB", `${s.mean_rgb.r}, ${s.mean_rgb.g}, ${s.mean_rgb.b}`],
+      ["中位 RGB", `${s.median_rgb.r}, ${s.median_rgb.g}, ${s.median_rgb.b}`],
+      ["标准差", `${s.std_rgb.r}, ${s.std_rgb.g}, ${s.std_rgb.b}`],
+      ["均值 HSV", `${s.mean_hsv.h}°, ${s.mean_hsv.s}, ${s.mean_hsv.v}`],
+      ["均值 Lab", `${s.mean_lab.l}, ${s.mean_lab.a}, ${s.mean_lab.b}`],
+      ["亮度 μ/σ", `${s.mean_luminance} / ${s.std_luminance}`],
+    ].map(([k, v]) => `<label>${k}</label><data>${v}</data>`).join("");
+    $("regionactions").style.display = state.info.media_type === "video" ? "flex" : "none";
+  } catch (e) { toast(e.message); }
+}
+$("regionchanges").onclick = () => runChanges("regionchanges");
+
+/* ── 变化检测 ── */
+const analysisButtons = ["runchanges", "regionchanges", "runxt", "runyt", "runtl"];
+function analysisSampleEvery() {
+  const value = Math.round(Number($("samplestep").value));
+  return Number.isFinite(value) ? Math.max(1, value) : 1;
+}
+async function withAnalysis(buttonId, task) {
+  if (state.analysisBusy) return toast("已有分析任务正在运行");
+  state.analysisBusy = true;
+  analysisButtons.forEach(id => $(id).disabled = true);
+  $(buttonId).classList.add("loading");
+  try { await task(); }
+  finally {
+    state.analysisBusy = false;
+    analysisButtons.forEach(id => $(id).disabled = false);
+    $(buttonId).classList.remove("loading");
+  }
+}
+function setChangeTarget(rect) {
+  $("changetarget").textContent = rect ? `选区 (${rect.join(",")})` : "全画面";
+}
+$("runchanges").onclick = () => runChanges("runchanges");
+async function runChanges(buttonId = "runchanges") {
+  if (!state.info || state.info.media_type !== "video") return;
+  const rect = state.selRect || [0, 0, state.info.width, state.info.height];
+  setChangeTarget(state.selRect);
+  await withAnalysis(buttonId, async () => {
+    try {
+      const fast = $("changemode").value === "fast";
+      const sampleEvery = analysisSampleEvery();
+      const params = { top: 10, sample_every: sampleEvery };
+      let spatialStep = 1;
+      if (fast) {
+        spatialStep = Math.max(1, Math.ceil(Math.sqrt(rect[2] * rect[3] / 4096)));
+        params.grid = rect.join(","); params.step = spatialStep;
+      } else params.rect = rect.join(",");
+      toast(`变化检测运行中 · ${fast ? `快速网格 ${spatialStep}px` : "精确像素"} · 每 ${sampleEvery} 帧 …`, 60000);
+      const data = await api("changes", params);
+      toast(`完成：分析 ${data.frames_analyzed} 帧`);
+      state.changes = data;
+      drawChangesChart(data.records);
+      const tb = $("changestable").querySelector("tbody");
+      tb.innerHTML = data.top.map(r =>
+        `<tr data-f="${r.frame}"><td class="f">${r.frame}</td><td>${r.time_seconds}</td>
+         <td>${r.score}</td><td>${r.normalized_score}</td></tr>`).join("");
+      $("changestable").style.display = "table";
+      tb.querySelectorAll("tr").forEach(tr => tr.onclick = () => showFrame(+tr.dataset.f));
+    } catch (e) { toast(e.message, 5000); }
+  });
+}
+function drawChangesChart(records) {
+  const cv = $("changeschart");
+  cv.width = cv.clientWidth * devicePixelRatio; cv.height = 72 * devicePixelRatio;
+  const ctx = cv.getContext("2d");
+  ctx.scale(devicePixelRatio, devicePixelRatio);
+  const W = cv.clientWidth, H = 72;
+  ctx.clearRect(0, 0, W, H);
+  if (!records.length) return;
+  let max = 0;
+  for (const record of records) max = Math.max(max, record.score);
+  max ||= 1;
+  const bucketCount = Math.min(records.length, Math.max(1, Math.floor(W)));
+  const buckets = Array(bucketCount).fill(null);
+  records.forEach((record, index) => {
+    const bucket = Math.min(bucketCount - 1, Math.floor(index * bucketCount / records.length));
+    if (!buckets[bucket] || record.score > buckets[bucket].score) buckets[bucket] = record;
+  });
+  const bw = W / bucketCount;
+  buckets.forEach((r, i) => {
+    const h = Math.max(1, (r.score / max) * (H - 6));
+    ctx.fillStyle = r.score === max ? "#ffb454" : "#3f6b46";
+    ctx.fillRect(i * bw, H - h, Math.max(1, bw - 1), h);
+  });
+  cv.onclick = e => {
+    const i = Math.floor(e.offsetX / bw);
+    if (buckets[i]) showFrame(buckets[i].frame);
+  };
+}
+
+/* ── 切片与时间线 ── */
+$("runxt").onclick = () => runSlice("xt", +$("xty").value);
+$("runyt").onclick = () => runSlice("yt", +$("ytx").value);
+async function runSlice(kind, coordinate) {
+  if (!state.info || state.info.media_type !== "video") return;
+  await withAnalysis(kind === "xt" ? "runxt" : "runyt", async () => {
+    try {
+      const sampleEvery = analysisSampleEvery();
+      toast(`生成 ${kind.toUpperCase()} 切片 · 每 ${sampleEvery} 帧 …`, 60000);
+      const data = await api(kind, { coordinate, sample_every: sampleEvery });
+      toast(`完成：${data.frames.length} 帧`);
+      showSliceImage(data, kind);
+    } catch (e) { toast(e.message, 5000); }
+  });
+}
+$("runtl").onclick = async () => {
+  if (!state.info || state.info.media_type !== "video") return;
+  const rect = state.selRect || [0, 0, state.info.width, state.info.height];
+  const step = Math.max(1, Math.round(Math.min(rect[2], rect[3]) / 24));
+  await withAnalysis("runtl", async () => {
+    try {
+      const sampleEvery = analysisSampleEvery();
+      toast(`提取时间线 · 每 ${sampleEvery} 帧 …`, 60000);
+      const data = await api("timeline", { grid: rect.join(","), step, sample_every: sampleEvery });
+      toast(`完成：${data.k_points} 点 × ${data.t_frames} 帧（横轴=时间）`);
+      // 时间线横轴为时间：点击列跳帧
+      state.sliceKind = "tl"; state.sliceFrames = data.frames; state.sliceScale = data.display_scale;
+      const im = $("sliceimg");
+      im.src = "data:image/png;base64," + data.image_base64;
+      im.style.display = "block"; $("slicehint").style.display = "none";
+      im.onclick = e => {
+        const col = Math.floor(e.offsetX / (im.clientWidth / (data.t_frames)));
+        if (data.frames[col] !== undefined) showFrame(data.frames[col]);
+      };
+    } catch (e) { toast(e.message, 5000); }
+  });
+};
+function showSliceImage(data, kind) {
+  state.sliceKind = kind; state.sliceFrames = data.frames; state.sliceScale = data.display_scale;
+  const im = $("sliceimg");
+  im.src = "data:image/png;base64," + data.image_base64;
+  im.style.display = "block"; $("slicehint").style.display = "none";
+  im.onclick = e => {   // 纵轴=时间：点击行跳帧
+    const row = Math.floor(e.offsetY / (im.clientHeight / data.frames.length));
+    if (data.frames[row] !== undefined) showFrame(data.frames[row]);
+  };
+}
+</script>
+</body>
+</html>

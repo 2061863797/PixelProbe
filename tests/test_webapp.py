@@ -140,6 +140,29 @@ def test_api_changes(base_url: str, test_video: Path) -> None:
     )["data"]
     assert data["top"][0]["frame"] == FLASH_FRAME
     assert len(data["records"]) == FRAME_COUNT - 1
+    assert len(data["events"]) == 1
+    assert data["event_threshold_used"] > 0
+
+
+def test_api_reduce(base_url: str, test_video: Path) -> None:
+    data = _get_json(
+        base_url, "/api/reduce", path=test_video, op="max", rect="24,16,1,1"
+    )["data"]
+    assert data["op"] == "max"
+    assert data["stat_max"] == [255.0, 255.0, 255.0]
+    image = Image.open(
+        io.BytesIO(base64.b64decode(data["image_base64"]))
+    )
+    assert image.format == "PNG"
+
+
+def test_api_compare(base_url: str, test_video: Path) -> None:
+    data = _get_json(
+        base_url, "/api/compare", path=test_video, frame_a=0, frame_b=5
+    )["data"]
+    assert data["changed_pixels"] == 3
+    assert data["bbox"]["x"] == 0
+    assert "image_base64" in data
 
 
 def test_api_xt_image(base_url: str, test_video: Path) -> None:

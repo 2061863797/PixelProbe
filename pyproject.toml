@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pixelprobe"
-version = "0.3.0"
+version = "0.5.0"
 description = "面向人类和 AI Agent 的图片、视频像素分析 CLI 工具"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -21,7 +21,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8"]
+flow = ["opencv-python-headless>=4.10"]
+dev = ["pytest>=8", "opencv-python-headless>=4.10"]
 
 [project.urls]
 Homepage = "https://github.com/2061863797/PixelProbe"
@@ -41,3 +42,5 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+# tests/assets 是历史遗留的运行时产物目录，可能残留被锁定的临时子目录
+norecursedirs = ["assets", ".*", "build", "dist"]

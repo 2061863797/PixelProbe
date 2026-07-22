@@ -13,7 +13,10 @@
 - /api/region          区域统计 JSON（rect=x,y,w,h）
 - /api/timeline        时间线 JSON + image_base64（points|grid...）
 - /api/xt /api/yt      时空切片 JSON + image_base64（coordinate=...）
-- /api/changes         变化检测 JSON（point|rect|grid, top）
+- /api/changes         变化检测 JSON（point|rect|grid，缺省整帧；含事件分段）
+- /api/reduce          时间域合成 JSON + image_base64（op=mean|median|min|max|std|diff）
+- /api/compare         两帧比较 JSON + image_base64（frame_a|time_a, frame_b|time_b）
+- /api/flow            两帧光流 JSON + image_base64（需可选依赖 pixelprobe[flow]）
 
 成功返回 {"success": true, "data": ...}；
 失败返回 {"success": false, "error": {code, message}}，
@@ -299,6 +302,9 @@ def _api_changes(q: _Query) -> dict:
     top = core.top_changes(
         result.records, 10 if requested_top is None else requested_top
     )
+    events, threshold_used = core.segment_events(
+        result.records, threshold=q.get_float("threshold", minimum=0)
+    )
     return {
         "mode": result.mode,
         "frames_analyzed": result.frames_analyzed,
@@ -306,7 +312,113 @@ def _api_changes(q: _Query) -> dict:
         "end_frame": result.frame_range.end,
         "records": [r.to_dict() for r in result.records],
         "top": [r.to_dict() for r in top],
+        "events": [e.to_dict() for e in events],
+        "event_threshold_used": threshold_used,
     }
+
+
+def _api_reduce(q: _Query) -> dict:
+    rect_text = q.get("rect")
+    smooth = q.get_int("smooth", minimum=0, maximum=64)
+    result = core.temporal_reduce(
+        Path(q.require("path")),
+        op=q.get("op", "std"),  # type: ignore[arg-type]
+        rect=parse_rect(rect_text) if rect_text else None,
+        p_low=_or_default(q.get_float("p_low", minimum=0, maximum=100), 1.0),
+        p_high=_or_default(q.get_float("p_high", minimum=0, maximum=100), 99.0),
+        destripe=q.get("destripe") == "1",
+        smooth=0 if smooth is None else smooth,
+        **_range_kwargs(q),
+    )
+    display = fit_within(result.image, DEFAULT_MAX_DIM, DEFAULT_MAX_DIM)
+    display, scale = _auto_scale(display, target=256)
+    return {
+        "op": result.op,
+        "frames_analyzed": result.frames_analyzed,
+        "start_frame": result.frame_range.start,
+        "end_frame": result.frame_range.end,
+        "stat_min": result.stat_min,
+        "stat_max": result.stat_max,
+        "stat_mean": result.stat_mean,
+        "stretch_low_value": result.stretch_low_value,
+        "stretch_high_value": result.stretch_high_value,
+        "destripe": result.destripe,
+        "smooth": result.smooth,
+        "raw_width": int(result.image.shape[1]),
+        "raw_height": int(result.image.shape[0]),
+        "display_scale": scale,
+        "image_base64": _png_base64(display),
+    }
+
+
+def _api_compare(q: _Query) -> dict:
+    rect_text = q.get("rect")
+    threshold = q.get_int("threshold", minimum=0, maximum=255)
+    result = core.compare_frames(
+        Path(q.require("path")),
+        frame_a=q.get_int("frame_a", minimum=0),
+        time_a=q.get_float("time_a", minimum=0),
+        frame_b=q.get_int("frame_b", minimum=0),
+        time_b=q.get_float("time_b", minimum=0),
+        rect=parse_rect(rect_text) if rect_text else None,
+        threshold=10 if threshold is None else threshold,
+        colormap=q.get("colormap", "fire"),  # type: ignore[arg-type]
+    )
+    display = fit_within(result.diff_image, DEFAULT_MAX_DIM, DEFAULT_MAX_DIM)
+    display, scale = _auto_scale(display, target=256)
+    return {
+        "frame_a": result.frame_a,
+        "frame_b": result.frame_b,
+        "time_a": result.time_a,
+        "time_b": result.time_b,
+        "threshold": result.threshold,
+        "mean_abs_diff": result.mean_abs_diff,
+        "max_abs_diff": result.max_abs_diff,
+        "changed_pixels": result.changed_pixels,
+        "changed_ratio": result.changed_ratio,
+        "bbox": (
+            {"x": result.bbox[0], "y": result.bbox[1],
+             "width": result.bbox[2], "height": result.bbox[3]}
+            if result.bbox else None
+        ),
+        "display_scale": scale,
+        "image_base64": _png_base64(display),
+    }
+
+
+def _api_flow(q: _Query) -> dict:
+    threshold = q.get_float("mag_threshold", minimum=0)
+    result = core.compute_flow(
+        Path(q.require("path")),
+        frame_a=q.get_int("frame_a", minimum=0),
+        time_a=q.get_float("time_a", minimum=0),
+        frame_b=q.get_int("frame_b", minimum=0),
+        time_b=q.get_float("time_b", minimum=0),
+        compensate_global=q.get("compensate") == "1",
+        mag_threshold=1.0 if threshold is None else threshold,
+    )
+    display = fit_within(result.flow_image, DEFAULT_MAX_DIM, DEFAULT_MAX_DIM)
+    display, scale = _auto_scale(display, target=256)
+    return {
+        "frame_a": result.frame_a,
+        "frame_b": result.frame_b,
+        "mean_magnitude": result.mean_magnitude,
+        "max_magnitude": result.max_magnitude,
+        "dominant_angle_deg": result.dominant_angle_deg,
+        "global_motion": result.global_motion,
+        "compensated": result.compensated,
+        "motion_bbox": (
+            {"x": result.motion_bbox[0], "y": result.motion_bbox[1],
+             "width": result.motion_bbox[2], "height": result.motion_bbox[3]}
+            if result.motion_bbox else None
+        ),
+        "display_scale": scale,
+        "image_base64": _png_base64(display),
+    }
+
+
+def _or_default(value: float | None, default: float) -> float:
+    return default if value is None else value
 
 
 _JSON_ROUTES = {
@@ -318,6 +430,9 @@ _JSON_ROUTES = {
     "/api/xt": lambda q: _api_slice(q, "xt"),
     "/api/yt": lambda q: _api_slice(q, "yt"),
     "/api/changes": _api_changes,
+    "/api/reduce": _api_reduce,
+    "/api/compare": _api_compare,
+    "/api/flow": _api_flow,
 }
 
 

@@ -19,6 +19,8 @@ from pixelprobe.cli import (
 from pixelprobe.models.errors import InvalidRangeError
 from pixelprobe.output import csv_writer, json_writer
 from pixelprobe.output.console import out_console, print_table, progress_bar
+from pixelprobe.output.image_writer import save_png
+from pixelprobe.output.plot import render_curve
 from pixelprobe.utils.coordinates import parse_point, parse_rect
 
 
@@ -37,6 +39,13 @@ def changes(
         None, "--step", help="网格采样步长（与 --grid 搭配）"
     ),
     top: int = typer.Option(10, "--top", help="返回变化最大的前 N 帧"),
+    threshold: Optional[float] = typer.Option(
+        None, "--threshold",
+        help="事件分段阈值（作用于归一化得分；缺省自动取 mean + 3*std）",
+    ),
+    curve_image: Optional[Path] = typer.Option(
+        None, "--curve-image", help="导出完整变化曲线 PNG（事件区间描色）"
+    ),
     start_frame: Optional[int] = typer.Option(
         None, "--start-frame", help="起始帧（含）"
     ),
@@ -54,7 +63,10 @@ def changes(
     verbose: bool = VERBOSE_OPT,
     no_progress: bool = NO_PROGRESS_OPT,
 ) -> None:
-    """计算像素/区域/网格在相邻帧之间的变化量，返回变化最大的时间点。"""
+    """计算相邻帧变化量并按阈值分段为事件区间。
+
+    --point / --rect / --grid 最多指定一个，都不给时默认整帧。
+    """
     ctx = CliContext(json_mode, quiet, verbose, no_progress)
     with cli_guard("changes", ctx):
         if top < 1:
@@ -78,11 +90,30 @@ def changes(
                 progress=update,
             )
         top_records = core.top_changes(result.records, top)
+        events, threshold_used = core.segment_events(
+            result.records, threshold=threshold
+        )
 
         csv_path: str | None = None
         if csv is not None:
             csv_writer.write_changes_csv(csv, result.records)
             csv_path = str(csv)
+
+        curve_path: str | None = None
+        if curve_image is not None:
+            frame_of = {r.frame: i for i, r in enumerate(result.records)}
+            prev_of = {r.previous_frame: i for i, r in enumerate(result.records)}
+            spans = [
+                (prev_of[e.start_frame], frame_of[e.end_frame])
+                for e in events
+                if e.start_frame in prev_of and e.end_frame in frame_of
+            ]
+            curve = render_curve(
+                [r.normalized_score for r in result.records],
+                spans=spans, y_min=0.0,
+            )
+            save_png(curve, curve_image)
+            curve_path = str(curve_image)
 
         data = {
             "mode": result.mode,
@@ -106,7 +137,10 @@ def changes(
             "sample_every": result.frame_range.sample_every,
             "frames_analyzed": result.frames_analyzed,
             "top": [r.to_dict() for r in top_records],
+            "events": [e.to_dict() for e in events],
+            "event_threshold_used": threshold_used,
             "csv_path": csv_path,
+            "curve_image_path": curve_path,
         }
         if ctx.json_mode:
             json_writer.print_success("changes", data)
@@ -124,5 +158,21 @@ def changes(
                 for r in top_records
             ],
         )
+        if events:
+            print_table(
+                f"事件区间（阈值 {threshold_used}）",
+                ["起始帧", "结束帧", "起始(秒)", "结束(秒)", "峰值帧", "峰值得分"],
+                [
+                    [e.start_frame, e.end_frame, e.start_time, e.end_time,
+                     e.peak_frame, e.peak_score]
+                    for e in events
+                ],
+            )
+        else:
+            out_console.print(
+                f"未检出事件区间（阈值 {threshold_used}）", highlight=False
+            )
         if csv_path:
             out_console.print(f"全部记录已导出：{csv_path}", highlight=False)
+        if curve_path:
+            out_console.print(f"变化曲线已导出：{curve_path}", highlight=False)

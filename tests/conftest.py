@@ -18,13 +18,27 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 from generate_test_image import generate_test_image, make_image_array  # noqa: E402
 from generate_test_video import (  # noqa: E402
+    BLINK_FRAME_COUNT,
+    BLINK_PERIOD,
+    BLINK_RECT,
     COUNTER_POS,
     FLASH_FRAME,
     FRAME_COUNT,
     GREEN_POS,
+    MOTION_BLOCK,
+    MOTION_FRAME_COUNT,
+    MOTION_STEP,
+    MOTION_X0,
+    MOTION_Y,
+    NOISE_FRAME_COUNT,
+    NOISE_QUIET_RECT,
+    NOISE_SIZE,
     RED_Y,
     VFR_FRAME_COUNT,
+    generate_blink_video,
     generate_compat_video,
+    generate_motion_video,
+    generate_noise_video,
     generate_test_video,
     generate_vfr_video,
     make_frame,
@@ -39,6 +53,17 @@ __all__ = [
     "RED_Y",
     "GREEN_POS",
     "COUNTER_POS",
+    "NOISE_SIZE",
+    "NOISE_FRAME_COUNT",
+    "NOISE_QUIET_RECT",
+    "BLINK_FRAME_COUNT",
+    "BLINK_PERIOD",
+    "BLINK_RECT",
+    "MOTION_FRAME_COUNT",
+    "MOTION_BLOCK",
+    "MOTION_STEP",
+    "MOTION_X0",
+    "MOTION_Y",
 ]
 
 
@@ -73,6 +98,24 @@ def offset_vfr_video(assets_dir: Path) -> Path:
     return generate_vfr_video(
         assets_dir / "偏移变帧率.mkv", pts_offset_ms=5000
     )
+
+
+@pytest.fixture(scope="session")
+def noise_video(assets_dir: Path) -> Path:
+    """噪点藏区域视频：中央 16×16 噪声幅度减半（时间 std 偏低）。"""
+    return generate_noise_video(assets_dir / "噪声视频.mkv")
+
+
+@pytest.fixture(scope="session")
+def blink_video(assets_dir: Path) -> Path:
+    """周期闪烁视频：30fps、每 6 帧亮一次（5Hz）。"""
+    return generate_blink_video(assets_dir / "闪烁视频.mkv")
+
+
+@pytest.fixture(scope="session")
+def motion_video(assets_dir: Path) -> Path:
+    """匀速右移白块视频：光流主方向约 0°。"""
+    return generate_motion_video(assets_dir / "运动视频.mkv")
 
 
 def run_cli(*args: object) -> subprocess.CompletedProcess[str]:

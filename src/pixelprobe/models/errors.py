@@ -66,3 +66,8 @@ class InvalidRangeError(PixelProbeError):
 class OutputWriteError(PixelProbeError):
     code = "OUTPUT_WRITE_FAILED"
     exit_code = 8
+
+
+class DependencyMissingError(PixelProbeError):
+    code = "DEPENDENCY_MISSING"
+    exit_code = 1

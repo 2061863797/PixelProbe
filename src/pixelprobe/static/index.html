@@ -236,6 +236,10 @@
             <thead><tr><th>帧</th><th>时间 s</th><th>得分</th><th>归一化</th></tr></thead>
             <tbody></tbody>
           </table>
+          <table id="eventstable" style="display:none">
+            <thead><tr><th>事件起</th><th>事件止</th><th>峰值帧</th><th>峰值归一化</th></tr></thead>
+            <tbody></tbody>
+          </table>
         </div>
       </div>
 
@@ -247,6 +251,44 @@
           <button id="runtl">时间线</button><label style="color:#45565e">(用当前选区网格)</label>
         </div>
         <div class="slicebody"><div class="empty" id="slicehint">选择扫描线坐标后运行；探测像素会自动填入 x/y</div><img class="sliceimg" id="sliceimg" style="display:none"></div>
+      </div>
+
+      <div class="panel">
+        <h2>时间域合成 <span class="hint">整段视频折叠为一张统计图</span></h2>
+        <div class="inline-inputs">
+          <label>统计量</label>
+          <select id="reduceop" title="std=时间标准差（噪声藏图）；diff=运动能量；mean/median/min/max=时间聚合">
+            <option value="std">std</option><option value="diff">diff</option>
+            <option value="mean">mean</option><option value="median">median</option>
+            <option value="min">min</option><option value="max">max</option>
+          </select>
+          <label><input type="checkbox" id="reducedestripe" style="width:auto"> 去条纹</label>
+          <label>平滑</label><input id="reducesmooth" value="0" title="N×N 邻域均值平滑，>=2 生效；噪声藏图建议 5~11">
+          <button id="runreduce">运行</button>
+        </div>
+        <div class="slicebody"><div class="empty" id="reducehint">使用当前选区（无选区=全画面）；std 可显出噪声中隐藏图案，diff 显出运动发生的位置</div><img class="sliceimg" id="reduceimg" style="display:none"><div class="kv" id="reducekv"></div></div>
+      </div>
+
+      <div class="panel">
+        <h2>两帧比较 <span class="hint">差异热力图 · bbox=变化区域</span></h2>
+        <div class="inline-inputs">
+          <label>帧 A</label><input id="cmpa" value="0">
+          <label>帧 B</label><input id="cmpb" value="1">
+          <label>阈值</label><input id="cmpthr" value="10">
+          <button id="runcompare">运行</button>
+        </div>
+        <div class="slicebody"><div class="empty" id="comparehint">输入两个帧号运行；变化检测的峰值帧适合与前一帧比较</div><img class="sliceimg" id="compareimg" style="display:none"><div class="kv" id="comparekv"></div></div>
+      </div>
+
+      <div class="panel">
+        <h2>光流 <span class="hint">hue=方向 · 亮=快（需安装 pixelprobe[flow]）</span></h2>
+        <div class="inline-inputs">
+          <label>帧 A</label><input id="flowa" value="0">
+          <label>帧 B</label><input id="flowb" value="1">
+          <label><input type="checkbox" id="flowcomp" style="width:auto"> 扣除全局运动</label>
+          <button id="runflow">运行</button>
+        </div>
+        <div class="slicebody"><div class="empty" id="flowhint">比较两帧的稠密运动场；勾选扣除全局运动可区分镜头移动与物体移动</div><img class="sliceimg" id="flowimg" style="display:none"><div class="kv" id="flowkv"></div></div>
       </div>
     </div>
   </div>
@@ -631,7 +673,7 @@ async function analyzeRegion() {
 $("regionchanges").onclick = () => runChanges("regionchanges");
 
 /* ── 变化检测 ── */
-const analysisButtons = ["runchanges", "regionchanges", "runxt", "runyt", "runtl"];
+const analysisButtons = ["runchanges", "regionchanges", "runxt", "runyt", "runtl", "runreduce", "runcompare", "runflow"];
 function analysisSampleEvery() {
   const value = Math.round(Number($("samplestep").value));
   return Number.isFinite(value) ? Math.max(1, value) : 1;
@@ -668,7 +710,9 @@ async function runChanges(buttonId = "runchanges") {
       } else params.rect = rect.join(",");
       toast(`变化检测运行中 · ${fast ? `快速网格 ${spatialStep}px` : "精确像素"} · 每 ${sampleEvery} 帧 …`, 60000);
       const data = await api("changes", params);
-      toast(`完成：分析 ${data.frames_analyzed} 帧`);
+      // 后端进程若是旧版本可能没有 events 字段，降级为空而不是崩溃
+      const events = data.events || [];
+      toast(`完成：分析 ${data.frames_analyzed} 帧，检出 ${events.length} 个事件`);
       state.changes = data;
       drawChangesChart(data.records);
       const tb = $("changestable").querySelector("tbody");
@@ -677,6 +721,14 @@ async function runChanges(buttonId = "runchanges") {
          <td>${r.score}</td><td>${r.normalized_score}</td></tr>`).join("");
       $("changestable").style.display = "table";
       tb.querySelectorAll("tr").forEach(tr => tr.onclick = () => showFrame(+tr.dataset.f));
+      const eb = $("eventstable").querySelector("tbody");
+      eb.innerHTML = events.map(ev =>
+        `<tr data-f="${ev.peak_frame}"><td class="f">${ev.start_frame}</td><td>${ev.end_frame}</td>
+         <td class="f">${ev.peak_frame}</td><td>${ev.peak_normalized}</td></tr>`).join("");
+      $("eventstable").style.display = events.length ? "table" : "none";
+      eb.querySelectorAll("tr").forEach(tr => tr.onclick = () => showFrame(+tr.dataset.f));
+      $("cmpa").value = data.top.length ? data.top[0].previous_frame : 0;
+      $("cmpb").value = data.top.length ? data.top[0].frame : 1;
     } catch (e) { toast(e.message, 5000); }
   });
 }
@@ -756,6 +808,87 @@ function showSliceImage(data, kind) {
     if (data.frames[row] !== undefined) showFrame(data.frames[row]);
   };
 }
+
+/* ── 时间域合成 ── */
+$("runreduce").onclick = async () => {
+  if (!state.info || state.info.media_type !== "video") return;
+  await withAnalysis("runreduce", async () => {
+    try {
+      const op = $("reduceop").value;
+      const sampleEvery = analysisSampleEvery();
+      const params = { op, sample_every: sampleEvery };
+      if (state.selRect) params.rect = state.selRect.join(",");
+      if ($("reducedestripe").checked) params.destripe = 1;
+      const smoothN = Math.round(+$("reducesmooth").value);
+      if (smoothN >= 2) params.smooth = smoothN;
+      toast(`时间域合成（${op}）运行中 · 每 ${sampleEvery} 帧 …`, 60000);
+      const data = await api("reduce", params);
+      toast(`完成：分析 ${data.frames_analyzed} 帧`);
+      $("reduceimg").src = "data:image/png;base64," + data.image_base64;
+      $("reduceimg").style.display = "block";
+      $("reducehint").style.display = "none";
+      $("reducekv").innerHTML = [
+        ["统计量", data.op], ["分析帧数", data.frames_analyzed],
+        ["原始范围", `${Math.min(...data.stat_min)} ~ ${Math.max(...data.stat_max)}`],
+        ["拉伸端点", `${data.stretch_low_value} ~ ${data.stretch_high_value}`],
+      ].map(([k, v]) => `<label>${k}</label><data>${v}</data>`).join("");
+    } catch (e) { toast(e.message, 5000); }
+  });
+};
+
+/* ── 两帧比较 ── */
+$("runcompare").onclick = async () => {
+  if (!state.info || state.info.media_type !== "video") return;
+  await withAnalysis("runcompare", async () => {
+    try {
+      const params = {
+        frame_a: Math.round(+$("cmpa").value),
+        frame_b: Math.round(+$("cmpb").value),
+        threshold: Math.round(+$("cmpthr").value) || 10,
+      };
+      if (state.selRect) params.rect = state.selRect.join(",");
+      toast(`比较帧 ${params.frame_a} 与 ${params.frame_b} …`, 60000);
+      const data = await api("compare", params);
+      toast(`完成：变化像素 ${data.changed_pixels}`);
+      $("compareimg").src = "data:image/png;base64," + data.image_base64;
+      $("compareimg").style.display = "block";
+      $("comparehint").style.display = "none";
+      $("comparekv").innerHTML = [
+        ["帧 A / B", `${data.frame_a} / ${data.frame_b}`],
+        ["平均差 / 最大差", `${data.mean_abs_diff} / ${data.max_abs_diff}`],
+        ["变化像素", `${data.changed_pixels}（${(data.changed_ratio * 100).toFixed(2)}%）`],
+        ["bbox", data.bbox ? `(${data.bbox.x},${data.bbox.y}) ${data.bbox.width}×${data.bbox.height}` : "无"],
+      ].map(([k, v]) => `<label>${k}</label><data>${v}</data>`).join("");
+    } catch (e) { toast(e.message, 5000); }
+  });
+};
+/* ── 光流 ── */
+$("runflow").onclick = async () => {
+  if (!state.info || state.info.media_type !== "video") return;
+  await withAnalysis("runflow", async () => {
+    try {
+      const params = {
+        frame_a: Math.round(+$("flowa").value),
+        frame_b: Math.round(+$("flowb").value),
+      };
+      if ($("flowcomp").checked) params.compensate = 1;
+      toast(`光流分析：帧 ${params.frame_a} → ${params.frame_b} …`, 60000);
+      const data = await api("flow", params);
+      toast(`完成：平均幅度 ${data.mean_magnitude}px`);
+      $("flowimg").src = "data:image/png;base64," + data.image_base64;
+      $("flowimg").style.display = "block";
+      $("flowhint").style.display = "none";
+      const gm = data.global_motion;
+      $("flowkv").innerHTML = [
+        ["帧 A / B", `${data.frame_a} / ${data.frame_b}`],
+        ["平均 / 最大幅度", `${data.mean_magnitude} / ${data.max_magnitude} px`],
+        ["主方向", data.dominant_angle_deg === null ? "无明显运动" : `${data.dominant_angle_deg}°`],
+        ["全局运动", gm ? `dx=${gm.dx} dy=${gm.dy} 旋转${gm.rotation_deg}°` : "估计失败"],
+        ["运动 bbox", data.motion_bbox ? `(${data.motion_bbox.x},${data.motion_bbox.y}) ${data.motion_bbox.width}×${data.motion_bbox.height}` : "无"],
+      ].map(([k, v]) => `<label>${k}</label><data>${v}</data>`).join("");
+    } catch (e) { toast(e.message, 5000); }
+  });
+};
 </script>
 </body>
 </html>

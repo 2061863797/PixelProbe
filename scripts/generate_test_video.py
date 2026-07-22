@@ -36,6 +36,25 @@ FLASH_FRAME = 15      # 整幅闪白帧
 # 兼容性视频：每帧一个纯色灰阶
 COMPAT_FRAME_COUNT = 10
 
+# 噪声视频：全画面随机噪声，中央区域噪声幅度减半（时间 std 显著偏低）
+NOISE_SIZE = 64
+NOISE_FRAME_COUNT = 40
+NOISE_QUIET_RECT = (24, 24, 16, 16)  # x, y, w, h
+NOISE_SEED = 20260722
+
+# 闪烁视频：中央区域每 BLINK_PERIOD 帧亮一次（30fps → 5Hz）
+BLINK_FRAME_COUNT = 60
+BLINK_PERIOD = 6
+BLINK_RECT = (12, 12, 8, 8)  # x, y, w, h
+
+# 运动视频：8×8 白块每帧右移 2 像素
+MOTION_SIZE = 64
+MOTION_FRAME_COUNT = 20
+MOTION_BLOCK = 8
+MOTION_STEP = 2
+MOTION_Y = 28
+MOTION_X0 = 4
+
 # VFR 视频：交替 20ms / 80ms 帧间隔（毫秒 PTS），验证精确 VFR 寻址
 VFR_FRAME_COUNT = 20
 VFR_PTS_MS: list[int] = []
@@ -85,11 +104,12 @@ def _decode_all(path: Path) -> list[np.ndarray]:
         ]
 
 
-def generate_test_video(path: Path) -> Path:
-    """生成无损测试视频并逐帧回读校验，失败抛 RuntimeError。"""
+def _encode_lossless_verified(
+    path: Path, expected: list[np.ndarray], fps: int, label: str,
+) -> Path:
+    """按 libx264rgb(qp=0) → ffv1 依次尝试无损编码并逐帧回读校验。"""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    expected = [make_frame(t) for t in range(FRAME_COUNT)]
     attempts: list[tuple[str, str, dict[str, str]]] = [
         ("libx264rgb", "rgb24", {"qp": "0", "preset": "veryfast"}),
         ("ffv1", "bgr0", {}),
@@ -97,19 +117,25 @@ def generate_test_video(path: Path) -> Path:
     errors: list[str] = []
     for codec, pix_fmt, options in attempts:
         try:
-            _encode(path, codec, pix_fmt, options, expected, FPS)
+            _encode(path, codec, pix_fmt, options, expected, fps)
         except (av.FFmpegError, ValueError) as exc:
             errors.append(f"{codec}: 编码失败（{exc}）")
             continue
         decoded = _decode_all(path)
-        if len(decoded) == FRAME_COUNT and all(
+        if len(decoded) == len(expected) and all(
             np.array_equal(a, b) for a, b in zip(decoded, expected)
         ):
             return path
         errors.append(f"{codec}: 回读校验不一致")
     raise RuntimeError(
-        "无法生成无损测试视频，尝试结果：" + "；".join(errors)
+        f"无法生成无损{label}测试视频，尝试结果：" + "；".join(errors)
     )
+
+
+def generate_test_video(path: Path) -> Path:
+    """生成无损测试视频并逐帧回读校验，失败抛 RuntimeError。"""
+    expected = [make_frame(t) for t in range(FRAME_COUNT)]
+    return _encode_lossless_verified(path, expected, FPS, "")
 
 
 def vfr_frame(t: int) -> np.ndarray:
@@ -167,6 +193,61 @@ def generate_compat_video(path: Path) -> Path:
     _encode(path, "libx264", "yuv420p", {"qp": "0", "preset": "veryfast"},
             frames, FPS)
     return path
+
+
+def make_noise_frames() -> list[np.ndarray]:
+    """构造噪声视频全部帧：固定种子均匀噪声，中央区域幅度减半。"""
+    rng = np.random.default_rng(NOISE_SEED)
+    x, y, w, h = NOISE_QUIET_RECT
+    frames = []
+    for _t in range(NOISE_FRAME_COUNT):
+        arr = rng.integers(
+            0, 256, size=(NOISE_SIZE, NOISE_SIZE, 3), dtype=np.uint8
+        )
+        # 中央区域围绕 128 减半波动：时间标准差约为外围的一半
+        quiet = arr[y : y + h, x : x + w].astype(np.int16)
+        arr[y : y + h, x : x + w] = (128 + (quiet - 128) // 2).astype(np.uint8)
+        frames.append(arr)
+    return frames
+
+
+def generate_noise_video(path: Path) -> Path:
+    """生成"噪点藏区域"无损测试视频：temporal_reduce(std) 应显出中央区域。"""
+    return _encode_lossless_verified(
+        path, make_noise_frames(), FPS, "噪声"
+    )
+
+
+def make_blink_frame(t: int) -> np.ndarray:
+    """闪烁视频第 t 帧：暗背景，中央区域按周期 6 帧、占空比 1/2 闪烁。
+
+    方波（而非单帧脉冲）保证基波幅度显著大于谐波，主频检测无歧义。
+    """
+    arr = np.full((HEIGHT, WIDTH, 3), 30, dtype=np.uint8)
+    if t % BLINK_PERIOD < BLINK_PERIOD // 2:
+        x, y, w, h = BLINK_RECT
+        arr[y : y + h, x : x + w] = 230
+    return arr
+
+
+def generate_blink_video(path: Path) -> Path:
+    """生成周期闪烁无损测试视频：30fps、周期 6 帧方波 → 主频 5Hz。"""
+    expected = [make_blink_frame(t) for t in range(BLINK_FRAME_COUNT)]
+    return _encode_lossless_verified(path, expected, FPS, "闪烁")
+
+
+def make_motion_frame(t: int) -> np.ndarray:
+    """运动视频第 t 帧：8×8 白块位于 (x=MOTION_X0+2t, y=MOTION_Y)。"""
+    arr = np.zeros((MOTION_SIZE, MOTION_SIZE, 3), dtype=np.uint8)
+    x = MOTION_X0 + MOTION_STEP * t
+    arr[MOTION_Y : MOTION_Y + MOTION_BLOCK, x : x + MOTION_BLOCK] = 255
+    return arr
+
+
+def generate_motion_video(path: Path) -> Path:
+    """生成匀速右移白块无损测试视频：光流主方向应约为 0°（向右）。"""
+    expected = [make_motion_frame(t) for t in range(MOTION_FRAME_COUNT)]
+    return _encode_lossless_verified(path, expected, FPS, "运动")
 
 
 if __name__ == "__main__":

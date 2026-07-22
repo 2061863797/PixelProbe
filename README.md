@@ -60,12 +60,16 @@ codex mcp add pixelprobe -- uvx --from git+https://github.com/2061863797/PixelPr
 ```
 
 首次调用时会从 GitHub 下载 PixelProbe 及其运行依赖，之后会使用本机缓存。
+注意：缓存不会自动跟随仓库更新，PixelProbe 发布新版本后请执行
+`uv cache clean pixelprobe` 后重启 AI 客户端（或用 `uvx --refresh` 方式启动）。
 接入完成后，可以直接把本地媒体路径和问题交给 AI，例如：
 
 > 分析 `D:\videos\test.mp4`，找出画面右上角第一次发生明显变化的准确帧号和时间。
 
-AI 可以读取指定的本地图片和视频。只有名称含 `save` 的四个保存工具会写入文件，
+AI 可以读取指定的本地图片和视频。只有名称含 `save` 的五个保存工具会写入文件，
 并且必须由 AI 明确提供输出路径；其他工具只返回分析结果和预览图。
+连接 MCP 时，PixelProbe 会自动向 AI 注入协作原则：AI 原有的视觉和视频理解
+负责看懂画面，PixelProbe 负责辅助定位并提供精确数据。
 
 ## 安装软件
 
@@ -100,14 +104,19 @@ pixelprobe-web
 - 播放视频、拖动时间轴、使用方向键逐帧查看；
 - 单击画面读取像素颜色；
 - 拖框选择区域并立即查看统计结果；
-- 对选区执行变化检测，点击变化峰值跳转到对应帧；
+- 对选区执行变化检测，点击变化峰值跳转到对应帧，并查看自动分段的事件区间；
 - 查看颜色时间线和 X–T / Y–T 时空切片；
+- 时间域合成（含去条纹/平滑增强）、两帧差异比较和两帧光流分析；
 - 调整采样步长，在速度和精度之间切换。
 
 可变帧率视频会使用真实逐帧时间进行定位。浏览器无法直接播放某种编码时，
 界面会自动切换到后端单帧预览。
 
 Web 服务只允许本机访问，不会监听 `0.0.0.0` 等外部地址。
+
+注意：`pixelprobe-web` 和 `pixelprobe-mcp` 都是长驻进程，升级 PixelProbe
+之后必须重启它们（MCP 由 AI 客户端管理，重启客户端或重连 MCP 即可），
+否则会继续运行旧版本代码，出现页面与接口不匹配等问题。
 
 ## 命令行
 
@@ -132,8 +141,26 @@ pixelprobe region input.mp4 --frame 120 --rect 400,200,200,150
 # 导出像素颜色时间线
 pixelprobe timeline input.mp4 --point 520,340 --output timeline.png --csv timeline.csv
 
-# 找出选区变化最大的 10 帧
+# 找出选区变化最大的 10 帧（不给目标时默认整帧，并自动分段为事件）
 pixelprobe changes input.mp4 --rect 400,200,200,150 --top 10
+
+# 一键概览：信息 + 代表帧网格 + 变化事件 + 异常帧（单遍解码）
+pixelprobe scan input.mp4 --sheet-output 概览.png
+
+# 时间域合成：噪声中的隐藏图案 / 运动能量分布
+pixelprobe reduce input.mp4 --op std --output 统计图.png
+
+# 比较两帧差异并定位变化区域
+pixelprobe compare input.mp4 --frame-a 100 --frame-b 101 --output 差异.png
+
+# 等距抽 9 帧拼网格图
+pixelprobe sheet input.mp4 --count 9 --output 网格.png
+
+# 周期闪烁检测（FFT 主频）
+pixelprobe spectrum input.mp4 --source luma
+
+# 稠密光流（需要 pip install "pixelprobe[flow]"）
+pixelprobe flow input.mp4 --frame-a 100 --frame-b 101 --flow-output 流场.png
 ```
 
 命令一览：
@@ -147,7 +174,14 @@ pixelprobe changes input.mp4 --rect 400,200,200,150 --top 10
 | `timeline` | 生成像素颜色时间线 |
 | `xt` | 生成水平扫描线的 X–T 切片 |
 | `yt` | 生成垂直扫描线的 Y–T 切片 |
-| `changes` | 定位变化最大的帧 |
+| `changes` | 定位变化最大的帧并分段为事件区间 |
+| `scan` | 一键概览：网格图 + 变化事件 + 异常帧 |
+| `reduce` | 时间域合成：逐像素 mean/median/min/max/std/diff 统计图 |
+| `compare` | 比较任意两帧：差异热力图与变化区域 bbox |
+| `sheet` | 等距抽帧拼接采样网格图 |
+| `spectrum` | 时间域 FFT：周期闪烁 / 周期变化检测 |
+| `spectrum2d` | 单帧空间 FFT：条纹 / 摩尔纹检测 |
+| `flow` | 稠密光流与全局运动估计（需 `[flow]` 可选依赖） |
 
 所有命令均支持：
 
@@ -160,19 +194,35 @@ pixelprobe changes input.mp4 --rect 400,200,200,150 --top 10
 
 ## AI 如何使用 PixelProbe
 
-PixelProbe 可以通过 MCP 把媒体分析能力交给 AI。AI 负责理解问题和选择分析策略，
-PixelProbe 负责返回精确的帧、时间、颜色和变化数据。
+PixelProbe 不会取代 AI 原有的视频处理能力。AI 的原生视觉负责理解对象、动作、
+事件与上下文；PixelProbe 的变化检测、时间线和时空切片用于缩小候选范围，
+并把视觉判断核对到精确的帧、时间、坐标和颜色。
+
+变化峰值只表示像素变化较大，不能单独证明某个对象移动或某个事件发生。
+AI 应把原生视频理解作为主要依据，并查看候选点前后的画面进行交叉确认。
 
 例如，当你询问“这个球从什么时候开始移动”时，AI 可以自动完成：
 
-1. 读取视频信息；
-2. 查看首帧并确定球的大致区域；
-3. 扫描该区域的变化；
-4. 提取变化点前后的关键帧；
-5. 结合画面内容与精确时间给出答案。
+1. 使用原生视频/视觉能力理解场景并识别球；
+2. 读取视频信息，确定准确尺寸、帧数和时间范围；
+3. 对球所在区域扫描变化，只把结果当作候选时刻；
+4. 提取候选点之前、当时和之后的画面，用视觉能力确认移动；
+5. 使用 PixelProbe 的真实帧号和时间戳给出精确答案。
 
-MCP 提供媒体信息、取帧、像素、区域、时间线、时空切片和变化检测等只读工具。
+MCP 提供媒体信息、取帧、像素、区域、时间线、时空切片、变化检测、一键扫描、
+时间域合成、两帧比较、采样网格、频域分析和光流等只读工具，全部参数直接
+暴露在工具 schema 顶层（无嵌套对象）。面对未知视频，建议先用
+`pixelprobe_scan_media` 一次调用建立概览，再逐步聚焦。
 需要写入文件时，AI 会使用独立的 PNG 保存工具，并明确提供输出路径；同名文件会被覆盖。
+
+光流分析（`pixelprobe_optical_flow` / `pixelprobe flow`）依赖 OpenCV，
+按需安装：`pip install "pixelprobe[flow]"`。未安装时其余功能不受影响，
+调用光流会返回带安装提示的 `DEPENDENCY_MISSING` 错误。
+
+仓库内置 Claude Code 技能 `.claude/skills/pixelprobe-video-analysis/SKILL.md`，
+包含完整的"场景 → 工具"决策表、统计图/光流图/频谱判读方法和参数经验值。
+在本仓库目录内使用 Claude Code 时自动可用；想在任意目录使用，
+把该技能目录复制到 `~/.claude/skills/` 即可。
 
 ## 坐标与时间
 

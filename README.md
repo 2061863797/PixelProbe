@@ -1,5 +1,7 @@
 # PixelProbe
 
+简体中文 | [English](https://github.com/2061863797/PixelProbe/blob/main/README_EN.md)
+
 **把图片与视频分析精确到帧、时间、坐标和像素。**
 
 PixelProbe 是一个本地图片与视频分析命令行工具。它可以定位视频中的关键变化、
@@ -121,6 +123,19 @@ pixelprobe spectrum input.mp4 --source luma
 # 稠密光流
 pixelprobe flow input.mp4 --frame-a 100 --frame-b 101 --flow-output flow.png
 ```
+
+## 示例效果
+
+下面的短视频包含被强噪声遮盖的低对比度数字。单看某一帧很难稳定判断，按连续帧区间
+聚合后，随时间变化的数字结构会更加明显：
+
+- [查看或下载输入视频](https://github.com/2061863797/PixelProbe/blob/main/docs/assets/pixelprobe-noise-demo.mp4)
+- 分析结果按帧号和时间分成六个连续区间，坐标和范围保持可追溯。
+
+![按连续帧区间得到的噪声视频分析结果](https://raw.githubusercontent.com/2061863797/PixelProbe/main/docs/assets/pixelprobe-noise-analysis.png)
+
+这个示例体现了 PixelProbe 的用途：Agent 用视觉理解画面，PixelProbe 提供准确的帧号、
+时间范围和确定性数值处理作为证据；分析结果本身不替代语义判断。
 
 `pixel` 默认返回历史兼容的显示 RGB8 值。`--sample native` 仅适用于图片，响应会
 明确给出 `sample_semantics`：已明确识别的无损常见格式返回 `stored_sample`；JPEG 等

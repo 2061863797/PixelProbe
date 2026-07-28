@@ -1,4 +1,5 @@
 include README.md
+include README_EN.md
 include pyproject.toml
 include scripts/generate_test_image.py
 include scripts/generate_test_video.py

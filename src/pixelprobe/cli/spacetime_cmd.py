@@ -11,7 +11,7 @@ from typing import Literal, Optional
 
 import typer
 
-from pixelprobe import core
+import pixelprobe
 from pixelprobe.cli import (
     JSON_OPT,
     NO_PROGRESS_OPT,
@@ -21,6 +21,9 @@ from pixelprobe.cli import (
     cli_guard,
 )
 from pixelprobe.models.spacetime import SpacetimeMetadata
+from pixelprobe.compat.legacy_requests import (
+    legacy_spacetime_request,
+)
 from pixelprobe.output import json_writer
 from pixelprobe.output.console import out_console, print_kv, progress_bar
 from pixelprobe.output.image_writer import save_png, scale_nearest
@@ -45,20 +48,28 @@ def _run_slice(
         ensure_scale(scale_space, "--scale-x" if slice_type == "xt" else "--scale-y")
         ensure_scale(scale_t, "--scale-t")
         desc = "生成 X–T 切片" if slice_type == "xt" else "生成 Y–T 切片"
+        request = legacy_spacetime_request(
+            media,
+            slice_type,
+            fixed,
+            start_frame=start_frame,
+            end_frame=end_frame,
+            start=start,
+            end=end,
+            sample_every=sample_every,
+        )
+        selection = request.selection
         with progress_bar(desc, 1, ctx.progress_disabled) as update:
-            if slice_type == "xt":
-                result = core.create_xt_slice(
-                    media, fixed, start_frame, end_frame,
-                    start, end, sample_every, progress=update,
-                )
-            else:
-                result = core.create_yt_slice(
-                    media, fixed, start_frame, end_frame,
-                    start, end, sample_every, progress=update,
-                )
+            generated = pixelprobe.generate(request)
+            update(1, 1)
 
-        # result.array 形状 [T, 空间, 3]：纵轴=时间，横轴=空间
-        img = scale_nearest(result.array, scale_space, scale_t)
+        tensor = generated.request_tensors[0][0]
+        array = tensor.data.materialize()
+        frames = list(tensor.attributes["presentation_indices"])
+        times = list(tensor.attributes["timeline_timestamps_seconds"])
+
+        # 规范 Tensor 形状 [T, 空间, 3]：纵轴=时间，横轴=空间。
+        img = scale_nearest(array, scale_space, scale_t)
         output_path: str | None = None
         if output is not None:
             save_png(img, output)
@@ -67,10 +78,10 @@ def _run_slice(
         metadata = SpacetimeMetadata(
             slice_type=slice_type,
             fixed_coordinate=fixed,
-            start_frame=result.frame_range.start,
-            end_frame=result.frame_range.end,
-            frame_count=len(result.frames),
-            sample_every=result.frame_range.sample_every,
+            start_frame=frames[0],
+            end_frame=frames[-1],
+            frame_count=len(frames),
+            sample_every=selection.sample_every,
             space_axis="original_x" if slice_type == "xt" else "original_y",
             time_axis="vertical",
             width=int(img.shape[1]),
@@ -80,8 +91,8 @@ def _run_slice(
             output_path=output_path,
         )
         data = metadata.model_dump()
-        data["frames"] = result.frames
-        data["times"] = result.times
+        data["frames"] = frames
+        data["times"] = times
         if ctx.json_mode:
             json_writer.print_success(slice_type, data)
             return
@@ -94,9 +105,9 @@ def _run_slice(
             "X–T 切片" if slice_type == "xt" else "Y–T 切片",
             [
                 (f"扫描线 {fixed_name}", fixed),
-                ("帧范围", f"{result.frame_range.start}～{result.frame_range.end}"
-                          f"（每 {result.frame_range.sample_every} 帧采样）"),
-                ("帧数", len(result.frames)),
+                ("帧范围", f"{frames[0]}～{frames[-1]}"
+                          f"（每 {selection.sample_every} 帧采样）"),
+                ("帧数", len(frames)),
                 ("空间轴", metadata.space_axis),
                 ("时间轴", "vertical（从上到下时间递增）"),
                 ("输出尺寸", f"{metadata.width}x{metadata.height}"),

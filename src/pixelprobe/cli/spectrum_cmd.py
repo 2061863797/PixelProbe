@@ -7,7 +7,7 @@ from typing import Optional
 
 import typer
 
-from pixelprobe import core
+import pixelprobe
 from pixelprobe.cli import (
     JSON_OPT,
     NO_PROGRESS_OPT,
@@ -20,6 +20,10 @@ from pixelprobe.output import json_writer
 from pixelprobe.output.console import out_console, print_kv, progress_bar
 from pixelprobe.output.image_writer import save_png
 from pixelprobe.utils.coordinates import parse_point, parse_rect
+from pixelprobe.compat.legacy_requests import (
+    legacy_spatial_spectrum_request,
+    legacy_temporal_spectrum_request,
+)
 
 
 def spectrum(
@@ -55,54 +59,58 @@ def spectrum(
     with cli_guard("spectrum", ctx):
         rect_tuple = parse_rect(rect) if rect else None
         point_tuple = parse_point(point) if point else None
+        request = legacy_temporal_spectrum_request(
+            media,
+            source=source,
+            rect=rect_tuple,
+            point=point_tuple,
+            start_frame=start_frame,
+            end_frame=end_frame,
+            start=start,
+            end=end,
+            sample_every=sample_every,
+        )
         with progress_bar("频谱分析", 1, ctx.progress_disabled) as update:
-            result = core.temporal_spectrum(
-                media,
-                source=source,  # type: ignore[arg-type]
-                rect=rect_tuple,
-                point=point_tuple,
-                start_frame=start_frame,
-                end_frame=end_frame,
-                start=start,
-                end=end,
-                sample_every=sample_every,
-                progress=update,
-            )
+            generated = pixelprobe.generate(request)
+            update(1, 1)
+        data_tensor, preview_tensor = generated.request_tensors[0]
+        attributes = data_tensor.attributes
+        spectrum_image = preview_tensor.data.materialize()
         if output is not None:
-            save_png(result.spectrum_image, output)
+            save_png(spectrum_image, output)
 
         data = {
-            "source": result.source,
-            "samples": result.samples,
-            "effective_fps": result.effective_fps,
-            "nyquist_hz": result.nyquist_hz,
-            "dominant_freq_hz": result.dominant_freq_hz,
-            "period_seconds": result.period_seconds,
-            "period_frames": result.period_frames,
-            "peak_ratio": result.peak_ratio,
-            "top_peaks": result.top_peaks,
-            "vfr_warning": result.vfr_warning,
+            "source": source,
+            "samples": attributes["samples"],
+            "effective_fps": attributes["effective_fps"],
+            "nyquist_hz": attributes["nyquist_hz"],
+            "dominant_freq_hz": attributes["dominant_freq_hz"],
+            "period_seconds": attributes["period_seconds"],
+            "period_frames": attributes["period_frames"],
+            "peak_ratio": attributes["peak_ratio"],
+            "top_peaks": attributes["top_peaks"],
+            "vfr_warning": attributes["vfr_warning"],
             "output_path": str(output) if output else None,
         }
         if ctx.json_mode:
             json_writer.print_success("spectrum", data)
             return
         if ctx.quiet:
-            out_console.print(str(result.dominant_freq_hz), highlight=False)
+            out_console.print(str(data["dominant_freq_hz"]), highlight=False)
             return
         rows: list[tuple[str, object]] = [
-            ("序列", f"{result.source}（{result.samples} 个采样）"),
+            ("序列", f"{source}（{data['samples']} 个采样）"),
             ("主频",
-             f"{result.dominant_freq_hz} Hz" if result.dominant_freq_hz
+             f"{data['dominant_freq_hz']} Hz" if data["dominant_freq_hz"]
              else "无（序列平坦）"),
             ("周期",
-             f"{result.period_seconds}s / {result.period_frames} 帧"
-             if result.period_seconds else "–"),
-            ("主峰占比", result.peak_ratio),
+             f"{data['period_seconds']}s / {data['period_frames']} 帧"
+             if data["period_seconds"] else "–"),
+            ("主峰占比", data["peak_ratio"]),
             ("可检上限",
-             f"{result.nyquist_hz} Hz（更高频率会混叠或漏采）"),
+             f"{data['nyquist_hz']} Hz（更高频率会混叠或漏采）"),
         ]
-        if result.vfr_warning:
+        if data["vfr_warning"]:
             rows.append(("警告", "可变帧率视频，频率按平均帧率换算"))
         if output:
             rows.append(("输出文件", str(output)))
@@ -132,31 +140,37 @@ def spectrum2d(
     ctx = CliContext(json_mode, quiet, verbose, no_progress)
     with cli_guard("spectrum2d", ctx):
         rect_tuple = parse_rect(rect) if rect else None
-        result = core.spatial_spectrum(
-            media, frame=frame, time=time, rect=rect_tuple
+        request = legacy_spatial_spectrum_request(
+            media, frame=frame, time=time, rect=rect_tuple,
         )
+        generated = pixelprobe.generate(request)
+        data_tensor, preview_tensor = generated.request_tensors[0]
+        attributes = data_tensor.attributes
+        spectrum_image = preview_tensor.data.materialize()
         if output is not None:
-            save_png(result.spectrum_image, output)
+            save_png(spectrum_image, output)
+
+        image_semantics = bool(request.feature.config["report_image_semantics"])
 
         data = {
-            "frame": result.frame,
-            "time_seconds": result.time_seconds,
-            "width": result.width,
-            "height": result.height,
-            "peaks": result.peaks,
+            "frame": None if image_semantics else attributes["frame"],
+            "time_seconds": None if image_semantics else attributes["time_seconds"],
+            "width": attributes["width"],
+            "height": attributes["height"],
+            "peaks": attributes["peaks"],
             "output_path": str(output) if output else None,
         }
         if ctx.json_mode:
             json_writer.print_success("spectrum2d", data)
             return
         if ctx.quiet:
-            out_console.print(str(len(result.peaks)), highlight=False)
+            out_console.print(str(len(data["peaks"])), highlight=False)
             return
         rows: list[tuple[str, object]] = [
-            ("分析区域", f"{result.width}x{result.height}"),
-            ("显著峰数", len(result.peaks)),
+            ("分析区域", f"{data['width']}x{data['height']}"),
+            ("显著峰数", len(data["peaks"])),
         ]
-        for i, p in enumerate(result.peaks[:3]):
+        for i, p in enumerate(data["peaks"][:3]):
             rows.append((
                 f"峰 {i + 1}",
                 f"周期 {p['period_px']}px 方向 {p['angle_deg']}°",

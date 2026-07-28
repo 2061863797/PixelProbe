@@ -12,9 +12,15 @@ from typing import Callable, Literal
 
 import numpy as np
 
+from pixelprobe.compat.legacy_results import timeline_matrix
 from pixelprobe.core.frame_selector import FrameRange, resolve_range
 from pixelprobe.core.video_reader import VideoReader
-from pixelprobe.models.errors import DecodeError, InvalidRangeError
+from pixelprobe.domain.tensor import TensorField
+from pixelprobe.models.errors import InvalidRangeError
+from pixelprobe.operators.sampling import (
+    SamplingPlan,
+    execute_sampling,
+)
 from pixelprobe.models.pixel import PixelCoordinate
 from pixelprobe.utils.coordinates import (
     grid_points,
@@ -43,6 +49,7 @@ class TimelineResult:
     sort: SortMode
     width: int
     height: int
+    tensor: TensorField
 
 
 def build_points(
@@ -129,41 +136,19 @@ def extract_timelines(
             reader, start_frame, end_frame, start, end, sample_every
         )
 
-        k = len(pts)
-        t_expected = frame_range.count
-        matrix = np.zeros((k, t_expected, 3), dtype=np.uint8)
-        frames: list[int] = []
-        times: list[float] = []
-
-        xs = np.array([p[0] for p in pts], dtype=np.intp)
-        ys = np.array([p[1] for p in pts], dtype=np.intp)
-
-        ti = 0
-        for idx, t, arr in reader.iter_frames(
-            frame_range.start, frame_range.end, frame_range.sample_every
-        ):
-            if block_size is None:
-                matrix[:, ti, :] = arr[ys, xs, :]
-            else:
-                # 像素块模式：每个采样位置取 N×N 块的平均 RGB，边界块裁剪
-                for ki, (x, y) in enumerate(pts):
-                    block = arr[
-                        y : min(y + block_size, height),
-                        x : min(x + block_size, width),
-                        :,
-                    ]
-                    matrix[ki, ti, :] = np.round(
-                        block.reshape(-1, 3).mean(axis=0)
-                    ).astype(np.uint8)
-            frames.append(idx)
-            times.append(t)
-            ti += 1
-            if progress is not None:
-                progress(ti, t_expected)
-
-        if ti == 0:
-            raise DecodeError("指定范围内没有解码出任何帧")
-        matrix = matrix[:, :ti, :]  # 元数据帧数为估算值时可能提前到尾，按实际截断
+        plan = SamplingPlan(
+            kind="points_t",
+            frame_range=frame_range,
+            width=width,
+            height=height,
+            points=tuple((float(x), float(y)) for x, y in pts),
+            block_size=block_size,
+        )
+        output = execute_sampling(reader, plan, progress)
+        matrix = timeline_matrix(output.tensor)
+        if block_size is not None:
+            # 旧 CLI 历史上把块均值四舍五入为 uint8；新 Tensor 保留 float64。
+            matrix = np.round(matrix).astype(np.uint8)
 
         coords = [
             PixelCoordinate(x=x, y=y, pixel_id=pixel_id_from_xy(x, y, width))
@@ -172,12 +157,13 @@ def extract_timelines(
         return TimelineResult(
             matrix=matrix,
             points=coords,
-            frames=frames,
-            times=times,
+            frames=list(output.frames),
+            times=list(output.times),
             frame_range=frame_range,
             sample_type="point" if block_size is None else "block_mean",
             block_size=block_size,
             sort=sort,
             width=width,
             height=height,
+            tensor=output.tensor,
         )

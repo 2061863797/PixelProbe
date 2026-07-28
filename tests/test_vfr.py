@@ -8,15 +8,21 @@ from pathlib import Path
 import numpy as np
 
 from conftest import VFR_FRAME_COUNT, run_json, vfr_frame
-from pixelprobe.core import VideoReader, extract_timelines, get_media_info
+from pixelprobe.core import extract_timelines, get_media_info
+from pixelprobe.core.video_reader import VideoReader
 
 
 def test_pts_index_exact_count(vfr_video: Path) -> None:
     with VideoReader() as reader:
         reader.open(vfr_video)
         index = reader.build_pts_index()
+        packets = list(reader.iter_frame_packets(0, None))
         assert index is not None and len(index) == VFR_FRAME_COUNT
         assert index == sorted(index)
+        assert index == [packet.pts for packet in packets]
+        assert [packet.presentation_index for packet in packets] == list(
+            range(VFR_FRAME_COUNT)
+        )
         count, estimated = reader.frame_count()
         assert count == VFR_FRAME_COUNT and estimated is False
 

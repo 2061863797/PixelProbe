@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -12,6 +13,7 @@ from conftest import (
     MOTION_STEP,
     MOTION_X0,
     MOTION_Y,
+    run_cli,
 )
 from pixelprobe.models.errors import DependencyMissingError, InvalidRangeError
 
@@ -89,3 +91,15 @@ def test_dependency_missing_error(motion_video: Path, monkeypatch) -> None:
         of.compute_flow(motion_video, frame_a=0, frame_b=1)
     assert excinfo.value.code == "DEPENDENCY_MISSING"
     assert "pixelprobe[flow]" in (excinfo.value.hint or "")
+
+
+def test_flow_cli_json_reports_threshold(motion_video: Path) -> None:
+    """成功的 CLI 光流分析必须输出请求的阈值，而不是在组装结果时崩溃。"""
+    completed = run_cli(
+        "flow", motion_video, "--frame-a", 0, "--frame-b", 1,
+        "--mag-threshold", 2.5, "--json",
+    )
+    assert completed.returncode == 0, completed.stderr
+    payload = json.loads(completed.stdout)
+    assert payload["success"] is True
+    assert payload["data"]["mag_threshold"] == 2.5

@@ -1,17 +1,29 @@
-# PixelProbe Python SDK / API 参考
+# PixelProbe Python 使用说明
 
-PixelProbe 的核心分析层可直接作为 Python 库使用，不依赖 Typer/Rich。
-CLI、MCP Server 和 Web GUI 都只是这一层的薄包装。
+PixelProbe 除了命令行，也可以在 Python 脚本中读取媒体、生成确定性数值表示和
+保存可复现 Bundle。
 
 ```python
 from pixelprobe.core import (
-    get_media_info, get_frame, load_frame, inspect_pixels, analyze_region,
+    get_media_info, get_frame, load_frame, load_native_image, inspect_pixels,
+    inspect_native_pixels, analyze_region,
     extract_timelines, create_xt_slice, create_yt_slice,
-    detect_changes, top_changes, VideoReader, ImageReader,
+    detect_changes, top_changes,
 )
 ```
 
-安装：`pip install -e .`（开发依赖 `.[dev]`，MCP 依赖 `.[mcp]`）。
+安装请使用 README 中的仓库克隆命令；若需可复现的直接安装，请固定到发布标签或提交哈希。
+
+## 统一生成 API
+
+`pixelprobe.generate(request)` 接受一个 `RepresentationRequest` 或请求元组，
+返回正式 Data Tensor、可选 Preview、ExecutionPlan 和结构化执行事件。请求可生成
+X-T、Y-T、点/Path/ROI 时间表示、灰度/HSV/Lab、Frame Difference、Reduction、
+FFT/STFT 和 Farneback 光流。同一媒体的多个请求共享一次解码。
+
+需要保存结果时传入 `output_path`，并把请求的 `output.format` 设为 `bundle` 或
+`zarr`。Bundle 会保存数值、坐标索引、映射、来源身份、ExecutionPlan、事件、
+provenance 和 SHA-256；Preview 不会替代 Data。
 
 ## 统一约定
 
@@ -19,7 +31,8 @@ from pixelprobe.core import (
 - `pixel_id = y * width + x`；
 - 帧号从 0 开始，帧范围为闭区间；帧范围与秒范围不能混用；
 - 所有公开时间均相对媒体首帧从 0 开始，不暴露容器内部 PTS 偏移；
-- 帧数组统一为 `numpy.ndarray[height, width, 3]`、`uint8`、RGB；
+- `load_frame()` 与旧帧类接口返回显示 RGB8：`numpy.ndarray[height, width, 3]`、`uint8`；
+  图片需读取原生通道、Alpha、调色板索引或高位深值时使用 `load_native_image()`；
 - 所有业务错误继承 `pixelprobe.models.PixelProbeError`（见「错误类型」）。
 
 ## 顶层函数
@@ -48,6 +61,18 @@ file_size_bytes`。
 `x、y、pixel_id、frame、time_seconds、time_ms、rgb{r,g,b}、hex、
 hsv{h:0-360, s:0-100, v:0-100}、lab{l,a,b}（CIELAB/D65）、
 luminance（加权近似，0-255）、luminance_linear（sRGB 线性化后，0-255）`。
+
+### load_native_image(path) -> (array, NativeImageMetadata, MediaInfo)
+
+读取图片的 Pillow 原生样本数组，不做 RGB8 显示转换。`NativeImageMetadata` 提供
+`mode、source_format、dtype、shape、bands、bits_per_sample、has_alpha、
+alpha_representation、sample_semantics`。明确识别的 PNG/BMP/GIF/PNM 常见无损格式标为
+`stored_sample`；JPEG 等有损或无法确认的格式标为 `decoded_sample`。
+
+### inspect_native_pixels(image_array, points, bands, sample_semantics) -> list[dict]
+
+读取 `load_native_image()` 的每个原生通道值。返回 `channels、values、dtype` 和
+`sample_semantics`，不擅自套用 RGB、HSV、Lab 或亮度计算；调色板图的 `values` 是调色板索引。
 
 ### analyze_region(frame_array, rect) -> RegionStatistics
 
@@ -166,7 +191,7 @@ Farneback 稠密光流。**需要可选依赖**：`pip install "pixelprobe[flow]
 ## VideoReader（底层接口）
 
 ```python
-from pixelprobe.core import VideoReader
+from pixelprobe.core.video_reader import VideoReader
 
 with VideoReader() as reader:
     reader.open(path)
@@ -218,14 +243,8 @@ with VideoReader() as reader:
 - `csv_writer.write_timeline_csv / write_changes_csv`；
 - `json_writer.dump_success / dump_error`：CLI JSON 信封。
 
-## 三种集成方式
+## CLI 集成
 
-| 入口 | 命令 | 适用 |
-| --- | --- | --- |
-| CLI | `pixelprobe <cmd> --json` | 脚本、任意语言子进程调用 |
-| MCP | `pixelprobe-mcp`（stdio） | Claude 等 AI Agent 工具调用 |
-| HTTP + GUI | `pixelprobe-web`（仅回环地址，默认 127.0.0.1:8799） | 本机浏览器界面 / 本机程序调用 |
-
-HTTP API 端点与参数见 `src/pixelprobe/webapp.py` 模块 docstring；其中
-`/api/frame-times` 返回从 0 开始的真实逐帧 PTS，供 VFR GUI 精确同步。
-返回 `{"success": true, "data": ...}` 或 `{"success": false, "error": {...}}`。
+外部程序统一通过 `pixelprobe <cmd> --json` 调用。标准输出只包含一个 JSON
+对象，成功与失败分别使用 `{"success": true, "data": ...}` 和
+`{"success": false, "error": {...}}` 信封；诊断信息写入标准错误。

@@ -1,0 +1,28 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    name: ${{ matrix.os }} / Python ${{ matrix.python-version }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+        python-version: ["3.11"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: 安装测试依赖
+        run: python -m pip install -e ".[dev]"
+      - name: 运行测试
+        run: python -m pytest --basetemp .pytest-temp-ci
+      - name: 构建 wheel 与 sdist
+        run: |
+          python -m pip install build
+          python -m build

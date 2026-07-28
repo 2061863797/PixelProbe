@@ -2,7 +2,7 @@
 
 光流等重功能依赖 opencv-python-headless（可选 extra [flow]）。
 使用方在函数入口调用 require_cv2()，模块顶层禁止 import cv2，
-以保证无 cv2 环境下 CLI/MCP 的注册与工具列表不受影响。
+以保证无 cv2 环境下 CLI 的命令注册不受影响。
 """
 
 from __future__ import annotations

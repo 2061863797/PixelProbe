@@ -11,6 +11,7 @@ from dataclasses import dataclass
 
 import typer
 
+from pixelprobe.domain.errors import DomainError
 from pixelprobe.models.errors import PixelProbeError
 from pixelprobe.output import json_writer
 from pixelprobe.output.console import err_console
@@ -49,8 +50,24 @@ def cli_guard(command: str, ctx: CliContext) -> Iterator[None]:
             if exc.hint:
                 err_console.print(f"提示：{exc.hint}", style="yellow", highlight=False)
         raise typer.Exit(exc.exit_code) from exc
+    except DomainError as exc:
+        if ctx.json_mode:
+            json_writer.print_error(command, exc.to_dict())
+        else:
+            err_console.print(f"错误：{exc.message}", style="red", highlight=False)
+            if exc.hint:
+                err_console.print(
+                    f"提示：{exc.hint}", style="yellow", highlight=False
+                )
+        raise typer.Exit(2) from exc
     except KeyboardInterrupt as exc:
-        err_console.print("已取消，临时文件已清理", style="yellow")
+        if ctx.json_mode:
+            json_writer.print_error(command, {
+                "code": "CANCELLED",
+                "message": "操作已取消，临时文件已清理",
+            })
+        else:
+            err_console.print("已取消，临时文件已清理", style="yellow")
         raise typer.Exit(130) from exc
     except typer.Exit:
         raise

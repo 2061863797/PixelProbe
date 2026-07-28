@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import bisect
 import math
+from dataclasses import dataclass
 from collections.abc import Iterator
 from fractions import Fraction
 from pathlib import Path
@@ -28,6 +29,10 @@ import av
 import numpy as np
 from av.video.reformatter import VideoReformatter
 
+from pixelprobe.domain.accuracy import AccuracyInfo, AccuracyLevel
+from pixelprobe.domain.coordinates import TransformChain
+from pixelprobe.domain.media import FramePacket
+from pixelprobe.domain.references import ProvenanceRef
 from pixelprobe.models.errors import (
     DecodeError,
     FrameOutOfRangeError,
@@ -43,6 +48,25 @@ from pixelprobe.utils.validation import ensure_file_exists
 _VFR_TOLERANCE = 1e-3
 
 
+@dataclass(slots=True)
+class _DecodedPresentationFrame:
+    """一次顺序解码获得的展示帧元数据。
+
+    ``data`` 仅为当前调用选中的帧生成，避免为跳过的帧额外做 RGB 转换。
+    ``duration_*`` 在读到下一展示帧后回填；最后一帧没有可靠后继时为 ``None``。
+    """
+
+    presentation_index: int
+    data: np.ndarray | None
+    pts: int | None
+    source_timestamp_seconds: float | None
+    timeline_time_seconds: float
+    duration_pts: int | None = None
+    duration_seconds: float | None = None
+    key_frame: bool | None = None
+    flags: tuple[str, ...] = ()
+
+
 class VideoReader:
     """单视频文件读取器，所有取帧接口共享一个容器句柄。"""
 
@@ -54,8 +78,8 @@ class VideoReader:
         # PyAV 的 VideoFrame.to_ndarray(format=...) 会为每帧新建颜色转换器。
         # 同一读取器内复用转换器，避免时间线/切片顺序解码时重复初始化。
         self._reformatter = VideoReformatter()
-        # PTS 索引（presentation 顺序排序后的包 PTS 列表）；None 表示未构建，
-        # False 表示尝试过但该文件无法构建（包缺少 PTS）
+        # 仅在实际解码展示帧的 PTS 严格递增时缓存索引。重复、倒退或缺失
+        # PTS 不能安全地映射为唯一帧号，必须走顺序解码并在 FramePacket 标记。
         self._pts_index: list[int] | None = None
         self._pts_index_failed: bool = False
 
@@ -132,6 +156,13 @@ class VideoReader:
         return float(rate) if rate else None
 
     @property
+    def container_format(self) -> str | None:
+        """返回解复用器识别的实际容器名，不使用文件扩展名。"""
+        assert self._container is not None
+        name = self._container.format.name
+        return name.split(",", 1)[0].lower() if name else None
+
+    @property
     def duration_seconds(self) -> float | None:
         assert self._stream is not None and self._container is not None
         if self._stream.duration is not None:
@@ -172,14 +203,15 @@ class VideoReader:
             return int(round(duration * fps)), True
         return None, False
 
-    # ---------- PTS 索引（精确 VFR 支持） ----------
+    # ---------- PTS 索引（可靠时的精确 VFR 支持） ----------
 
     def build_pts_index(self) -> list[int] | None:
-        """demux 全部包构建 PTS 索引（不解码，速度快）。
+        """为实际解码的展示帧建立严格递增的 PTS 索引。
 
-        返回按 presentation 顺序排序的 PTS 列表；帧号 i 对应第 i 个 PTS。
-        包缺少 PTS/DTS 时返回 None（此后走顺序解码兜底）。
-        结果缓存在实例上，只构建一次。
+        不能用 packet PTS 排序推导帧号：一个 packet 不保证只产出一帧，重复
+        PTS 也无法用二分查找映射为唯一展示帧。只有每个已解码展示帧都有严格
+        递增 PTS 时，返回的第 ``i`` 项才可靠对应展示帧 ``i``；否则返回
+        ``None``，调用方必须顺序解码并保留异常标志。
         """
         if self._pts_index is not None:
             return self._pts_index
@@ -188,30 +220,33 @@ class VideoReader:
         self._open_container()
         assert self._container is not None and self._stream is not None
         pts_list: list[int] = []
+        previous: int | None = None
         try:
-            for packet in self._container.demux(self._stream):
-                if packet.size == 0:
-                    continue  # 尾部 flush 包
-                pts = packet.pts if packet.pts is not None else packet.dts
-                if pts is None:
+            for frame in self._container.decode(self._stream):
+                pts = frame.pts
+                if pts is None or (previous is not None and pts <= previous):
                     self._pts_index_failed = True
-                    self._open_container()
                     return None
                 pts_list.append(pts)
+                previous = pts
         except av.FFmpegError as exc:
             raise DecodeError(
                 f"构建 PTS 索引失败：{self._path}（{exc}）"
             ) from exc
-        pts_list.sort()
+        finally:
+            # 索引构建会消耗容器，后续读取必须从干净位置开始。
+            self._open_container()
+        if not pts_list:
+            self._pts_index_failed = True
+            return None
         self._pts_index = pts_list
-        self._open_container()  # 重置读取位置供后续解码
-        return pts_list
+        return self._pts_index
 
     def frame_timestamps(self) -> list[float]:
         """返回每帧相对媒体起点的时间戳（秒）。
 
-        只 demux 包头，不解码画面。缺少可靠 PTS 时明确失败，调用方可退回
-        单帧解码模式，不能再用平均帧率伪造 VFR 帧映射。
+        缺少唯一、严格递增的展示帧 PTS 时明确失败，不能用平均帧率伪造
+        VFR 帧映射。
         """
         index = self.build_pts_index()
         if not index:
@@ -250,21 +285,14 @@ class VideoReader:
     def frame_index_for_time(self, seconds: float) -> int:
         """按"时间戳不大于目标时间的最后一帧"规则换算帧号。
 
-        以下场景使用 PTS 索引二分查找（精确）：索引已构建、检测到 VFR、
-        或容器缺少帧数元数据（此时元数据不可信，如 MKV）。
-        仅在元数据可信的恒定帧率场景用 fps 公式（快速，不读全文件）。
+        仅可靠的展示帧 PTS 索引可用于此映射；索引不可靠时由
+        :meth:`get_frame_by_time` 顺序扫描，避免用平均 FPS 伪造帧号。
         """
-        assert self._stream is not None
-        metadata_trusted = bool(self._stream.frames and self._stream.frames > 0)
-        if self._pts_index is not None or self.is_vfr or not metadata_trusted:
-            index = self.build_pts_index()
-            if index:
-                target_pts = index[0] + seconds / float(self.time_base)
-                return max(bisect.bisect_right(index, target_pts) - 1, 0)
-        fps = self.fps
-        if not fps:
-            raise DecodeError(f"无法获取帧率，无法按时间定位：{self._path}")
-        return int(seconds * fps + 1e-6)
+        index = self.build_pts_index()
+        if not index:
+            raise DecodeError(f"无法获取可靠的逐帧时间戳：{self._path}")
+        target_pts = index[0] + seconds / float(self.time_base)
+        return max(bisect.bisect_right(index, target_pts) - 1, 0)
 
     def validate_frame_index(self, index: int) -> None:
         """校验帧号范围，越界抛 FrameOutOfRangeError。"""
@@ -343,80 +371,74 @@ class VideoReader:
             raise TimeOutOfRangeError(f"时间 {seconds}s 之前没有任何帧")
         return last
 
+    def iter_frame_packets(
+        self,
+        start_frame: int,
+        end_frame: int | None,
+        sample_every: int = 1,
+    ) -> Iterator[FramePacket]:
+        """迭代规范展示帧包；输入范围沿用旧 CLI 的闭区间语义。
+
+        帧号始终由实际解码产出顺序计数，不从 packet PTS 或 FPS 公式推导。
+        PTS 异常会保留在 packet 的 ``flags`` 中，而不是改变帧号。
+        """
+        time_base = self.time_base
+        assert self._stream is not None
+        stored_format = self._stream.codec_context.pix_fmt
+        provenance = ProvenanceRef(
+            provenance_id=f"decode:pyav:{av.__version__}"
+        )
+        accuracy = AccuracyInfo(
+            level=AccuracyLevel.DECODED,
+            source=f"pyav:{av.__version__}",
+            unit="code_value",
+        )
+        transform = TransformChain.identity("storage_pixels")
+
+        for decoded in self._iter_decoded_presentation_frames(
+            start_frame, end_frame, sample_every,
+        ):
+            assert decoded.data is not None
+            yield FramePacket(
+                data=decoded.data,
+                presentation_index=decoded.presentation_index,
+                decode_index=None,
+                pts=decoded.pts,
+                dts=None,
+                time_base=time_base,
+                source_timestamp_seconds=decoded.source_timestamp_seconds,
+                timeline_time_seconds=decoded.timeline_time_seconds,
+                duration_pts=decoded.duration_pts,
+                duration_seconds=decoded.duration_seconds,
+                key_frame=decoded.key_frame,
+                stored_pixel_format=stored_format,
+                decoded_pixel_format="rgb24",
+                color_metadata={},
+                transform_chain=transform,
+                sample_semantics="decoded_sample",
+                accuracy=accuracy,
+                provenance=provenance,
+                flags=decoded.flags,
+            )
+
     def iter_frames(
         self,
         start_frame: int,
         end_frame: int | None,
         sample_every: int = 1,
     ) -> Iterator[tuple[int, float, np.ndarray]]:
-        """迭代 [start_frame, end_frame] 闭区间内的帧（含两端）。
+        """兼容旧元组接口，内容由 FramePacket 无损适配。"""
+        for packet in self.iter_frame_packets(start_frame, end_frame, sample_every):
+            yield packet.presentation_index, packet.timeline_time_seconds, packet.data
 
-        产出 (帧号, 时间秒, RGB 数组)。end_frame 为 None 表示直到视频结束。
-        寻址策略：索引已构建 / VFR / 元数据缺帧数时走 PTS 索引精确路径；
-        元数据可信的恒定帧率视频走 fps 公式快速路径；
-        两者失效时自动退回从头顺序解码，保证帧号准确。
-        """
-        assert self._container is not None and self._stream is not None
-        metadata_trusted = bool(self._stream.frames and self._stream.frames > 0)
-        if (
-            self._pts_index is not None
-            or self.is_vfr
-            or not self.fps
-            or not metadata_trusted
-        ):
-            yield from self._iter_indexed(start_frame, end_frame, sample_every)
-            return
-
-        fps = self.fps
-        start_sec = self.start_time_seconds
-        if start_frame > 0:
-            target_time = start_sec + start_frame / fps
-            try:
-                offset = int(target_time / float(self.time_base))
-                self._container.seek(
-                    offset, stream=self._stream, backward=True, any_frame=False
-                )
-            except av.FFmpegError:
-                yield from self._iter_sequential(
-                    start_frame, end_frame, sample_every
-                )
-                return
-        else:
-            self._open_container()
-
-        first = True
-        try:
-            for frame in self._container.decode(self._stream):
-                t = frame.time
-                if t is None:
-                    # 无 PTS：放弃 seek 定位，退回顺序解码
-                    yield from self._iter_sequential(
-                        start_frame, end_frame, sample_every
-                    )
-                    return
-                idx = int(round((t - start_sec) * fps))
-                if first and idx > start_frame:
-                    # seek 落点晚于目标帧，说明该策略对此文件不可靠
-                    yield from self._iter_sequential(
-                        start_frame, end_frame, sample_every
-                    )
-                    return
-                first = False
-                if idx < start_frame:
-                    continue
-                if end_frame is not None and idx > end_frame:
-                    break
-                if (idx - start_frame) % sample_every != 0:
-                    continue
-                yield (
-                    idx,
-                    round_seconds(t - start_sec),
-                    self._frame_to_rgb_array(frame),
-                )
-        except av.FFmpegError as exc:
-            raise DecodeError(
-                f"视频解码失败：{self._path}（{exc}）"
-            ) from exc
+    def _iter_frame_tuples(
+        self,
+        start_frame: int,
+        end_frame: int | None,
+        sample_every: int = 1,
+    ) -> Iterator[tuple[int, float, np.ndarray]]:
+        """兼容内部元组接口，帧号来自顺序展示解码。"""
+        yield from self._iter_sequential(start_frame, end_frame, sample_every)
 
     def _iter_indexed(
         self,
@@ -424,59 +446,8 @@ class VideoReader:
         end_frame: int | None,
         sample_every: int,
     ) -> Iterator[tuple[int, float, np.ndarray]]:
-        """PTS 索引精确寻址路径（CFR/VFR 通用），无索引时顺序解码。"""
-        index = self.build_pts_index()
-        if not index:
-            yield from self._iter_sequential(start_frame, end_frame, sample_every)
-            return
-        assert self._container is not None and self._stream is not None
-        if start_frame >= len(index):
-            return
-        if start_frame > 0:
-            try:
-                self._container.seek(
-                    index[start_frame], stream=self._stream,
-                    backward=True, any_frame=False,
-                )
-            except av.FFmpegError:
-                yield from self._iter_sequential(
-                    start_frame, end_frame, sample_every
-                )
-                return
-        first = True
-        try:
-            for frame in self._container.decode(self._stream):
-                if frame.pts is None:
-                    yield from self._iter_sequential(
-                        start_frame, end_frame, sample_every
-                    )
-                    return
-                # 帧号 = 该 PTS 在索引中的位置（presentation 顺序）
-                pos = bisect.bisect_left(index, frame.pts)
-                if pos >= len(index) or index[pos] != frame.pts:
-                    # 解码出的 PTS 不在索引中，索引不可靠 → 顺序兜底
-                    yield from self._iter_sequential(
-                        start_frame, end_frame, sample_every
-                    )
-                    return
-                if first and pos > start_frame:
-                    yield from self._iter_sequential(
-                        start_frame, end_frame, sample_every
-                    )
-                    return
-                first = False
-                if pos < start_frame:
-                    continue
-                if end_frame is not None and pos > end_frame:
-                    break
-                if (pos - start_frame) % sample_every != 0:
-                    continue
-                t = (frame.pts - index[0]) * float(self.time_base)
-                yield pos, round_seconds(t), self._frame_to_rgb_array(frame)
-        except av.FFmpegError as exc:
-            raise DecodeError(
-                f"视频解码失败：{self._path}（{exc}）"
-            ) from exc
+        """保留私有入口兼容性；不再从 PTS 二分反推展示帧号。"""
+        yield from self._iter_sequential(start_frame, end_frame, sample_every)
 
     def _iter_sequential(
         self,
@@ -484,31 +455,92 @@ class VideoReader:
         end_frame: int | None,
         sample_every: int,
     ) -> Iterator[tuple[int, float, np.ndarray]]:
-        """从头顺序解码，以解码顺序计数保证帧号内部一致。"""
+        """从头顺序解码，以实际展示顺序计数保证帧号内部一致。"""
+        for packet in self.iter_frame_packets(start_frame, end_frame, sample_every):
+            yield packet.presentation_index, packet.timeline_time_seconds, packet.data
+
+    def _iter_decoded_presentation_frames(
+        self,
+        start_frame: int,
+        end_frame: int | None,
+        sample_every: int,
+    ) -> Iterator[_DecodedPresentationFrame]:
+        """顺序解码并保留展示帧元数据，不以包 PTS 或 FPS 推导帧号。"""
+        if start_frame < 0:
+            raise FrameOutOfRangeError("起始帧必须 >= 0")
+        if end_frame is not None and end_frame < start_frame:
+            raise FrameOutOfRangeError("结束帧不能小于起始帧")
+        if sample_every < 1:
+            raise ValueError("sample_every 必须 >= 1")
         self._open_container()
         assert self._container is not None and self._stream is not None
         fps = self.fps
+        time_base = self.time_base
         timestamp_origin: float | None = None
+        previous_pts: int | None = None
+        pending: _DecodedPresentationFrame | None = None
         index = -1
         try:
             for frame in self._container.decode(self._stream):
                 index += 1
-                if frame.time is not None and timestamp_origin is None:
-                    timestamp_origin = frame.time
-                if index < start_frame:
-                    continue
-                if end_frame is not None and index > end_frame:
-                    break
-                if (index - start_frame) % sample_every != 0:
-                    continue
-                if frame.time is not None:
-                    assert timestamp_origin is not None
-                    t = frame.time - timestamp_origin
+                pts = frame.pts
+                source_timestamp = (
+                    float(pts * time_base) if pts is not None else None
+                )
+                decoded_timestamp = (
+                    source_timestamp
+                    if source_timestamp is not None else frame.time
+                )
+                if timestamp_origin is None and decoded_timestamp is not None:
+                    timestamp_origin = float(decoded_timestamp)
+                flags: list[str] = []
+                if pts is None:
+                    flags.append("PTS_MISSING")
+                elif previous_pts is not None:
+                    if pts == previous_pts:
+                        flags.append("PTS_DUPLICATE")
+                    elif pts < previous_pts:
+                        flags.append("PTS_NON_MONOTONIC")
+                if pts is not None:
+                    previous_pts = pts
+                if decoded_timestamp is not None and timestamp_origin is not None:
+                    raw_timeline = float(decoded_timestamp) - timestamp_origin
+                    if raw_timeline < 0:
+                        flags.append("TIMELINE_NEGATIVE_NORMALIZED")
+                    timeline = max(0.0, raw_timeline)
                 elif fps:
-                    t = index / fps
+                    timeline = index / fps
+                    flags.append("TIMELINE_ESTIMATED_FROM_FPS")
                 else:
-                    t = float(index)
-                yield index, round_seconds(t), self._frame_to_rgb_array(frame)
+                    timeline = float(index)
+                    flags.append("TIMELINE_ESTIMATED_FROM_INDEX")
+                selected = (
+                    index >= start_frame
+                    and (end_frame is None or index <= end_frame)
+                    and (index - start_frame) % sample_every == 0
+                )
+                current = _DecodedPresentationFrame(
+                    presentation_index=index,
+                    data=self._frame_to_rgb_array(frame) if selected else None,
+                    pts=pts,
+                    source_timestamp_seconds=source_timestamp,
+                    timeline_time_seconds=round_seconds(timeline),
+                    key_frame=bool(frame.key_frame),
+                    flags=tuple(flags),
+                )
+                if pending is not None:
+                    if pending.pts is not None and pts is not None:
+                        duration_pts = pts - pending.pts
+                        if duration_pts > 0:
+                            pending.duration_pts = duration_pts
+                            pending.duration_seconds = float(duration_pts * time_base)
+                    if pending.data is not None:
+                        yield pending
+                if end_frame is not None and index > end_frame:
+                    return
+                pending = current
+            if pending is not None and pending.data is not None:
+                yield pending
         except av.FFmpegError as exc:
             raise DecodeError(
                 f"视频解码失败：{self._path}（{exc}）"

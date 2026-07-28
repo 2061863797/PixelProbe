@@ -1,6 +1,6 @@
 """光流分析：稠密运动场、全局运动估计与消除（需可选依赖 OpenCV）。
 
-模块顶层不 import cv2：无 [flow] extra 的环境中 CLI/MCP 注册不受影响，
+模块顶层不 import cv2：无 [flow] extra 的环境中 CLI 命令注册不受影响，
 调用时通过 require_cv2() 得到带安装提示的 DEPENDENCY_MISSING 错误。
 cv2 只做数值计算，不做任何文件 IO（帧数据全部来自 PyAV）。
 """
@@ -16,6 +16,13 @@ import numpy as np
 from pixelprobe.core.frame_selector import FrameRange, resolve_range
 from pixelprobe.core.video_reader import VideoReader
 from pixelprobe.models.errors import DecodeError, InvalidRangeError
+from pixelprobe.compat.legacy_results import preview_image
+from pixelprobe.domain.tensor import TensorField
+from pixelprobe.operators.optical_flow import (
+    make_flow_tensor,
+    make_magnitude_tensor,
+)
+from pixelprobe.operators.preview import make_preview_tensor
 from pixelprobe.output.plot import apply_colormap
 from pixelprobe.utils.optional_deps import require_cv2
 
@@ -50,6 +57,11 @@ class FlowResult:
     frame_range: FrameRange | None
     width: int
     height: int
+    raw_flow_tensor: TensorField
+    flow_tensor: TensorField
+    magnitude_tensor: TensorField
+    flow_preview_tensor: TensorField
+    magnitude_preview_tensor: TensorField
 
 
 def _gray(arr: np.ndarray) -> np.ndarray:
@@ -181,6 +193,7 @@ def compute_flow(
             flow = _farneback(cv2, _gray(arr_a), _gray(arr_b))
             frames_analyzed = 2
 
+    raw_flow = flow.astype(np.float32, copy=True)
     global_motion = _estimate_global(cv2, flow)
     if compensate_global and global_motion is not None:
         flow = _subtract_global(flow, global_motion["matrix"])
@@ -219,9 +232,49 @@ def compute_flow(
         np.clip(magnitude * scale, 0, 255).astype(np.uint8), "fire"
     )
 
+    compensated_applied = bool(compensate_global and global_motion is not None)
+    raw_flow_tensor = make_flow_tensor(
+        raw_flow,
+        tensor_id="tensor_flow_raw",
+        frame_a=idx_a,
+        frame_b=idx_b,
+        compensated=False,
+    )
+    flow_tensor = (
+        make_flow_tensor(
+            flow,
+            tensor_id="tensor_flow_compensated",
+            frame_a=idx_a,
+            frame_b=idx_b,
+            compensated=True,
+        )
+        if compensated_applied
+        else raw_flow_tensor
+    )
+    magnitude_tensor = make_magnitude_tensor(
+        magnitude,
+        source_flow_tensor_id=flow_tensor.tensor_id,
+    )
+    flow_preview_tensor = make_preview_tensor(
+        flow_image,
+        tensor_id="preview_flow_direction",
+        source_tensor_id=flow_tensor.tensor_id,
+        source_width=width,
+        source_height=height,
+        attributes={"visualization": "hsv_direction"},
+    )
+    magnitude_preview_tensor = make_preview_tensor(
+        magnitude_image,
+        tensor_id="preview_flow_magnitude",
+        source_tensor_id=magnitude_tensor.tensor_id,
+        source_width=width,
+        source_height=height,
+        attributes={"visualization": "fire_colormap"},
+    )
+
     return FlowResult(
-        flow_image=flow_image,
-        magnitude_image=magnitude_image,
+        flow_image=preview_image(flow_preview_tensor),
+        magnitude_image=preview_image(magnitude_preview_tensor),
         mean_magnitude=round(mean_mag, 4),
         max_magnitude=round(max_mag, 4),
         p95_magnitude=round(float(np.percentile(magnitude, 95)), 4),
@@ -229,7 +282,7 @@ def compute_flow(
             round(dominant, 2) if dominant is not None else None
         ),
         global_motion=global_motion,
-        compensated=bool(compensate_global and global_motion is not None),
+        compensated=compensated_applied,
         motion_bbox=bbox,
         mag_threshold=mag_threshold,
         frame_a=idx_a,
@@ -239,6 +292,11 @@ def compute_flow(
         frame_range=frame_range,
         width=width,
         height=height,
+        raw_flow_tensor=raw_flow_tensor,
+        flow_tensor=flow_tensor,
+        magnitude_tensor=magnitude_tensor,
+        flow_preview_tensor=flow_preview_tensor,
+        magnitude_preview_tensor=magnitude_preview_tensor,
     )
 
 

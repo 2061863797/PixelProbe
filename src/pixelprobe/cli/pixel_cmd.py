@@ -37,14 +37,83 @@ def pixel(
     time: Optional[float] = typer.Option(
         None, "--time", help="视频时间（秒），与 --frame 二选一"
     ),
+    sample: str = typer.Option(
+        "display", "--sample",
+        help="样本类型：display（历史 RGB8）或 native（图片原生样本）",
+    ),
     json_mode: bool = JSON_OPT,
     quiet: bool = QUIET_OPT,
     verbose: bool = VERBOSE_OPT,
     no_progress: bool = NO_PROGRESS_OPT,
 ) -> None:
-    """查询一个或多个像素的 RGB / HSV / 亮度。视频需用 --frame 或 --time 指定帧。"""
+    """查询像素；``--sample native`` 可读取图片原生通道、Alpha 与高位深值。"""
     ctx = CliContext(json_mode, quiet, verbose, no_progress)
     with cli_guard("pixel", ctx):
+        sample = sample.lower()
+        if sample not in {"display", "native"}:
+            raise InvalidRangeError("--sample 仅支持 display 或 native")
+
+        if sample == "native":
+            if frame_index is not None or time is not None:
+                raise InvalidRangeError(
+                    "原生图片样本不支持 --frame / --time；这些参数仅对视频有效"
+                )
+            arr, native_metadata, media_info = core.load_native_image(media)
+            points = [parse_point(p) for p in (point or [])]
+            points += [
+                xy_from_pixel_id(pid, media_info.width, media_info.height)
+                for pid in (pixel_id or [])
+            ]
+            if not points:
+                raise InvalidRangeError("请至少指定一个 --point 或 --pixel-id")
+            samples = core.inspect_native_pixels(
+                arr,
+                points,
+                bands=native_metadata.bands,
+                sample_semantics=native_metadata.sample_semantics,
+            )
+            data = {
+                "path": media_info.path,
+                "media_type": media_info.media_type,
+                "width": media_info.width,
+                "height": media_info.height,
+                "sample_semantics": native_metadata.sample_semantics,
+                "native_image": {
+                    "mode": native_metadata.mode,
+                    "source_format": native_metadata.source_format,
+                    "dtype": native_metadata.dtype,
+                    "shape": list(native_metadata.shape),
+                    "bands": list(native_metadata.bands),
+                    "bits_per_sample": native_metadata.bits_per_sample,
+                    "has_alpha": native_metadata.has_alpha,
+                    "alpha_representation": native_metadata.alpha_representation,
+                },
+                "pixels": samples,
+            }
+            if ctx.json_mode:
+                json_writer.print_success("pixel", data)
+                return
+            if ctx.quiet:
+                for item in samples:
+                    out_console.print(
+                        f"({item['x']},{item['y']}) {item['values']}",
+                        highlight=False,
+                    )
+                return
+            print_table(
+                "原生图片像素查询",
+                ["pixel_id", "x", "y", "通道", "值", "dtype", "语义"],
+                [
+                    [
+                        item["pixel_id"], item["x"], item["y"],
+                        ",".join(item["channels"]), item["values"],
+                        item["dtype"], item["sample_semantics"],
+                    ]
+                    for item in samples
+                ],
+            )
+            return
+
         arr, idx, t, media_info = core.load_frame(
             media, frame=frame_index, time=time
         )

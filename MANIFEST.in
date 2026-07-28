@@ -1,0 +1,6 @@
+include README.md
+include pyproject.toml
+include scripts/generate_test_image.py
+include scripts/generate_test_video.py
+recursive-include src *.py
+recursive-include tests *.py

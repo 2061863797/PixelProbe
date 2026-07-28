@@ -13,9 +13,13 @@ from typing import Callable, Literal
 
 import numpy as np
 
-from pixelprobe.core.frame_selector import FrameRange, resolve_range
-from pixelprobe.core.video_reader import VideoReader
-from pixelprobe.models.errors import CoordinateOutOfRangeError, DecodeError
+from pixelprobe.compat.legacy_results import spacetime_array
+from pixelprobe.core.frame_selector import FrameRange
+from pixelprobe.domain.tensor import TensorField
+from pixelprobe.operators.sampling import (
+    sample_xt as sample_xt_tensor,
+    sample_yt as sample_yt_tensor,
+)
 
 ProgressCallback = Callable[[int, int], None]
 
@@ -32,6 +36,7 @@ class SpacetimeResult:
     frame_range: FrameRange
     width: int
     height: int
+    tensor: TensorField
 
 
 def _create_slice(
@@ -45,53 +50,28 @@ def _create_slice(
     sample_every: int,
     progress: ProgressCallback | None,
 ) -> SpacetimeResult:
-    with VideoReader() as reader:
-        reader.open(Path(path))
-        info = reader.get_info()
-        width, height = info.width, info.height
-
-        if slice_type == "xt":
-            if fixed < 0 or fixed >= height:
-                raise CoordinateOutOfRangeError(
-                    f"y={fixed} 超出有效范围 0～{height - 1}"
-                )
-        else:
-            if fixed < 0 or fixed >= width:
-                raise CoordinateOutOfRangeError(
-                    f"x={fixed} 超出有效范围 0～{width - 1}"
-                )
-
-        frame_range = resolve_range(
-            reader, start_frame, end_frame, start, end, sample_every
-        )
-        total = frame_range.count
-        rows: list[np.ndarray] = []
-        frames: list[int] = []
-        times: list[float] = []
-        for idx, t, arr in reader.iter_frames(
-            frame_range.start, frame_range.end, frame_range.sample_every
-        ):
-            if slice_type == "xt":
-                rows.append(arr[fixed, :, :].copy())
-            else:
-                rows.append(arr[:, fixed, :].copy())
-            frames.append(idx)
-            times.append(t)
-            if progress is not None:
-                progress(len(rows), total)
-
-        if not rows:
-            raise DecodeError("指定范围内没有解码出任何帧")
-        return SpacetimeResult(
-            array=np.stack(rows, axis=0),
-            slice_type=slice_type,
-            fixed_coordinate=fixed,
-            frames=frames,
-            times=times,
-            frame_range=frame_range,
-            width=width,
-            height=height,
-        )
+    sampler = sample_xt_tensor if slice_type == "xt" else sample_yt_tensor
+    output = sampler(
+        Path(path),
+        fixed,
+        start_frame=start_frame,
+        end_frame=end_frame,
+        start=start,
+        end=end,
+        sample_every=sample_every,
+        progress=progress,
+    )
+    return SpacetimeResult(
+        array=spacetime_array(output.tensor, "x" if slice_type == "xt" else "y"),
+        slice_type=slice_type,
+        fixed_coordinate=fixed,
+        frames=list(output.frames),
+        times=list(output.times),
+        frame_range=output.plan.frame_range,
+        width=output.plan.width,
+        height=output.plan.height,
+        tensor=output.tensor,
+    )
 
 
 def create_xt_slice(

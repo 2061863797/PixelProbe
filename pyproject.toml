@@ -1,14 +1,15 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "pixelprobe"
-version = "0.5.0"
-description = "面向人类和 AI Agent 的图片、视频像素分析 CLI 工具"
+dynamic = ["version"]
+description = "本地图片与视频确定性分析工具"
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "MIT" }
+license = "Apache-2.0"
+license-files = ["LICENSE"]
 authors = [{ name = "PixelProbe" }]
 dependencies = [
     "typer>=0.9",
@@ -17,12 +18,13 @@ dependencies = [
     "numpy>=1.26",
     "pillow>=10",
     "pydantic>=2",
-    "mcp>=1.2",
 ]
 
 [project.optional-dependencies]
 flow = ["opencv-python-headless>=4.10"]
-dev = ["pytest>=8", "opencv-python-headless>=4.10"]
+storage = ["zarr>=3.1,<4"]
+mcp = ["mcp>=1.27,<2"]
+dev = ["pytest>=8", "opencv-python-headless>=4.10", "mcp>=1.27,<2"]
 
 [project.urls]
 Homepage = "https://github.com/2061863797/PixelProbe"
@@ -30,14 +32,13 @@ Repository = "https://github.com/2061863797/PixelProbe"
 
 [project.scripts]
 pixelprobe = "pixelprobe.cli.app:main"
-pixelprobe-mcp = "pixelprobe.mcp_server:main"
-pixelprobe-web = "pixelprobe.webapp:main"
-
-[tool.setuptools.package-data]
-pixelprobe = ["static/*"]
+pixelprobe-mcp = "pixelprobe_mcp.entry:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.dynamic]
+version = {attr = "pixelprobe.version.__version__"}
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

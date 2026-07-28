@@ -8,7 +8,9 @@ import numpy as np
 from PIL import Image
 
 from conftest import FRAME_COUNT, make_frame, run_json
-from pixelprobe.core import FrameRange, plan_sheet_frames, sample_frames
+from pixelprobe.core import sample_frames
+from pixelprobe.core.contact_sheet import plan_sheet_frames
+from pixelprobe.core.frame_selector import FrameRange
 
 
 def test_plan_sheet_frames_even_and_deduped() -> None:

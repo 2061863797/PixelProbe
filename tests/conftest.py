@@ -64,6 +64,8 @@ __all__ = [
     "MOTION_STEP",
     "MOTION_X0",
     "MOTION_Y",
+    "VFR_FRAME_COUNT",
+    "vfr_frame",
 ]
 
 

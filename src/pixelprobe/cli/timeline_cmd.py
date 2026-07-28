@@ -10,8 +10,9 @@ from pathlib import Path
 from typing import Optional
 
 import typer
+import numpy as np
 
-from pixelprobe import core
+import pixelprobe
 from pixelprobe.cli import (
     JSON_OPT,
     NO_PROGRESS_OPT,
@@ -21,10 +22,16 @@ from pixelprobe.cli import (
     cli_guard,
 )
 from pixelprobe.models.timeline import TimelineMetadata
+from pixelprobe.models.pixel import PixelCoordinate
+from pixelprobe.compat.legacy_requests import legacy_timeline_request
+from pixelprobe.compat.legacy_results import timeline_matrix
+from pixelprobe.core.frame_selector import FrameRange
+from pixelprobe.core.timeline_extractor import TimelineResult
 from pixelprobe.output import csv_writer, json_writer
 from pixelprobe.output.console import out_console, print_kv, progress_bar
 from pixelprobe.output.image_writer import save_png, scale_nearest
 from pixelprobe.utils.coordinates import parse_point, parse_rect
+from pixelprobe.utils.coordinates import pixel_id_from_xy
 from pixelprobe.utils.validation import ensure_scale
 
 
@@ -97,23 +104,49 @@ def timeline(
         ensure_scale(scale, "--scale")
         points = [parse_point(p) for p in (point or [])]
         grid_rect = parse_rect(grid) if grid else None
+        request, ordered_points, width, height = legacy_timeline_request(
+            media,
+            points=points or None,
+            pixel_ids=pixel_id or None,
+            grid=grid_rect,
+            step=step,
+            block_size=block_size,
+            start_frame=start_frame,
+            end_frame=end_frame,
+            start=start,
+            end=end,
+            sample_every=sample_every,
+            sort=sort,
+        )
 
         with progress_bar("提取时间线", 1, ctx.progress_disabled) as update:
-            result = core.extract_timelines(
-                media,
-                points=points or None,
-                pixel_ids=pixel_id or None,
-                grid=grid_rect,
-                step=step,
-                block_size=block_size,
-                start_frame=start_frame,
-                end_frame=end_frame,
-                start=start,
-                end=end,
-                sample_every=sample_every,
-                sort=sort,  # type: ignore[arg-type]
-                progress=update,
+            generated = pixelprobe.generate(request)
+            update(1, 1)
+        tensor = generated.request_tensors[0][0]
+        matrix = timeline_matrix(tensor)
+        if block_size is not None:
+            matrix = np.round(matrix).astype(np.uint8)
+        frames = list(tensor.attributes["presentation_indices"])
+        times = list(tensor.attributes["timeline_timestamps_seconds"])
+        coordinates = [
+            PixelCoordinate(
+                x=x, y=y, pixel_id=pixel_id_from_xy(x, y, width),
             )
+            for x, y in ordered_points
+        ]
+        result = TimelineResult(
+            matrix=matrix,
+            points=coordinates,
+            frames=frames,
+            times=times,
+            frame_range=FrameRange(frames[0], frames[-1], request.selection.sample_every),
+            sample_type="point" if block_size is None else "block_mean",
+            block_size=block_size,
+            sort=sort,  # type: ignore[arg-type]
+            width=width,
+            height=height,
+            tensor=tensor,
+        )
 
         # 矩阵 [K,T,3] 本身就是 horizontal 图像（行=像素点，列=时间）
         raw_img = (

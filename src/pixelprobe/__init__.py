@@ -1,5 +1,13 @@
-"""PixelProbe：面向人类和 AI Agent 的图片、视频像素分析工具。"""
+"""PixelProbe：本地图片与视频像素分析 CLI 工具。"""
 
-from pixelprobe.version import __version__
+__all__ = ["explain", "generate"]
 
-__all__ = ["__version__"]
+
+def __getattr__(name: str):
+    if name not in __all__:
+        raise AttributeError(name)
+    from pixelprobe import api
+
+    value = getattr(api, name)
+    globals()[name] = value
+    return value

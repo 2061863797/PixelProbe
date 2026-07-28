@@ -16,6 +16,10 @@ import numpy as np
 from pixelprobe.core.frame_selector import FrameRange, resolve_range
 from pixelprobe.core.video_reader import VideoReader
 from pixelprobe.models.errors import DecodeError, InvalidRangeError
+from pixelprobe.compat.legacy_results import preview_image
+from pixelprobe.domain.tensor import TensorField
+from pixelprobe.operators.preview import make_preview_tensor
+from pixelprobe.operators.reduction import make_temporal_reduction_tensor
 from pixelprobe.utils.coordinates import validate_rect
 
 ProgressCallback = Callable[[int, int], None]
@@ -26,7 +30,7 @@ REDUCE_OPS: tuple[ReduceOp, ...] = ("mean", "median", "min", "max", "std", "diff
 
 # median 需要在内存中持有全部采样帧，缺省上限 1GB（含工作拷贝按 2 倍估算）
 DEFAULT_MAX_MEDIAN_BYTES = 1_073_741_824
-# smooth 邻域边长上限（过大只会把结构糊掉，且与 MCP/Web 层约束一致）
+# smooth 邻域边长上限，过大只会把结构糊掉
 MAX_SMOOTH = 64
 
 
@@ -57,6 +61,8 @@ class TemporalReduceResult:
     frames_analyzed: int
     width: int
     height: int
+    data_tensor: TensorField
+    preview_tensor: TensorField
 
 
 def _box_mean(stat: np.ndarray, k: int) -> np.ndarray:
@@ -245,9 +251,30 @@ def temporal_reduce(
             domain_parts.append("detrended_residual")
         if smooth >= 2:
             domain_parts.append("smoothed")
+        data_tensor = make_temporal_reduction_tensor(
+            stat,
+            operation=op,
+            source_width=width,
+            source_height=height,
+            rect=rect,
+            frames_analyzed=done,
+        )
+        preview_tensor = make_preview_tensor(
+            image,
+            tensor_id=f"preview_temporal_{op}_rgb",
+            source_tensor_id=data_tensor.tensor_id,
+            source_width=stat.shape[1],
+            source_height=stat.shape[0],
+            attributes={
+                "normalization": "percentile",
+                "p_low": p_low,
+                "p_high": p_high,
+                "stretch_domain": "+".join(domain_parts) if domain_parts else "raw",
+            },
+        )
         return TemporalReduceResult(
             op=op,
-            image=image,
+            image=preview_image(preview_tensor),
             stat_min=[round(float(v), 4) for v in stat.min(axis=(0, 1))],
             stat_max=[round(float(v), 4) for v in stat.max(axis=(0, 1))],
             stat_mean=[round(float(v), 4) for v in stat.mean(axis=(0, 1))],
@@ -263,4 +290,6 @@ def temporal_reduce(
             frames_analyzed=done,
             width=width,
             height=height,
+            data_tensor=data_tensor,
+            preview_tensor=preview_tensor,
         )

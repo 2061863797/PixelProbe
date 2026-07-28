@@ -7,7 +7,7 @@ from typing import Literal
 
 import numpy as np
 
-from pixelprobe.core.image_reader import ImageReader
+from pixelprobe.core.image_reader import ImageReader, NativeImageMetadata
 from pixelprobe.core.video_reader import VideoReader
 from pixelprobe.models.errors import InvalidRangeError, UnsupportedMediaError
 from pixelprobe.models.media_info import MediaInfo
@@ -61,6 +61,18 @@ def get_media_info(path: Path) -> MediaInfo:
         return reader.get_info()
 
 
+def detect_actual_format(path: Path) -> str | None:
+    """通过实际解码器识别格式；结果与扩展名无关。"""
+    path = ensure_file_exists(Path(path))
+    if detect_media_type(path) == "image":
+        with ImageReader() as reader:
+            reader.open(path)
+            return reader.get_info().codec
+    with VideoReader() as reader:
+        reader.open(path)
+        return reader.container_format
+
+
 def load_frame(
     path: Path,
     frame: int | None = None,
@@ -96,3 +108,25 @@ def load_frame(
             idx = frame if frame is not None else 0
             t, arr = reader.get_frame_by_index(idx)
         return arr, idx, round_seconds(t), info
+
+
+def load_native_image(
+    path: Path,
+) -> tuple[np.ndarray, NativeImageMetadata, MediaInfo]:
+    """读取图片的原生样本，不做 RGB8 显示转换。
+
+    这是图片精确像素查询的公开入口。视频的压缩码流没有可统一表示的原生
+    RGB 样本，因此调用方必须继续使用 :func:`load_frame` 的 decoded_sample。
+    """
+    path = ensure_file_exists(Path(path))
+    if detect_media_type(path) != "image":
+        raise InvalidRangeError(
+            "原生图片样本只适用于图片；视频请使用默认 decoded RGB 像素查询"
+        )
+    with ImageReader() as reader:
+        reader.open(path)
+        return (
+            reader.get_native_frame(),
+            reader.get_native_metadata(),
+            reader.get_info(),
+        )

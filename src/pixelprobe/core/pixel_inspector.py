@@ -71,3 +71,43 @@ def inspect_pixels(
             )
         )
     return samples
+
+
+def inspect_native_pixels(
+    image_array: np.ndarray,
+    points: list[tuple[int, int]],
+    *,
+    bands: tuple[str, ...],
+    sample_semantics: str,
+) -> list[dict[str, object]]:
+    """读取图片原生样本值，不套用 RGB/HSV/Lab 派生计算。
+
+    二维图片返回单一通道值；三维图片按 ``bands`` 的顺序返回各通道。调色板
+    图片的值是调色板索引，语义由 ``sample_semantics`` 与调用方元数据共同说明。
+    """
+    if image_array.ndim not in {2, 3}:
+        raise ValueError("原生图片样本必须是二维或三维数组")
+    height, width = image_array.shape[:2]
+    channel_count = 1 if image_array.ndim == 2 else image_array.shape[2]
+    if len(bands) != channel_count:
+        raise ValueError("原生图片通道描述与数组 shape 不一致")
+    for x, y in points:
+        validate_point(x, y, width, height)
+
+    samples: list[dict[str, object]] = []
+    for x, y in points:
+        value = image_array[y, x]
+        if image_array.ndim == 2:
+            values = [value.item()]
+        else:
+            values = [item.item() for item in value]
+        samples.append({
+            "x": x,
+            "y": y,
+            "pixel_id": pixel_id_from_xy(x, y, width),
+            "channels": list(bands),
+            "values": values,
+            "dtype": str(image_array.dtype),
+            "sample_semantics": sample_semantics,
+        })
+    return samples

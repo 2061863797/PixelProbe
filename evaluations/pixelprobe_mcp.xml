@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<evaluation>
+  <qa_pair>
+    <question>分别检查 evaluations/fixtures/精确图片.png 和 evaluations/fixtures/精确视频.mkv 的原始尺寸，并查看较宽媒体的第一帧确认可解码。较大的宽度是多少？只回答整数。</question>
+    <answer>32</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>检查 evaluations/fixtures/精确图片.png 的尺寸，再精确读取上边缘最右像素和左边缘最下像素。哪个坐标的红色通道更大？使用 (x,y) 格式回答。</question>
+    <answer>(15,0)</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>在 evaluations/fixtures/精确图片.png 中先核实 (2,3) 与 (3,4) 的像素，再分析左上角为 (2,3)、宽高均为 2 的区域。该区域平均蓝色通道是多少？只回答整数。</question>
+    <answer>48</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>检查 evaluations/fixtures/精确视频.mkv 的帧数，并分别获取第一帧和最后一个合法显示帧确认边界。最后一个合法帧号是多少？只回答整数。</question>
+    <answer>29</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>对 evaluations/fixtures/精确视频.mkv 扫描整帧变化，按得分降序查看候选，并获取第一名候选的原始画面。第一名的显示帧号是多少？只回答整数。</question>
+    <answer>15</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>先定位 evaluations/fixtures/精确视频.mkv 的最大整帧变化候选，再读取该候选帧左上角像素。它的 HEX 颜色是什么？使用 #RRGGBB。</question>
+    <answer>#FFFFFF</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>避开 evaluations/fixtures/精确视频.mkv 的全白候选帧，查看第 14 与第 16 帧并定位 y=8 上的纯红像素。它沿 x 方向移动了多少个像素？只回答整数。</question>
+    <answer>2</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>检查 evaluations/fixtures/精确视频.mkv 的第 0 帧与第 29 帧，在坐标 (24,16) 精确读取颜色并确认两帧一致。该固定像素的 HEX 是什么？</question>
+    <answer>#00FF00</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>获取 evaluations/fixtures/精确视频.mkv 的第 10 帧，并精确读取坐标 (2,28)。该像素 RGB 三个通道之和是多少？只回答整数。</question>
+    <answer>140</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>以 standard 模式检查 evaluations/fixtures/精确视频.mkv，结合变化候选和第 15 帧原始画面，找出像素阈值扫描给第 15 帧标记的纯帧异常类型。只回答英文类型名。</question>
+    <answer>white</answer>
+  </qa_pair>
+</evaluation>

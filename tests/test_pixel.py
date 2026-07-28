@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
+from PIL import Image
+
 from conftest import COUNTER_POS, GREEN_POS, run_json, run_json_error
 
 
@@ -87,5 +90,54 @@ def test_hsv_and_luminance_fields(test_video: Path) -> None:
 
 def test_no_point_is_param_error(test_image: Path) -> None:
     code, data = run_json_error("pixel", test_image, "--json")
+    assert code == 2
+    assert data["error"]["code"] == "INVALID_RANGE"
+
+
+def test_native_pixel_preserves_rgba_samples(tmp_path: Path) -> None:
+    path = tmp_path / "rgba.png"
+    source = np.array([[[1, 2, 3, 4]]], dtype=np.uint8)
+    Image.fromarray(source).save(path)
+
+    data = run_json(
+        "pixel", path, "--point", "0,0", "--sample", "native", "--json",
+    )["data"]
+    assert data["sample_semantics"] == "stored_sample"
+    assert data["native_image"] == {
+        "mode": "RGBA",
+        "source_format": "png",
+        "dtype": "uint8",
+        "shape": [1, 1, 4],
+        "bands": ["R", "G", "B", "A"],
+        "bits_per_sample": 8,
+        "has_alpha": True,
+        "alpha_representation": "straight",
+    }
+    assert data["pixels"] == [{
+        "x": 0, "y": 0, "pixel_id": 0,
+        "channels": ["R", "G", "B", "A"],
+        "values": [1, 2, 3, 4], "dtype": "uint8",
+        "sample_semantics": "stored_sample",
+    }]
+
+
+def test_native_pixel_preserves_high_bit_samples(tmp_path: Path) -> None:
+    path = tmp_path / "high-bit.png"
+    Image.fromarray(np.array([[65535]], dtype=np.uint16)).save(path)
+
+    data = run_json(
+        "pixel", path, "--point", "0,0", "--sample", "native", "--json",
+    )["data"]
+    assert data["sample_semantics"] == "stored_sample"
+    assert data["native_image"]["mode"] == "I;16"
+    assert data["native_image"]["dtype"] == "uint16"
+    assert data["native_image"]["bits_per_sample"] == 16
+    assert data["pixels"][0]["values"] == [65535]
+
+
+def test_native_pixel_rejects_video(test_video: Path) -> None:
+    code, data = run_json_error(
+        "pixel", test_video, "--point", "0,0", "--sample", "native", "--json",
+    )
     assert code == 2
     assert data["error"]["code"] == "INVALID_RANGE"

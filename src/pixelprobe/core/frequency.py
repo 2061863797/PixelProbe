@@ -17,6 +17,13 @@ from pixelprobe.core.frame_selector import FrameRange, resolve_range
 from pixelprobe.core.media_reader import load_frame
 from pixelprobe.core.video_reader import VideoReader
 from pixelprobe.models.errors import DecodeError, InvalidRangeError
+from pixelprobe.compat.legacy_results import preview_image
+from pixelprobe.domain.tensor import TensorField
+from pixelprobe.operators.frequency import (
+    make_spatial_fft_tensor,
+    make_temporal_fft_tensor,
+)
+from pixelprobe.operators.preview import make_preview_tensor
 from pixelprobe.output.plot import render_curve
 from pixelprobe.utils.coordinates import validate_point, validate_rect
 
@@ -51,6 +58,8 @@ class TemporalSpectrumResult:
     nyquist_hz: float
     frame_range: FrameRange
     samples: int
+    data_tensor: TensorField
+    preview_tensor: TensorField
 
 
 @dataclass
@@ -64,6 +73,8 @@ class SpatialSpectrumResult:
     rect: tuple[int, int, int, int] | None
     width: int
     height: int
+    data_tensor: TensorField
+    preview_tensor: TensorField
 
 
 def _luma(arr: np.ndarray) -> np.ndarray:
@@ -156,7 +167,8 @@ def temporal_spectrum(
         else effective_fps * frame_range.sample_every
 
     series = np.asarray(values, dtype=np.float64)
-    spectrum = np.abs(np.fft.rfft(series - series.mean()))
+    complex_spectrum = np.fft.rfft(series - series.mean())
+    spectrum = np.abs(complex_spectrum)
     if n % 2 == 0:
         # 实信号单侧幅度谱中 Nyquist bin 不折半，天然双倍计权；
         # 减半后与其他 bin 可比，避免 dominant 判定偏向 Nyquist 频率
@@ -189,6 +201,20 @@ def temporal_spectrum(
         markers=[dominant] if dominant is not None else None,
         y_min=0.0,
     )
+    data_tensor = make_temporal_fft_tensor(
+        complex_spectrum,
+        freqs,
+        source=source,
+        vfr_compatibility_estimate=vfr,
+    )
+    preview_tensor = make_preview_tensor(
+        image,
+        tensor_id=f"preview_temporal_fft_{source}",
+        source_tensor_id=data_tensor.tensor_id,
+        source_width=max(len(body), 1),
+        source_height=1,
+        attributes={"visualization": "magnitude_curve", "dc_excluded": True},
+    )
     return TemporalSpectrumResult(
         source=source,
         dominant_freq_hz=(
@@ -204,12 +230,14 @@ def temporal_spectrum(
         ),
         peak_ratio=round(peak_ratio, 4),
         top_peaks=top_peaks,
-        spectrum_image=image,
+        spectrum_image=preview_image(preview_tensor),
         vfr_warning=vfr,
         effective_fps=round(effective_fps, 4),
         nyquist_hz=round(effective_fps / 2.0, 4),
         frame_range=frame_range,
         samples=n,
+        data_tensor=data_tensor,
+        preview_tensor=preview_tensor,
     )
 
 
@@ -289,12 +317,32 @@ def spatial_spectrum(
         if top_value is None:
             top_value = value
 
+    data_tensor = make_spatial_fft_tensor(
+        spectrum,
+        source_width=info.width,
+        source_height=info.height,
+        rect=rect,
+    )
+    preview_tensor = make_preview_tensor(
+        image,
+        tensor_id="preview_spatial_fft_luma",
+        source_tensor_id=data_tensor.tensor_id,
+        source_width=w,
+        source_height=h,
+        attributes={
+            "visualization": "log_magnitude",
+            "fft_shifted": True,
+        },
+    )
+
     return SpatialSpectrumResult(
-        spectrum_image=image,
+        spectrum_image=preview_image(preview_tensor),
         peaks=peaks,
         frame=idx,
         time_seconds=t,
         rect=rect,
         width=w,
         height=h,
+        data_tensor=data_tensor,
+        preview_tensor=preview_tensor,
     )

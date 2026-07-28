@@ -1,15 +1,10 @@
 # PixelProbe
 
-**让 AI 看懂画面，也让分析结果精确到帧、时间和像素。**
+**把图片与视频分析精确到帧、时间、坐标和像素。**
 
-PixelProbe 是一款本地图片与视频分析工具。它可以快速定位视频中的关键变化、
-提取指定画面、读取像素颜色、统计区域特征，并把长视频转换成便于观察的时间线
-与时空切片。
-
-它既可以作为可视化软件直接使用，也可以通过命令行完成批量分析，还可以作为
-MCP 工具交给 AI 调用。媒体文件始终在本机处理。
-
-![PixelProbe 本地可视化界面](docs/screenshot-gui.png)
+PixelProbe 是一个本地图片与视频分析命令行工具。它可以定位视频中的关键变化、
+提取指定画面、读取像素颜色、统计区域特征，并把长视频转换成时间线、时空切片
+和统计图。媒体文件始终在本机处理。
 
 ## 主要功能
 
@@ -17,166 +12,74 @@ MCP 工具交给 AI 调用。媒体文件始终在本机处理。
 - **精确取帧**：按帧号或时间提取画面，支持局部裁剪和预览缩放。
 - **像素探测**：读取一个或多个像素的 RGB、HEX、HSV、Lab 和亮度。
 - **区域分析**：统计选区的平均值、中位数、最值、标准差和颜色特征。
-- **变化检测**：扫描点、区域或网格，找出变化最明显的帧和时间。
+- **变化检测**：扫描点、区域或整帧，找出变化最明显的帧和时间。
 - **颜色时间线**：观察固定像素或网格区域在整段视频中的颜色变化。
-- **X–T / Y–T 切片**：把空间与时间放在同一张图中，直观看到移动、闪烁和镜头变化。
-- **时间域合成**：把整段视频折叠成一张逐像素统计图，显出噪声中的隐藏图案、慢变水印和运动能量分布。
-- **一键扫描**：单遍解码产出概览网格图、变化事件区间和黑帧/白帧/闪帧等异常。
-- **两帧比较 / 采样网格**：定位任意两帧的差异区域；一张网格图看完整段视频。
-- **光流与频域**：运动方向与幅度、区分镜头运动与物体运动；周期闪烁与条纹检测。
-- **AI 工具调用**：让支持 MCP 的 AI 自动选择分析步骤、查看关键帧并引用精确数据。
+- **X–T / Y–T 切片**：在一张图中观察移动、闪烁和镜头变化。
+- **时间域合成**：显出噪声中的隐藏图案、慢变水印和运动能量分布。
+- **一键扫描**：生成代表帧网格、变化事件和黑帧、白帧、闪帧等异常信息。
+- **帧比较与采样网格**：定位两帧差异，或用一张网格图浏览完整视频。
+- **光流与频域分析**：分析运动方向、周期闪烁、条纹和摩尔纹。
+- **统一表示生成**：一次请求生成 X–T、Path–T、ROI–T、聚合或光流结果。
+- **可校验结果包**：保存原始数值、预览、坐标映射、来源和 SHA-256 校验信息。
 
-## 三种使用方式
+## 安装
 
-| 方式 | 适合场景 | 启动命令 |
-| --- | --- | --- |
-| 可视化界面 | 手动浏览、点击像素、拖框分析、查看变化图表 | `pixelprobe-web` |
-| 命令行 | 批量处理、脚本调用、导出 PNG/CSV/JSON | `pixelprobe` |
-| MCP | 让 AI 自主分析本地图片和视频 | `pixelprobe-mcp` |
-
-## 快速开始：克隆仓库直接用
-
-只需要两个前置条件：[Python](https://www.python.org/downloads/) 3.11 或更高
-（Windows 安装时勾选 "Add python.exe to PATH"）和
-[Git](https://git-scm.com/downloads)。
-
-打开终端（Windows 用 PowerShell），依次执行：
+需要 Python 3.11 或更高版本。克隆仓库后执行：
 
 ```bash
-# 1. 把仓库克隆到本机
 git clone https://github.com/2061863797/PixelProbe.git
-
-# 2. 进入仓库目录
 cd PixelProbe
-
-# 3. 安装（-e 是可编辑安装：以后更新代码不用重装）
 python -m pip install -e .
 ```
 
-装完三种使用方式就都可用了：
+也可以按某个**发布标签或提交哈希**直接从 GitHub 安装。不要省略末尾的版本定位，
+否则同一版本号可能随主分支变化：
 
 ```bash
-# 确认安装成功（应显示版本号）
+python -m pip install "pixelprobe @ git+https://github.com/2061863797/PixelProbe.git@<发布标签或提交哈希>"
+```
+
+确认安装成功：
+
+```bash
 pixelprobe --version
-
-# 打开可视化界面（浏览器会自动弹出）
-pixelprobe-web
-
-# 命令行：查看一个视频的信息
-pixelprobe info 你的视频.mp4
+pixelprobe --help
 ```
 
-想交给 Claude Code 使用（注册到全局，任何目录都能用）：
-
-```bash
-claude mcp add --scope user pixelprobe -- pixelprobe-mcp
-```
-
-可选功能：光流分析需要额外安装 OpenCV：
+光流分析需要额外安装 OpenCV。已克隆仓库时执行：
 
 ```bash
 python -m pip install -e ".[flow]"
 ```
 
-以后更新：在仓库目录执行 `git pull` 拉取最新代码，然后重启
-`pixelprobe-web`（MCP 则重启 AI 客户端或重连）即可，不需要重新安装。
-
-## AI 快速接入 MCP（不克隆仓库）
-
-最省事的方式是让 AI 客户端通过 `uvx` 直接从 GitHub 获取并运行 PixelProbe，
-不需要先单独安装 PixelProbe。电脑上需要有
-[uv](https://docs.astral.sh/uv/getting-started/installation/)。
-
-Codex 用户只需执行：
+从发布标签或提交哈希直接安装时使用：
 
 ```bash
-codex mcp add pixelprobe -- uvx --from git+https://github.com/2061863797/PixelProbe.git pixelprobe-mcp
+python -m pip install "pixelprobe[flow] @ git+https://github.com/2061863797/PixelProbe.git@<发布标签或提交哈希>"
 ```
 
-其他支持本地 stdio MCP 的 AI 客户端，可以复制下面的配置：
-
-```json
-{
-  "mcpServers": {
-    "pixelprobe": {
-      "command": "uvx",
-      "args": [
-        "--from",
-        "git+https://github.com/2061863797/PixelProbe.git",
-        "pixelprobe-mcp"
-      ]
-    }
-  }
-}
-```
-
-首次调用时会从 GitHub 下载 PixelProbe 及其运行依赖，之后会使用本机缓存。
-注意：缓存不会自动跟随仓库更新，PixelProbe 发布新版本后请执行
-`uv cache clean pixelprobe` 后重启 AI 客户端（或用 `uvx --refresh` 方式启动）。
-接入完成后，可以直接把本地媒体路径和问题交给 AI，例如：
-
-> 分析 `D:\videos\test.mp4`，找出画面右上角第一次发生明显变化的准确帧号和时间。
-
-AI 可以读取指定的本地图片和视频。只有名称含 `save` 的五个保存工具会写入文件，
-并且必须由 AI 明确提供输出路径；其他工具只返回分析结果和预览图。
-连接 MCP 时，PixelProbe 会自动向 AI 注入协作原则：AI 原有的视觉和视频理解
-负责看懂画面，PixelProbe 负责辅助定位并提供精确数据。
-
-## 安装软件（不克隆仓库）
-
-上面「快速开始」的克隆方式适合大多数人。如果不想保留仓库目录，
-也可以直接从 GitHub 一步安装（需要 Python 3.11 或更高版本，
-优先支持 Windows 10/11，同时兼容 Linux 和 macOS）：
+大型分块结果可选用 Zarr v3。已克隆仓库时执行：
 
 ```bash
-python -m pip install "git+https://github.com/2061863797/PixelProbe.git"
+python -m pip install -e ".[storage]"
 ```
 
-这种方式更新时需要重新执行上面的命令（加 `--upgrade --force-reinstall`）。
-安装后会同时提供可视化界面、命令行和 MCP Server。可以先检查版本：
+AI Agent 通过 MCP 接入时，已克隆仓库应安装可选依赖：
 
 ```bash
-pixelprobe --version
+python -m pip install -e ".[mcp]"
 ```
 
-如果软件已经安装，AI 客户端的 MCP 配置可以直接使用
-`{"command": "pixelprobe-mcp"}`，无需再通过 `uvx` 下载。
-`pixelprobe-mcp` 是由 AI 客户端启动的后台协议进程；直接在终端运行时会等待
-AI 连接，不会出现交互界面。
-
-## 可视化界面
-
-运行：
+从发布标签或提交哈希直接安装 MCP 时使用：
 
 ```bash
-pixelprobe-web
+python -m pip install "pixelprobe[mcp] @ git+https://github.com/2061863797/PixelProbe.git@<发布标签或提交哈希>"
 ```
 
-浏览器会自动打开 `http://127.0.0.1:8799/`。输入本地图片或视频路径后，可以：
-
-- 播放视频、拖动时间轴、使用方向键逐帧查看；
-- 单击画面读取像素颜色；
-- 拖框选择区域并立即查看统计结果；
-- 对选区执行变化检测，点击变化峰值跳转到对应帧，并查看自动分段的事件区间；
-- 查看颜色时间线和 X–T / Y–T 时空切片；
-- 时间域合成（含去条纹/平滑增强）、两帧差异比较和两帧光流分析；
-- 调整采样步长，在速度和精度之间切换。
-
-可变帧率视频会使用真实逐帧时间进行定位。浏览器无法直接播放某种编码时，
-界面会自动切换到后端单帧预览。
-
-Web 服务只允许本机访问，不会监听 `0.0.0.0` 等外部地址。
-
-注意：`pixelprobe-web` 和 `pixelprobe-mcp` 都是长驻进程，升级 PixelProbe
-之后必须重启它们（MCP 由 AI 客户端管理，重启客户端或重连 MCP 即可），
-否则会继续运行旧版本代码，出现页面与接口不匹配等问题。
-
-## 命令行
-
-常用示例：
+## 快速示例
 
 ```bash
-# 查看视频信息
+# 查看媒体信息
 pixelprobe info input.mp4
 
 # 提取第 120 帧
@@ -188,116 +91,224 @@ pixelprobe frame input.mp4 --time 3.5 --crop 400,200,300,300 --output crop.png
 # 查询两个像素
 pixelprobe pixel input.mp4 --frame 120 --point 520,340 --point 600,400
 
+# 查询 PNG/BMP/GIF 等图片的原生通道值（含 Alpha、调色板索引或 16 位样本）
+pixelprobe pixel input.png --sample native --point 520,340 --json
+
 # 分析矩形区域
 pixelprobe region input.mp4 --frame 120 --rect 400,200,200,150
 
 # 导出像素颜色时间线
 pixelprobe timeline input.mp4 --point 520,340 --output timeline.png --csv timeline.csv
 
-# 找出选区变化最大的 10 帧（不给目标时默认整帧，并自动分段为事件）
+# 找出选区变化最大的 10 帧
 pixelprobe changes input.mp4 --rect 400,200,200,150 --top 10
 
-# 一键概览：信息 + 代表帧网格 + 变化事件 + 异常帧（单遍解码）
-pixelprobe scan input.mp4 --sheet-output 概览.png
+# 一键生成概览网格、变化事件和异常帧
+pixelprobe scan input.mp4 --sheet-output overview.png
 
-# 时间域合成：噪声中的隐藏图案 / 运动能量分布
-pixelprobe reduce input.mp4 --op std --output 统计图.png
+# 时间域标准差合成
+pixelprobe reduce input.mp4 --op std --output temporal-std.png
 
-# 比较两帧差异并定位变化区域
-pixelprobe compare input.mp4 --frame-a 100 --frame-b 101 --output 差异.png
+# 比较两帧并定位变化区域
+pixelprobe compare input.mp4 --frame-a 100 --frame-b 101 --output diff.png
 
-# 等距抽 9 帧拼网格图
-pixelprobe sheet input.mp4 --count 9 --output 网格.png
+# 等距抽取 9 帧并拼接网格
+pixelprobe sheet input.mp4 --count 9 --output sheet.png
 
-# 周期闪烁检测（FFT 主频）
+# 检测周期闪烁
 pixelprobe spectrum input.mp4 --source luma
 
-# 稠密光流（需要 pip install "pixelprobe[flow]"）
-pixelprobe flow input.mp4 --frame-a 100 --frame-b 101 --flow-output 流场.png
+# 稠密光流
+pixelprobe flow input.mp4 --frame-a 100 --frame-b 101 --flow-output flow.png
 ```
 
-命令一览：
+`pixel` 默认返回历史兼容的显示 RGB8 值。`--sample native` 仅适用于图片，响应会
+明确给出 `sample_semantics`：已明确识别的无损常见格式返回 `stored_sample`；JPEG 等
+有损或无法确认的格式返回指定解码器的 `decoded_sample`，不会把它误称为压缩前原始 RGB。
+
+
+## 生成可复现结果包
+
+`generate` 接受一个请求 JSON，并把原始数值、坐标映射、预览和复现信息保存为
+一个 `.bundle` 目录。下面是 X–T 请求：
+
+```json
+{
+  "source": {"source_id": "source_main", "kind": "file", "uri": "input.mp4"},
+  "selection": {"mode": "all", "sample_every": 1},
+  "representation": "xt",
+  "geometry": {
+    "type": "line",
+    "coordinate_space_id": "storage_pixels",
+    "points": [[0, 120], [1919, 120]],
+    "closed": false
+  },
+  "feature": {"name": "rgb", "config": {}},
+  "output": {"format": "bundle", "include_preview": true}
+}
+```
+
+保存为 `request.json` 后运行：
+
+```bash
+pixelprobe generate input.mp4 --request request.json --output result.bundle
+pixelprobe validate result.bundle
+```
+
+多个请求可以放在同一个 JSON 数组中。它们引用同一媒体时共享一次解码。
+`validate` 默认验证所有登记文件的大小和 SHA-256；`--metadata-only` 只检查
+结构和路径，不能用于宣称内容完整。
+
+`feature_t` 可生成逐帧灰度、HSV、Lab、相邻帧绝对差、时间 FFT、空间 FFT、
+STFT 和 Farneback 光流等正式数值。STFT 必须明确提供 `window`、`length`、
+`hop`、`padding` 与 `normalization`，不规则时间轴会明确报错，不会被静默当成
+等间隔数据。时间 FFT 同样默认拒绝 VFR；只有显式设置
+`"vfr_policy": "estimate"` 才会使用带估算标志的兼容模式。所有颜色转换和频域
+图像都只是从 Data 派生的 Preview。
+
+长任务可以同时启用内容缓存和检查点；中断后只有计划、输入文件、算子版本和请求
+完全匹配时才允许恢复：
+
+```bash
+pixelprobe generate input.mp4 --request request.json --output result.bundle \
+  --cache-dir .pixelprobe-cache --checkpoint result.checkpoint.json
+pixelprobe generate input.mp4 --request request.json --output result.bundle \
+  --cache-dir .pixelprobe-cache --resume-from result.checkpoint.json
+```
+
+`pixelprobe validate result.bundle --strict` 会把未知可选字段和未登记文件也视为错误。
+
+## AI Agent 接入 MCP
+
+PixelProbe MCP 是现有 Python 核心的薄适配层，不会复制或改变分析算法。它通过
+本地 `stdio` 工作：Agent 负责理解人物、物体、文字、场景和构图；PixelProbe
+负责核实帧号、时间、坐标、像素、区域统计、变化候选和正式数值表示。
+
+在支持 MCP 的 Agent 中添加本地服务器：
+
+```json
+{
+  "mcpServers": {
+    "pixelprobe": {
+      "command": "pixelprobe-mcp",
+      "env": {
+        "PIXELPROBE_MCP_ROOTS": "D:\\media"
+      }
+    }
+  }
+}
+```
+
+客户端会自行启动 `pixelprobe-mcp`，不要在普通终端中手动运行。Windows 可用分号、
+macOS/Linux 可用冒号在 `PIXELPROBE_MCP_ROOTS` 中配置多个允许目录。服务器拒绝读取
+这些目录之外的路径。正式 Bundle 默认写入第一个允许目录下的
+`.pixelprobe-mcp/artifacts/`；也可用 `PIXELPROBE_MCP_ARTIFACT_ROOT` 指定其中的其他目录。
+
+接入后，Agent 应先调用 `pixelprobe_inspect_media`，再调用
+`pixelprobe_get_frame` 使用自身视觉查看原始画面，最后按需用精确像素、区域、变化和
+Artifact 工具核实。MCP 还提供 `pixelprobe_analyze_media` Prompt 和
+`pixelprobe://guidance` Resource，用于注入“视觉为主、确定性数据为辅助”的分析原则。
+
+检查图片时，响应会分别说明存储样本通道、确定性分析使用的 RGB 通道和视觉 PNG
+通道，并提供调色板使用量、完整 Alpha 统计及规则高频纹理候选。纹理候选附带检测范围、
+周期和相关性证据，只用于提醒 Agent 复核，不会被描述为已经确认的压缩、损坏或伪造。
+
+`pixelprobe_get_frame` 不会缩放画面。原始 PNG 超过客户端载荷限制时会明确失败并建议
+裁剪或分区查看，不会静默返回缩略图。生成表示是唯一写操作，只能写入受控 Artifact
+目录且不覆盖已有结果；其余工具均为只读操作。
+
+### 更新 MCP
+
+更新 PixelProbe 后，MCP 客户端必须重启服务器进程才会加载新版本。若使用克隆的仓库：
+
+```bash
+git pull
+python -m pip install -e ".[mcp]"
+```
+
+若直接从 GitHub 安装，请把 `<发布标签或提交哈希>` 替换为目标版本并强制重新安装：
+
+```bash
+python -m pip install --upgrade --force-reinstall "pixelprobe[mcp] @ git+https://github.com/2061863797/PixelProbe.git@<发布标签或提交哈希>"
+```
+
+然后重启支持 MCP 的 Agent/桌面客户端，再调用 `pixelprobe_get_capabilities` 确认
+`pixelprobe_version`。
+
+## 命令一览
 
 | 命令 | 功能 |
 | --- | --- |
 | `info` | 查看图片或视频信息 |
 | `frame` | 按帧号或时间提取画面 |
-| `pixel` | 查询一个或多个像素 |
+| `pixel` | 查询一个或多个像素；`--sample native` 可读取图片原生通道值 |
 | `region` | 分析矩形区域 |
 | `timeline` | 生成像素颜色时间线 |
 | `xt` | 生成水平扫描线的 X–T 切片 |
 | `yt` | 生成垂直扫描线的 Y–T 切片 |
 | `changes` | 定位变化最大的帧并分段为事件区间 |
-| `scan` | 一键概览：网格图 + 变化事件 + 异常帧 |
-| `reduce` | 时间域合成：逐像素 mean/median/min/max/std/diff 统计图 |
-| `compare` | 比较任意两帧：差异热力图与变化区域 bbox |
-| `sheet` | 等距抽帧拼接采样网格图 |
-| `spectrum` | 时间域 FFT：周期闪烁 / 周期变化检测 |
-| `spectrum2d` | 单帧空间 FFT：条纹 / 摩尔纹检测 |
-| `flow` | 稠密光流与全局运动估计（需 `[flow]` 可选依赖） |
+| `scan` | 生成网格图、变化事件和异常帧概览 |
+| `reduce` | 生成逐像素 mean/median/min/max/std/diff 统计图 |
+| `compare` | 比较任意两帧并生成差异图 |
+| `sheet` | 等距抽帧并拼接采样网格 |
+| `spectrum` | 执行时间域 FFT，检测周期变化 |
+| `spectrum2d` | 执行单帧空间 FFT，检测条纹或摩尔纹 |
+| `flow` | 计算稠密光流与全局运动估计 |
+| `generate` | 按请求生成一个或多个正式表示及 Bundle |
+| `validate` | 完整校验 Bundle 的结构、文件和 SHA-256 |
+| `cache clear` | 清理可安全删除的本机执行缓存 |
 
-所有命令均支持：
+使用 `pixelprobe <命令> --help` 查看某个命令的全部参数。
 
-- `--json`：输出机器可读 JSON；
+## 输出模式
+
+所有命令都支持 `--json`。分析类命令通常还支持：
+
 - `--quiet`：只显示必要结果；
 - `--verbose`：显示详细错误信息；
 - `--no-progress`：关闭进度条。
 
-使用 `pixelprobe <命令> --help` 可以查看该命令的全部参数。
+脚本集成建议使用 JSON 模式，并根据进程退出码判断成功或失败：
 
-## AI 如何使用 PixelProbe
+```bash
+pixelprobe info input.mp4 --json
+```
 
-PixelProbe 不会取代 AI 原有的视频处理能力。AI 的原生视觉负责理解对象、动作、
-事件与上下文；PixelProbe 的变化检测、时间线和时空切片用于缩小候选范围，
-并把视觉判断核对到精确的帧、时间、坐标和颜色。
+业务错误会映射为稳定的非零退出码；诊断信息写入标准错误，不会污染 JSON。
 
-变化峰值只表示像素变化较大，不能单独证明某个对象移动或某个事件发生。
-AI 应把原生视频理解作为主要依据，并查看候选点前后的画面进行交叉确认。
-
-例如，当你询问“这个球从什么时候开始移动”时，AI 可以自动完成：
-
-1. 使用原生视频/视觉能力理解场景并识别球；
-2. 读取视频信息，确定准确尺寸、帧数和时间范围；
-3. 对球所在区域扫描变化，只把结果当作候选时刻；
-4. 提取候选点之前、当时和之后的画面，用视觉能力确认移动；
-5. 使用 PixelProbe 的真实帧号和时间戳给出精确答案。
-
-MCP 提供媒体信息、取帧、像素、区域、时间线、时空切片、变化检测、一键扫描、
-时间域合成、两帧比较、采样网格、频域分析和光流等只读工具，全部参数直接
-暴露在工具 schema 顶层（无嵌套对象）。面对未知视频，建议先用
-`pixelprobe_scan_media` 一次调用建立概览，再逐步聚焦。
-需要写入文件时，AI 会使用独立的 PNG 保存工具，并明确提供输出路径；同名文件会被覆盖。
-
-光流分析（`pixelprobe_optical_flow` / `pixelprobe flow`）依赖 OpenCV，
-按需安装：`pip install "pixelprobe[flow]"`。未安装时其余功能不受影响，
-调用光流会返回带安装提示的 `DEPENDENCY_MISSING` 错误。
-
-仓库内置 Claude Code 技能 `.claude/skills/pixelprobe-video-analysis/SKILL.md`，
-包含完整的"场景 → 工具"决策表、统计图/光流图/频谱判读方法和参数经验值。
-在本仓库目录内使用 Claude Code 时自动可用；想在任意目录使用，
-把该技能目录复制到 `~/.claude/skills/` 即可。
-
-## 坐标与时间
+## 坐标与时间约定
 
 - 坐标原点位于左上角，x 向右，y 向下；
 - 所有坐标都对应原始媒体分辨率；
 - 帧号从 `0` 开始；
-- 帧范围包含起始帧和结束帧；
+- 常用分析命令的帧范围包含起始帧和结束帧；
+- `generate` 请求中的 `requested_end_frame_exclusive` 和时间结束值不包含在范围内；
 - 时间以媒体首帧为 `0` 秒；
 - 按时间取帧时，选择时间戳不晚于目标时间的最后一帧；
 - 可变帧率视频使用真实帧时间，不按平均帧率估算。
 
+变化峰值只表示像素变化较大，不能单独证明某个对象移动或某个事件发生。
+分析事件时应检查候选帧之前、当时和之后的原始画面。
+
 ## 输入与输出
 
-图片支持 PNG、JPEG、BMP、WebP 等常见格式。视频支持 MP4、MKV、AVI、MOV 等
-常见容器，具体编码支持取决于本机的 FFmpeg/PyAV 环境。
+图片支持 PNG、JPEG、BMP、WebP 等常见格式。视频支持 MP4、MKV、AVI、MOV
+等常见容器，具体编码支持取决于本机 FFmpeg/PyAV 环境。
 
-分析结果可以输出为：
+结果可以写为：
 
-- PNG：帧、裁剪图、时间线和时空切片；
+- PNG：帧、裁剪图、时间线、时空切片和分析图；
 - CSV：像素时间线和逐帧变化记录；
-- JSON：适合脚本和 AI 读取的结构化结果。
+- JSON：适合脚本和自动化流程读取的结构化结果；
+- NPY：保留 dtype、shape 和原始数值，支持局部读取；
+- Zarr v3：可选的大型分块数组格式；
+- Bundle：包含 Data、Preview、坐标映射、来源、ExecutionPlan、执行事件、
+  provenance 和完整性校验。
 
-## 更多文档
+Preview 只用于显示，不会替代或缩小 Data。清理本机缓存不会删除任何 Bundle。
 
-- [API 参考](docs/api.md)
+## 开源许可
+
+PixelProbe 采用 [Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0)
+开源。使用、修改和分发时请遵守仓库中 `LICENSE` 的完整条款；第三方依赖仍适用其
+各自的许可证。

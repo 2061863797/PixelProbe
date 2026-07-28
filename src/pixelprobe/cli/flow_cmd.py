@@ -7,7 +7,7 @@ from typing import Optional
 
 import typer
 
-from pixelprobe import core
+import pixelprobe
 from pixelprobe.cli import (
     JSON_OPT,
     NO_PROGRESS_OPT,
@@ -19,6 +19,7 @@ from pixelprobe.cli import (
 from pixelprobe.output import json_writer
 from pixelprobe.output.console import out_console, print_kv, progress_bar
 from pixelprobe.output.image_writer import save_png
+from pixelprobe.compat.legacy_requests import legacy_flow_request
 
 
 def flow(
@@ -67,45 +68,52 @@ def flow(
     """稠密光流：运动方向/幅度、全局运动估计与运动区域 bbox。"""
     ctx = CliContext(json_mode, quiet, verbose, no_progress)
     with cli_guard("flow", ctx):
+        request = legacy_flow_request(
+            media,
+            frame_a=frame_a,
+            time_a=time_a,
+            frame_b=frame_b,
+            time_b=time_b,
+            start_frame=start_frame,
+            end_frame=end_frame,
+            start=start,
+            end=end,
+            sample_every=sample_every,
+            accumulate=accumulate,
+            compensate_global=compensate,
+            mag_threshold=mag_threshold,
+        )
         with progress_bar("光流分析", 1, ctx.progress_disabled) as update:
-            result = core.compute_flow(
-                media,
-                frame_a=frame_a,
-                time_a=time_a,
-                frame_b=frame_b,
-                time_b=time_b,
-                start_frame=start_frame,
-                end_frame=end_frame,
-                start=start,
-                end=end,
-                sample_every=sample_every,
-                accumulate=accumulate,
-                compensate_global=compensate,
-                mag_threshold=mag_threshold,
-                progress=update,
-            )
+            generated = pixelprobe.generate(request)
+            update(1, 1)
+        tensors = generated.request_tensors[0]
+        flow_preview, magnitude_preview = tensors[-2:]
+        magnitude_tensor = tensors[-3]
+        metadata = magnitude_tensor.attributes
+        flow_image = flow_preview.data.materialize()
+        magnitude_image = magnitude_preview.data.materialize()
         if flow_output is not None:
-            save_png(result.flow_image, flow_output)
+            save_png(flow_image, flow_output)
         if magnitude_output is not None:
-            save_png(result.magnitude_image, magnitude_output)
+            save_png(magnitude_image, magnitude_output)
 
         data = {
-            "frame_a": result.frame_a,
-            "frame_b": result.frame_b,
-            "accumulated": result.accumulated,
-            "frames_analyzed": result.frames_analyzed,
-            "mean_magnitude": result.mean_magnitude,
-            "max_magnitude": result.max_magnitude,
-            "p95_magnitude": result.p95_magnitude,
-            "dominant_angle_deg": result.dominant_angle_deg,
-            "global_motion": result.global_motion,
-            "compensated": result.compensated,
+            "frame_a": metadata["frame_a"],
+            "frame_b": metadata["frame_b"],
+            "accumulated": metadata["accumulated"],
+            "frames_analyzed": metadata["frames_analyzed"],
+            "mean_magnitude": metadata["mean_magnitude"],
+            "max_magnitude": metadata["max_magnitude"],
+            "p95_magnitude": metadata["p95_magnitude"],
+            "dominant_angle_deg": metadata["dominant_angle_deg"],
+            "global_motion": metadata["global_motion"],
+            "compensated": metadata["compensated"],
             "motion_bbox": (
-                {"x": result.motion_bbox[0], "y": result.motion_bbox[1],
-                 "width": result.motion_bbox[2], "height": result.motion_bbox[3]}
-                if result.motion_bbox else None
+                {"x": metadata["motion_bbox"][0], "y": metadata["motion_bbox"][1],
+                 "width": metadata["motion_bbox"][2], "height": metadata["motion_bbox"][3]}
+                if metadata["motion_bbox"] else None
             ),
-            "mag_threshold": result.mag_threshold,
+            "mag_threshold": mag_threshold,
             "flow_output_path": str(flow_output) if flow_output else None,
             "magnitude_output_path": (
                 str(magnitude_output) if magnitude_output else None
@@ -116,24 +124,24 @@ def flow(
             return
         if ctx.quiet:
             out_console.print(
-                f"{result.mean_magnitude} {result.dominant_angle_deg}",
+                f"{data['mean_magnitude']} {data['dominant_angle_deg']}",
                 highlight=False,
             )
             return
-        gm = result.global_motion
+        gm = data["global_motion"]
         rows: list[tuple[str, object]] = [
-            ("帧 A / 帧 B", f"{result.frame_a} / {result.frame_b}"
-             f"{'（累积）' if result.accumulated else ''}"),
+            ("帧 A / 帧 B", f"{data['frame_a']} / {data['frame_b']}"
+             f"{'（累积）' if data['accumulated'] else ''}"),
             ("平均/最大幅度",
-             f"{result.mean_magnitude} / {result.max_magnitude} px"),
+             f"{data['mean_magnitude']} / {data['max_magnitude']} px"),
             ("主方向",
-             f"{result.dominant_angle_deg}°（0°=向右，y 向下）"
-             if result.dominant_angle_deg is not None else "无明显运动"),
+             f"{data['dominant_angle_deg']}°（0°=向右，y 向下）"
+             if data["dominant_angle_deg"] is not None else "无明显运动"),
             ("全局运动",
              f"dx={gm['dx']} dy={gm['dy']} 旋转 {gm['rotation_deg']}° "
              f"缩放 {gm['scale']}" if gm else "估计失败"),
             ("运动区域 bbox",
-             f"{result.motion_bbox}" if result.motion_bbox else "无"),
+             f"{metadata['motion_bbox']}" if metadata["motion_bbox"] else "无"),
         ]
         if flow_output:
             rows.append(("流场图", str(flow_output)))

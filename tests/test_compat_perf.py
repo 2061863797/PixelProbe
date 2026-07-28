@@ -33,30 +33,32 @@ def test_compat_pixel_cli(compat_video: Path) -> None:
 def test_timeline_decodes_video_once(test_video: Path, monkeypatch) -> None:
     """多点提取只解码视频一次。
 
-    通过统计 VideoReader.iter_frames 的调用次数验证。
+    通过统计规范解码入口 VideoReader.iter_frame_packets 的调用次数验证。
     """
-    from pixelprobe.core import video_reader as vr_module
+    import pixelprobe.core.video_reader as vr_module
 
     calls = {"n": 0}
-    original = vr_module.VideoReader.iter_frames
+    original = vr_module.VideoReader.iter_frame_packets
 
     def counting_iter(self, *args, **kwargs):
         calls["n"] += 1
         return original(self, *args, **kwargs)
 
-    monkeypatch.setattr(vr_module.VideoReader, "iter_frames", counting_iter)
+    monkeypatch.setattr(vr_module.VideoReader, "iter_frame_packets", counting_iter)
     result = core.extract_timelines(
         test_video,
         grid=(0, 0, 32, 32),
         step=2,  # 256 个采样点
     )
     assert result.matrix.shape[0] == 256
-    assert calls["n"] == 1, f"应只解码一遍，实际 iter_frames 调用 {calls['n']} 次"
+    assert calls["n"] == 1, (
+        f"应只解码一遍，实际 iter_frame_packets 调用 {calls['n']} 次"
+    )
 
 
 def test_video_reader_reuses_color_converter(test_video: Path, monkeypatch) -> None:
     """顺序分析应复用颜色转换器，不能为每一帧重复初始化。"""
-    from pixelprobe.core import video_reader as vr_module
+    import pixelprobe.core.video_reader as vr_module
 
     original = vr_module.VideoReformatter
     calls = {"instances": 0, "frames": 0}

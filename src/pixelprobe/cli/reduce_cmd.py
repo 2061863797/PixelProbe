@@ -7,7 +7,7 @@ from typing import Optional
 
 import typer
 
-from pixelprobe import core
+import pixelprobe
 from pixelprobe.cli import (
     JSON_OPT,
     NO_PROGRESS_OPT,
@@ -20,6 +20,7 @@ from pixelprobe.output import json_writer
 from pixelprobe.output.console import out_console, print_kv, progress_bar
 from pixelprobe.output.image_writer import save_png
 from pixelprobe.utils.coordinates import parse_rect
+from pixelprobe.compat.legacy_requests import legacy_reduce_request
 
 
 def reduce(
@@ -64,48 +65,54 @@ def reduce(
     ctx = CliContext(json_mode, quiet, verbose, no_progress)
     with cli_guard("reduce", ctx):
         rect_tuple = parse_rect(rect) if rect else None
+        request = legacy_reduce_request(
+            media,
+            operation=op,
+            rect=rect_tuple,
+            start_frame=start_frame,
+            end_frame=end_frame,
+            start=start,
+            end=end,
+            sample_every=sample_every,
+            p_low=p_low,
+            p_high=p_high,
+            destripe=destripe,
+            smooth=smooth,
+        )
         with progress_bar("时间域合成", 1, ctx.progress_disabled) as update:
-            result = core.temporal_reduce(
-                media,
-                op=op,  # type: ignore[arg-type]
-                rect=rect_tuple,
-                start_frame=start_frame,
-                end_frame=end_frame,
-                start=start,
-                end=end,
-                sample_every=sample_every,
-                p_low=p_low,
-                p_high=p_high,
-                destripe=destripe,
-                smooth=smooth,
-                progress=update,
-            )
+            generated = pixelprobe.generate(request)
+            update(1, 1)
+        data_tensor, preview_tensor = generated.request_tensors[0]
+        statistic = data_tensor.data.materialize()
+        image = preview_tensor.data.materialize()
+        frames = tuple(data_tensor.attributes["presentation_indices"])
+        preview_attributes = preview_tensor.attributes
         if output is not None:
-            save_png(result.image, output)
+            save_png(image, output)
 
         data = {
-            "op": result.op,
+            "op": op,
             "rect": (
                 {"x": rect_tuple[0], "y": rect_tuple[1],
                  "width": rect_tuple[2], "height": rect_tuple[3]}
                 if rect_tuple else None
             ),
-            "start_frame": result.frame_range.start,
-            "end_frame": result.frame_range.end,
-            "sample_every": result.frame_range.sample_every,
-            "frames_analyzed": result.frames_analyzed,
-            "stat_min": result.stat_min,
-            "stat_max": result.stat_max,
-            "stat_mean": result.stat_mean,
-            "stretch_low_value": result.stretch_low_value,
-            "stretch_high_value": result.stretch_high_value,
-            "stretch_domain": result.stretch_domain,
-            "p_low": result.p_low,
-            "p_high": result.p_high,
-            "destripe": result.destripe,
-            "smooth": result.smooth,
-            "image_width": int(result.image.shape[1]),
-            "image_height": int(result.image.shape[0]),
+            "start_frame": frames[0],
+            "end_frame": frames[-1],
+            "sample_every": request.selection.sample_every,
+            "frames_analyzed": len(frames),
+            "stat_min": [round(float(value), 4) for value in statistic.min(axis=(0, 1))],
+            "stat_max": [round(float(value), 4) for value in statistic.max(axis=(0, 1))],
+            "stat_mean": [round(float(value), 4) for value in statistic.mean(axis=(0, 1))],
+            "stretch_low_value": preview_attributes["stretch_low_value"],
+            "stretch_high_value": preview_attributes["stretch_high_value"],
+            "stretch_domain": preview_attributes["stretch_domain"],
+            "p_low": p_low,
+            "p_high": p_high,
+            "destripe": destripe,
+            "smooth": smooth,
+            "image_width": int(image.shape[1]),
+            "image_height": int(image.shape[0]),
             "output_path": str(output) if output else None,
         }
         if ctx.json_mode:
@@ -113,19 +120,19 @@ def reduce(
             return
         if ctx.quiet:
             out_console.print(
-                str(output) if output else f"op={result.op}", highlight=False
+                str(output) if output else f"op={op}", highlight=False
             )
             return
         rows: list[tuple[str, object]] = [
-            ("统计量", result.op),
-            ("分析帧数", result.frames_analyzed),
+            ("统计量", op),
+            ("分析帧数", len(frames)),
             ("原始统计范围",
-             f"{min(result.stat_min)} ~ {max(result.stat_max)}"),
+             f"{min(data['stat_min'])} ~ {max(data['stat_max'])}"),
             ("拉伸端点",
-             f"{result.stretch_low_value} ~ {result.stretch_high_value}"
-             f"（P{result.p_low} ~ P{result.p_high}"
-             + ("" if result.stretch_domain == "raw"
-                else f"，空间：{result.stretch_domain}") + "）"),
+             f"{data['stretch_low_value']} ~ {data['stretch_high_value']}"
+             f"（P{p_low} ~ P{p_high}"
+             + ("" if data["stretch_domain"] == "raw"
+                else f"，空间：{data['stretch_domain']}") + "）"),
         ]
         if output:
             rows.append(("输出文件", str(output)))

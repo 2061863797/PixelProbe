@@ -6,10 +6,21 @@ dist/
 .venv/
 venv/
 .pytest_cache/
+.pytest-temp-*/
+.audit-*.bundle/
 tests/assets/
 *.tmp-*
+.pixelprobe-mcp/
+.pixelprobe-cache/
+*.checkpoint.json
+evaluations/fixtures/
 
-# 本机工具配置
+# 本机开发工具配置
 .mcp.json
 .codegraph/
 .agents/
+.npm-cache/
+
+# 本地架构设计文档
+docs/design/
+/时空表示生成引擎总体架构总结.md

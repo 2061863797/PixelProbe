@@ -3,6 +3,8 @@
 
 from pathlib import Path
 
+from PyInstaller.utils.hooks import collect_submodules
+
 
 项目根目录 = Path(SPECPATH).parent
 
@@ -11,7 +13,9 @@ from pathlib import Path
     pathex=[str(项目根目录 / "src")],
     binaries=[],
     datas=[],
-    hiddenimports=[],
+    # Typer 运行时直接依赖 Click。部分平台上的 PyInstaller 依赖分析会漏掉
+    # Click 子模块，因此在发布包中显式收集，避免可执行文件启动失败。
+    hiddenimports=collect_submodules("click"),
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

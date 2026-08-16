@@ -45,7 +45,7 @@ PixelProbe 是一个本地图片与视频分析命令行工具。它可以定位
 需要光流、Zarr 或 MCP 等可选能力时，请使用 Python 3.11+ 安装固定版本：
 
 ```bash
-python -m pip install "pixelprobe @ git+https://github.com/2061863797/PixelProbe.git@v1.0.0"
+python -m pip install "pixelprobe @ git+https://github.com/2061863797/PixelProbe.git@v1.0.1"
 ```
 
 完整的解压、PATH、校验、可选依赖、更新和卸载说明见

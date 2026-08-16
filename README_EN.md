@@ -42,7 +42,7 @@ Extract the archive, then run:
 For optional optical-flow, Zarr, or MCP support, install a pinned release with Python 3.11 or later:
 
 ```bash
-python -m pip install "pixelprobe @ git+https://github.com/2061863797/PixelProbe.git@v1.0.0"
+python -m pip install "pixelprobe @ git+https://github.com/2061863797/PixelProbe.git@v1.0.1"
 ```
 
 See the [installation guide](https://github.com/2061863797/PixelProbe/blob/main/docs/installation.md) for PATH setup, checksums, optional dependencies, updates, and uninstall instructions.

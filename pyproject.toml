@@ -13,6 +13,7 @@ license-files = ["LICENSE"]
 authors = [{ name = "PixelProbe" }]
 dependencies = [
     "typer>=0.9",
+    "click>=8.1",
     "rich>=13",
     "av>=12",
     "numpy>=1.26",

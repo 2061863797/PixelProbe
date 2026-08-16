@@ -26,57 +26,30 @@ PixelProbe 是一个本地图片与视频分析命令行工具。它可以定位
 
 ## 安装
 
-需要 Python 3.11 或更高版本。克隆仓库后执行：
+普通用户建议从 [GitHub Releases](https://github.com/2061863797/PixelProbe/releases/latest)
+下载对应系统的独立 CLI，无需预装 Python：
+
+| 系统 | 下载文件 |
+| --- | --- |
+| Windows 64 位 | `pixelprobe-windows-x86_64.zip` |
+| Linux 64 位 | `pixelprobe-linux-x86_64.tar.gz` |
+| macOS Apple 芯片 | `pixelprobe-macos-arm64.tar.gz` |
+
+解压后运行：
 
 ```bash
-git clone https://github.com/2061863797/PixelProbe.git
-cd PixelProbe
-python -m pip install -e .
+./pixelprobe --version       # Linux / macOS
+.\pixelprobe.exe --version  # Windows PowerShell
 ```
 
-也可以按某个**发布标签或提交哈希**直接从 GitHub 安装。不要省略末尾的版本定位，
-否则同一版本号可能随主分支变化：
+需要光流、Zarr 或 MCP 等可选能力时，请使用 Python 3.11+ 安装固定版本：
 
 ```bash
-python -m pip install "pixelprobe @ git+https://github.com/2061863797/PixelProbe.git@<发布标签或提交哈希>"
+python -m pip install "pixelprobe @ git+https://github.com/2061863797/PixelProbe.git@v1.0.0"
 ```
 
-确认安装成功：
-
-```bash
-pixelprobe --version
-pixelprobe --help
-```
-
-光流分析需要额外安装 OpenCV。已克隆仓库时执行：
-
-```bash
-python -m pip install -e ".[flow]"
-```
-
-从发布标签或提交哈希直接安装时使用：
-
-```bash
-python -m pip install "pixelprobe[flow] @ git+https://github.com/2061863797/PixelProbe.git@<发布标签或提交哈希>"
-```
-
-大型分块结果可选用 Zarr v3。已克隆仓库时执行：
-
-```bash
-python -m pip install -e ".[storage]"
-```
-
-AI Agent 通过 MCP 接入时，已克隆仓库应安装可选依赖：
-
-```bash
-python -m pip install -e ".[mcp]"
-```
-
-从发布标签或提交哈希直接安装 MCP 时使用：
-
-```bash
-python -m pip install "pixelprobe[mcp] @ git+https://github.com/2061863797/PixelProbe.git@<发布标签或提交哈希>"
-```
+完整的解压、PATH、校验、可选依赖、更新和卸载说明见
+[安装指南](https://github.com/2061863797/PixelProbe/blob/main/docs/installation.md)。
 
 ## 快速示例
 

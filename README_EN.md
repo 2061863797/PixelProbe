@@ -24,56 +24,28 @@ PixelProbe is a local command-line tool for image and video analysis. It can loc
 
 ## Installation
 
-PixelProbe requires Python 3.11 or later. Clone the repository and install it with:
+For most users, download the standalone CLI from [GitHub Releases](https://github.com/2061863797/PixelProbe/releases/latest). Python is not required.
+
+| System | Download |
+| --- | --- |
+| Windows x86-64 | `pixelprobe-windows-x86_64.zip` |
+| Linux x86-64 | `pixelprobe-linux-x86_64.tar.gz` |
+| macOS Apple silicon | `pixelprobe-macos-arm64.tar.gz` |
+
+Extract the archive, then run:
 
 ```bash
-git clone https://github.com/2061863797/PixelProbe.git
-cd PixelProbe
-python -m pip install -e .
+./pixelprobe --version       # Linux / macOS
+.\pixelprobe.exe --version  # Windows PowerShell
 ```
 
-You can also install directly from a specific **release tag or commit hash**. Do not omit the revision, because the contents of the main branch can change without changing the package version:
+For optional optical-flow, Zarr, or MCP support, install a pinned release with Python 3.11 or later:
 
 ```bash
-python -m pip install "pixelprobe @ git+https://github.com/2061863797/PixelProbe.git@<release-tag-or-commit-hash>"
+python -m pip install "pixelprobe @ git+https://github.com/2061863797/PixelProbe.git@v1.0.0"
 ```
 
-Verify the installation:
-
-```bash
-pixelprobe --version
-pixelprobe --help
-```
-
-Optical-flow analysis requires OpenCV. From a cloned repository, run:
-
-```bash
-python -m pip install -e ".[flow]"
-```
-
-For a direct GitHub installation, use:
-
-```bash
-python -m pip install "pixelprobe[flow] @ git+https://github.com/2061863797/PixelProbe.git@<release-tag-or-commit-hash>"
-```
-
-Large chunked results can optionally use Zarr v3. From a cloned repository, run:
-
-```bash
-python -m pip install -e ".[storage]"
-```
-
-To connect an AI agent through MCP, install the optional MCP dependency from a cloned repository:
-
-```bash
-python -m pip install -e ".[mcp]"
-```
-
-For a direct GitHub installation with MCP support, use:
-
-```bash
-python -m pip install "pixelprobe[mcp] @ git+https://github.com/2061863797/PixelProbe.git@<release-tag-or-commit-hash>"
-```
+See the [installation guide](https://github.com/2061863797/PixelProbe/blob/main/docs/installation.md) for PATH setup, checksums, optional dependencies, updates, and uninstall instructions.
 
 ## Quick Examples
 

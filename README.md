@@ -56,7 +56,7 @@ chmod +x pixelprobe
 需要光流、Zarr 或 MCP 等可选能力时，请使用 Python 3.11+ 安装固定版本：
 
 ```bash
-python -m pip install "pixelprobe @ git+https://github.com/2061863797/PixelProbe.git@v1.0.2"
+python -m pip install "pixelprobe @ git+https://github.com/2061863797/PixelProbe.git@v1.0.3"
 ```
 
 完整的解压、PATH、校验、可选依赖、更新和卸载说明见

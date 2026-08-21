@@ -32,11 +32,22 @@ For most users, download the standalone CLI from [GitHub Releases](https://githu
 | Linux x86-64 | `pixelprobe-linux-x86_64.tar.gz` |
 | macOS Apple silicon | `pixelprobe-macos-arm64.tar.gz` |
 
-Extract the archive, then run:
+The executable is stored at the archive root. Extract it into its own directory, then run:
+
+```powershell
+# Windows PowerShell
+Expand-Archive .\pixelprobe-windows-x86_64.zip -DestinationPath .\pixelprobe
+Set-Location .\pixelprobe
+.\pixelprobe.exe --version
+```
 
 ```bash
-./pixelprobe --version       # Linux / macOS
-.\pixelprobe.exe --version  # Windows PowerShell
+# Linux; substitute pixelprobe-macos-arm64.tar.gz on macOS
+mkdir pixelprobe
+tar -xzf pixelprobe-linux-x86_64.tar.gz -C pixelprobe
+cd pixelprobe
+chmod +x pixelprobe
+./pixelprobe --version
 ```
 
 For optional optical-flow, Zarr, or MCP support, install a pinned release with Python 3.11 or later:

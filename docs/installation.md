@@ -10,16 +10,21 @@
 | Linux 64 位 | `pixelprobe-linux-x86_64.tar.gz` |
 | macOS Apple 芯片 | `pixelprobe-macos-arm64.tar.gz` |
 
-解压后先在当前目录验证：
+发布压缩包的根目录直接包含可执行文件、README 和许可证。建议解压到独立目录后验证：
 
 ```powershell
 # Windows PowerShell
+Expand-Archive .\pixelprobe-windows-x86_64.zip -DestinationPath .\pixelprobe
+Set-Location .\pixelprobe
 .\pixelprobe.exe --version
 .\pixelprobe.exe --help
 ```
 
 ```bash
-# Linux / macOS
+# Linux；macOS 请替换下载文件名
+mkdir pixelprobe
+tar -xzf pixelprobe-linux-x86_64.tar.gz -C pixelprobe
+cd pixelprobe
 chmod +x pixelprobe
 ./pixelprobe --version
 ./pixelprobe --help

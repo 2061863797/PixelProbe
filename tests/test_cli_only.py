@@ -77,3 +77,31 @@ def test_json_mode_cancellation_keeps_stdout_machine_readable(capsys: pytest.Cap
         },
     }
     assert captured.err == ""
+
+
+def test_ci_checks_tests_wheel_and_standalone_cli_before_release() -> None:
+    """常规提交必须在打标签前覆盖测试、wheel 安装和三平台 CLI。"""
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(
+        encoding="utf-8",
+    )
+
+    assert "pull_request:" in workflow
+    assert "branches:\n      - main" in workflow
+    assert "python-version: [\"3.11\", \"3.12\", \"3.13\"]" in workflow
+    assert "python -m pytest" in workflow
+    assert "pip install dist/*.whl" in workflow
+    assert all(
+        runner in workflow
+        for runner in ("windows-latest", "ubuntu-latest", "macos-14")
+    )
+
+
+def test_release_archives_executable_at_archive_root() -> None:
+    """安装文档按解压根目录运行，发布配置必须维持相同布局。"""
+    workflow = (ROOT / ".github" / "workflows" / "release-cli.yml").read_text(
+        encoding="utf-8",
+    )
+
+    assert "Compress-Archive -Path '${{ matrix.archive_name }}\\*'" in workflow
+    assert 'tar -czf "${{ matrix.archive }}" -C "${{ matrix.archive_name }}" .' in workflow
+    assert "archive-smoke" in workflow

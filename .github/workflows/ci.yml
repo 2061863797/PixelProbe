@@ -1,0 +1,82 @@
+name: 持续集成
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    name: Python ${{ matrix.python-version }} 测试
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - name: 安装项目与测试依赖
+        run: python -m pip install ".[dev,storage]"
+      - name: 运行完整测试
+        run: python -m pytest
+
+  python-package:
+    name: 构建并隔离安装 wheel
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: 构建并检查发行包
+        run: |
+          python -m pip install --upgrade build twine
+          python -m build
+          python -m twine check dist/*
+      - name: 在干净虚拟环境安装 wheel
+        run: |
+          python -m venv .wheel-smoke
+          ./.wheel-smoke/bin/python -m pip install dist/*.whl
+          ./.wheel-smoke/bin/pixelprobe --version
+          ./.wheel-smoke/bin/pixelprobe --help
+
+  standalone-cli:
+    name: ${{ matrix.os }} 独立 CLI
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            executable: pixelprobe.exe
+          - os: ubuntu-latest
+            executable: pixelprobe
+          - os: macos-14
+            executable: pixelprobe
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: 安装项目和打包工具
+        run: python -m pip install . pyinstaller
+      - name: 构建独立 CLI
+        run: python -m PyInstaller --noconfirm --clean packaging/pixelprobe.spec
+      - name: 验证独立 CLI
+        shell: bash
+        run: |
+          ./dist/${{ matrix.executable }} --version
+          ./dist/${{ matrix.executable }} --help

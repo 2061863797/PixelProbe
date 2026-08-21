@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Annotated, Literal, TypeAlias
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, model_validator
 
 from pixelprobe.domain.references import ArtifactRef
 
@@ -13,25 +13,25 @@ class PointGeometry(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     type: Literal["point"] = "point"
     coordinate_space_id: str
-    x: float
-    y: float
+    x: FiniteFloat
+    y: FiniteFloat
 
 
 class RectGeometry(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     type: Literal["rect"] = "rect"
     coordinate_space_id: str
-    x: float
-    y: float
-    width: float = Field(gt=0)
-    height: float = Field(gt=0)
+    x: FiniteFloat
+    y: FiniteFloat
+    width: FiniteFloat = Field(gt=0)
+    height: FiniteFloat = Field(gt=0)
 
 
 class PathGeometry(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     type: Literal["line", "polyline", "curve"]
     coordinate_space_id: str
-    points: tuple[tuple[float, float], ...]
+    points: tuple[tuple[FiniteFloat, FiniteFloat], ...]
     closed: bool = False
 
     @model_validator(mode="after")

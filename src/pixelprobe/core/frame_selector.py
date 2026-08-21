@@ -46,27 +46,22 @@ def resolve_range(
             "帧范围（--start-frame/--end-frame）与时间范围（--start/--end）不能混用"
         )
 
-    count, estimated = reader.frame_count()
-    if count is None or estimated:
-        # 元数据不可信时构建 PTS 索引获得精确帧数（只 demux 不解码）
-        index = reader.build_pts_index()
-        if index:
-            count, estimated = len(index), False
-    if count is None or count < 1:
-        raise FrameOutOfRangeError(
-            "无法确定视频总帧数，无法解析帧范围",
-            hint="请检查视频文件是否完整",
-        )
-    last = count - 1
-
     if uses_seconds:
-        if start is not None:
-            reader.validate_time(start)
-        if end is not None:
-            reader.validate_time(end)
-        s = reader.frame_index_for_time(start) if start is not None else 0
-        e = reader.frame_index_for_time(end) if end is not None else last
+        s, e, count = reader.frame_range_for_times(start, end)
+        last = count - 1
     else:
+        count, estimated = reader.frame_count()
+        if count is None or estimated:
+            # 元数据不可信时解码展示帧，构建精确 PTS 索引和帧数。
+            index = reader.build_pts_index()
+            if index:
+                count, estimated = len(index), False
+        if count is None or count < 1:
+            raise FrameOutOfRangeError(
+                "无法确定视频总帧数，无法解析帧范围",
+                hint="请检查视频文件是否完整",
+            )
+        last = count - 1
         s = start_frame if start_frame is not None else 0
         e = end_frame if end_frame is not None else last
 

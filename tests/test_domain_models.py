@@ -26,7 +26,10 @@ from pixelprobe.domain import (
     CoordinateSpaceKind,
     MediaSource,
     MemoryArrayHandle,
+    PathGeometry,
+    PointGeometry,
     ProvenanceRef,
+    RectGeometry,
     TemporalSelection,
     TensorField,
     TensorFieldDescriptor,
@@ -62,6 +65,27 @@ def test_temporal_selection_uses_half_open_interval() -> None:
             requested_start_frame=2,
             requested_end_frame_exclusive=2,
         )
+
+
+@pytest.mark.parametrize(
+    "factory",
+    (
+        lambda: PointGeometry(
+            coordinate_space_id="storage_pixels", x=float("nan"), y=0,
+        ),
+        lambda: RectGeometry(
+            coordinate_space_id="storage_pixels", x=0, y=0,
+            width=float("inf"), height=1,
+        ),
+        lambda: PathGeometry(
+            type="line", coordinate_space_id="storage_pixels",
+            points=((0, 0), (float("-inf"), 1)),
+        ),
+    ),
+)
+def test_geometry_rejects_non_finite_coordinates(factory) -> None:
+    with pytest.raises(ValidationError):
+        factory()
 
 
 def test_legacy_closed_range_round_trip_is_lossless() -> None:

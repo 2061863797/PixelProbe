@@ -16,6 +16,36 @@ from pixelprobe.domain.errors import MaterializationLimitExceededError
 from pixelprobe.domain.tensor import ArrayHandle, MemoryArrayHandle, StorageKind
 
 
+def _commit_zarr_directory(
+    temporary: Path,
+    target: Path,
+    backup: Path,
+    *,
+    overwrite: bool,
+) -> None:
+    """提交完整 Zarr 目录；不覆盖时绝不主动替换现有目标。"""
+    if not overwrite:
+        if os.path.lexists(target):
+            raise FileExistsError(f"输出目录已存在：{target}")
+        try:
+            os.rename(temporary, target)
+        except OSError as exc:
+            if os.path.lexists(target):
+                raise FileExistsError(f"输出目录已存在：{target}") from exc
+            raise
+        return
+    if os.path.lexists(target):
+        os.replace(target, backup)
+    try:
+        os.replace(temporary, target)
+    except Exception:
+        if backup.exists() and not os.path.lexists(target):
+            os.replace(backup, target)
+        raise
+    if backup.exists():
+        shutil.rmtree(backup)
+
+
 def _zarr():
     try:
         module = importlib.import_module("zarr")
@@ -87,7 +117,7 @@ def save_zarr(
     zarr = _zarr()
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
-    if target.exists() and not overwrite:
+    if os.path.lexists(target) and not overwrite:
         raise FileExistsError(f"输出目录已存在：{target}")
     temporary = target.parent / f".{target.name}.{uuid.uuid4().hex}.tmp"
     backup = target.parent / f".{target.name}.{uuid.uuid4().hex}.backup"
@@ -105,15 +135,9 @@ def save_zarr(
         checked = ZarrArrayHandle(temporary)
         if checked.shape != array.shape or np.dtype(checked.dtype) != dtype:
             raise ValueError("Zarr 写入后 shape/dtype 验证失败")
-        if target.exists():
-            os.replace(target, backup)
-        os.replace(temporary, target)
-        if backup.exists():
-            shutil.rmtree(backup)
-    except Exception:
-        if backup.exists() and not target.exists():
-            os.replace(backup, target)
-        raise
+        _commit_zarr_directory(
+            temporary, target, backup, overwrite=overwrite,
+        )
     finally:
         if temporary.exists():
             shutil.rmtree(temporary, ignore_errors=True)
@@ -139,9 +163,10 @@ def save_array_handle_zarr(
     zarr = _zarr()
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
-    if target.exists() and not overwrite:
+    if os.path.lexists(target) and not overwrite:
         raise FileExistsError(f"输出目录已存在：{target}")
     temporary = target.parent / f".{target.name}.{uuid.uuid4().hex}.tmp"
+    backup = target.parent / f".{target.name}.{uuid.uuid4().hex}.backup"
     try:
         dtype = np.dtype(target_dtype or source.dtype)
         stored = zarr.create_array(
@@ -153,7 +178,9 @@ def save_array_handle_zarr(
         checked = ZarrArrayHandle(temporary)
         if checked.shape != source.shape or np.dtype(checked.dtype) != dtype:
             raise ValueError("Zarr 写入后 shape/dtype 验证失败")
-        os.replace(temporary, target)
+        _commit_zarr_directory(
+            temporary, target, backup, overwrite=overwrite,
+        )
     finally:
         if temporary.exists():
             shutil.rmtree(temporary, ignore_errors=True)

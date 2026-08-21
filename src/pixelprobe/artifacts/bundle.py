@@ -833,7 +833,7 @@ class BundleWriter:
             raise BundleWriteError("只有 Zarr 可以设置 zarr_chunk_shape")
         target = Path(target).resolve()
         target.parent.mkdir(parents=True, exist_ok=True)
-        if target.exists() and not overwrite:
+        if os.path.lexists(target) and not overwrite:
             raise BundleTargetExistsError(f"目标已存在：{target}")
         temporary = target.parent / f".{target.name}.tmp-{uuid.uuid4().hex}"
         backup = target.parent / f".{target.name}.backup-{uuid.uuid4().hex}"
@@ -1307,9 +1307,23 @@ class BundleWriter:
             )
             _write_bytes(temporary / "manifest.json", _json_bytes(manifest))
             BundleReader().open(temporary, verify="full")
-            if target.exists():
-                os.replace(target, backup)
-            os.replace(temporary, target)
+            if overwrite:
+                if os.path.lexists(target):
+                    os.replace(target, backup)
+                os.replace(temporary, target)
+            else:
+                if os.path.lexists(target):
+                    raise BundleTargetExistsError(f"目标已存在：{target}")
+                try:
+                    # 不调用 os.replace；有效 Bundle 是非空目录，若其他写入方
+                    # 在长任务期间抢先提交，rename 会失败并保留其结果。
+                    os.rename(temporary, target)
+                except OSError as exc:
+                    if os.path.lexists(target):
+                        raise BundleTargetExistsError(
+                            f"目标已存在：{target}"
+                        ) from exc
+                    raise
             if backup.exists():
                 shutil.rmtree(backup)
             return BundleReader().open(target, verify="full")

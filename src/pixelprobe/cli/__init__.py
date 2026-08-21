@@ -9,6 +9,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 
+import click
 import typer
 
 from pixelprobe.domain.errors import DomainError
@@ -69,6 +70,15 @@ def cli_guard(command: str, ctx: CliContext) -> Iterator[None]:
         else:
             err_console.print("已取消，临时文件已清理", style="yellow")
         raise typer.Exit(130) from exc
+    except click.UsageError as exc:
+        message = exc.format_message()
+        if ctx.json_mode:
+            json_writer.print_error(command, {
+                "code": "INVALID_ARGUMENT", "message": message,
+            })
+        else:
+            err_console.print(f"参数错误：{message}", style="red", highlight=False)
+        raise typer.Exit(exc.exit_code) from exc
     except typer.Exit:
         raise
     except Exception as exc:  # 未预期错误 → 一般运行错误（退出码 1）

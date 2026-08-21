@@ -16,6 +16,22 @@ from pixelprobe.domain.errors import (
 from pixelprobe.domain.tensor import ArrayHandle, StorageKind
 
 
+def _commit_npy(temporary: Path, target: Path, *, overwrite: bool) -> None:
+    """原子提交同目录临时文件，并严格遵守不覆盖语义。"""
+    if overwrite:
+        os.replace(temporary, target)
+        return
+    try:
+        # 临时文件与目标位于同一目录。硬链接创建是原子的，且目标已存在时
+        # 不会替换它；随后删除临时名称即可得到不覆盖的原子提交。
+        os.link(temporary, target)
+    except OSError as exc:
+        if os.path.lexists(target):
+            raise FileExistsError(f"输出文件已存在：{target}") from exc
+        raise
+    temporary.unlink()
+
+
 def _validate_selection(
     selection: tuple[slice | int, ...],
     shape: tuple[int, ...],
@@ -133,7 +149,7 @@ def save_npy(
         raise ValueError("不允许保存 object/pickle NPY")
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
-    if target.exists() and not overwrite:
+    if os.path.lexists(target) and not overwrite:
         raise FileExistsError(f"输出文件已存在：{target}")
     temporary = target.with_name(f".{target.name}.{uuid.uuid4().hex}.tmp")
     try:
@@ -141,9 +157,7 @@ def save_npy(
             np.save(handle, np.ascontiguousarray(array), allow_pickle=False)
             handle.flush()
             os.fsync(handle.fileno())
-        if target.exists() and not overwrite:
-            raise FileExistsError(f"输出文件已存在：{target}")
-        os.replace(temporary, target)
+        _commit_npy(temporary, target, overwrite=overwrite)
     finally:
         temporary.unlink(missing_ok=True)
     return NpyArrayHandle(target)
@@ -184,7 +198,7 @@ def save_array_handle_npy(
     """按块复制任意 ArrayHandle，不整体物化源数组。"""
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
-    if target.exists() and not overwrite:
+    if os.path.lexists(target) and not overwrite:
         raise FileExistsError(f"输出文件已存在：{target}")
     temporary = target.with_name(f".{target.name}.{uuid.uuid4().hex}.tmp")
     array = None
@@ -205,7 +219,7 @@ def save_array_handle_npy(
         array = None
         with temporary.open("r+b") as handle:
             os.fsync(handle.fileno())
-        os.replace(temporary, target)
+        _commit_npy(temporary, target, overwrite=overwrite)
     finally:
         if array is not None:
             mmap = getattr(array, "_mmap", None)

@@ -681,11 +681,11 @@ class LocalExecutor:
     ) -> GenerationResult:
         if (checkpoint_path is not None or resume_from is not None) and context.cache is None:
             raise InvalidRangeError("checkpoint/resume 必须同时配置 cache_root")
+        source_paths = tuple(dict.fromkeys(
+            Path(request.source.uri).resolve(strict=True) for request in requests
+        ))
         source_sha_by_path = {
-            Path(request.source.uri).resolve(strict=True): sha256_file(
-                Path(request.source.uri).resolve(strict=True)
-            )
-            for request in requests
+            path: sha256_file(path) for path in source_paths
         }
         request_sha256 = hashlib.sha256(canonical_json([
             request.model_dump(mode="json") for request in requests

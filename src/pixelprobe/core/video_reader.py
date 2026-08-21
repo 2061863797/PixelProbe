@@ -8,8 +8,8 @@
 - frame_count 兜底链：PTS 索引（若已构建，精确）→ 容器元数据 →
   duration × fps 估算（info 标记 estimated）；
 - Windows 非 ASCII 路径：直接传路径失败时回退为二进制文件对象打开；
-- 可变帧率（VFR）与元数据缺失场景：demux 全部包构建 PTS 索引
-  （只读包头不解码，速度远快于解码），帧号 = 排序后 PTS 的下标，
+- 可变帧率（VFR）与元数据缺失场景：解码展示帧构建 PTS 索引，
+  帧号 = 展示顺序中的下标，
   寻址与帧计数均精确；索引在 VFR、容器缺少帧数元数据或 seek 需要
   精确定位时按需构建并缓存；无法建索引时退回从头顺序解码计数，
   保证帧索引内部一致，不静默返回错误结果。
@@ -294,6 +294,55 @@ class VideoReader:
         target_pts = index[0] + seconds / float(self.time_base)
         return max(bisect.bisect_right(index, target_pts) - 1, 0)
 
+    def frame_range_for_times(
+        self,
+        start_seconds: float | None,
+        end_seconds: float | None,
+    ) -> tuple[int, int, int]:
+        """把时间闭区间映射为展示帧闭区间，并返回精确总帧数。
+
+        PTS 严格递增时使用索引；缺失、重复或倒退时只顺序解码元数据，
+        不用平均 FPS 伪造帧号，也不为扫描帧执行 RGB 数组转换。
+        """
+        if start_seconds is not None:
+            self.validate_time(start_seconds)
+        if end_seconds is not None:
+            self.validate_time(end_seconds)
+        index = self.build_pts_index()
+        if index:
+            origin = index[0]
+            time_base = float(self.time_base)
+
+            def indexed(seconds: float) -> int:
+                target_pts = origin + seconds / time_base
+                return max(bisect.bisect_right(index, target_pts) - 1, 0)
+
+            start = indexed(start_seconds) if start_seconds is not None else 0
+            end = indexed(end_seconds) if end_seconds is not None else len(index) - 1
+            return start, end, len(index)
+
+        start_index = 0 if start_seconds is None else None
+        end_index: int | None = None
+        last_index = -1
+        for decoded in self._iter_decoded_presentation_frames(
+            0, None, 1, include_data=False,
+        ):
+            last_index = decoded.presentation_index
+            timestamp = decoded.timeline_time_seconds
+            if start_seconds is not None and timestamp <= start_seconds + 1e-6:
+                start_index = decoded.presentation_index
+            if end_seconds is not None and timestamp <= end_seconds + 1e-6:
+                end_index = decoded.presentation_index
+        if last_index < 0:
+            raise DecodeError(f"视频没有可解码帧：{self._path}")
+        if start_index is None:
+            raise TimeOutOfRangeError(f"时间 {start_seconds}s 之前没有任何帧")
+        if end_seconds is None:
+            end_index = last_index
+        elif end_index is None:
+            raise TimeOutOfRangeError(f"时间 {end_seconds}s 之前没有任何帧")
+        return start_index, end_index, last_index + 1
+
     def validate_frame_index(self, index: int) -> None:
         """校验帧号范围，越界抛 FrameOutOfRangeError。"""
         count, estimated = self.frame_count()
@@ -464,6 +513,8 @@ class VideoReader:
         start_frame: int,
         end_frame: int | None,
         sample_every: int,
+        *,
+        include_data: bool = True,
     ) -> Iterator[_DecodedPresentationFrame]:
         """顺序解码并保留展示帧元数据，不以包 PTS 或 FPS 推导帧号。"""
         if start_frame < 0:
@@ -521,7 +572,10 @@ class VideoReader:
                 )
                 current = _DecodedPresentationFrame(
                     presentation_index=index,
-                    data=self._frame_to_rgb_array(frame) if selected else None,
+                    data=(
+                        self._frame_to_rgb_array(frame)
+                        if selected and include_data else None
+                    ),
                     pts=pts,
                     source_timestamp_seconds=source_timestamp,
                     timeline_time_seconds=round_seconds(timeline),
@@ -534,12 +588,12 @@ class VideoReader:
                         if duration_pts > 0:
                             pending.duration_pts = duration_pts
                             pending.duration_seconds = float(duration_pts * time_base)
-                    if pending.data is not None:
+                    if pending.data is not None or not include_data:
                         yield pending
                 if end_frame is not None and index > end_frame:
                     return
                 pending = current
-            if pending is not None and pending.data is not None:
+            if pending is not None and (pending.data is not None or not include_data):
                 yield pending
         except av.FFmpegError as exc:
             raise DecodeError(

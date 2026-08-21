@@ -16,6 +16,8 @@ from pydantic import ValidationError
 from conftest import RED_Y
 from pixelprobe import core
 from pixelprobe.artifacts import BundleManifest, BundleReader, BundleWriter, save_zarr
+from pixelprobe.artifacts.array_io import save_array_handle_npy
+from pixelprobe.artifacts.zarr_io import save_array_handle_zarr
 from pixelprobe.artifacts.errors import (
     ArtifactChecksumMismatchError,
     ArtifactSchemaMismatchError,
@@ -59,6 +61,26 @@ class _NoMaterializeHandle:
 
     def materialize(self, *, max_bytes=None):
         raise AssertionError("Bundle 数值写入不得整体 materialize")
+
+
+class _CreateTargetOnReadHandle(_NoMaterializeHandle):
+    """模拟另一个写入方在长任务复制期间抢先创建目标。"""
+
+    def __init__(self, source, target: Path, *, directory: bool) -> None:
+        super().__init__(source)
+        self.target = target
+        self.directory = directory
+        self.created = False
+
+    def read(self, selection):
+        if not self.created:
+            if self.directory:
+                self.target.mkdir()
+                (self.target / "并发写入.txt").write_text("保留", encoding="utf-8")
+            else:
+                self.target.write_bytes(b"concurrent-writer")
+            self.created = True
+        return super().read(selection)
 
 
 def test_representation_request_is_typed_and_geometry_aware() -> None:
@@ -286,6 +308,40 @@ def test_bundle_writer_does_not_overwrite_by_default(
     assert not list(tmp_path.glob(".existing.bundle.tmp-*"))
 
 
+def test_npy_commit_preserves_target_created_during_copy(tmp_path: Path) -> None:
+    target = tmp_path / "并发.npy"
+    source = _CreateTargetOnReadHandle(
+        MemoryArrayHandle(np.arange(32, dtype=np.uint8)),
+        target,
+        directory=False,
+    )
+
+    with pytest.raises(FileExistsError):
+        save_array_handle_npy(source, target, chunk_bytes=4)
+
+    assert target.read_bytes() == b"concurrent-writer"
+    assert not list(tmp_path.glob(".并发.npy.*.tmp"))
+
+
+def test_bundle_commit_preserves_target_created_during_copy(
+    test_video: Path, tmp_path: Path,
+) -> None:
+    target = tmp_path / "并发.bundle"
+    original = core.create_xt_slice(test_video, RED_Y).tensor
+    raced = replace(
+        original,
+        data=_CreateTargetOnReadHandle(
+            original.data, target, directory=True,
+        ),
+    )
+
+    with pytest.raises(BundleTargetExistsError):
+        BundleWriter().write(target, (raced,))
+
+    assert (target / "并发写入.txt").read_text(encoding="utf-8") == "保留"
+    assert not list(tmp_path.glob(".并发.bundle.tmp-*"))
+
+
 def test_bundle_overwrite_failure_restores_previous_complete_bundle(
     test_video: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -426,3 +482,19 @@ def test_zarr_v3_is_optional_but_never_silently_downgrades(
         source[1:4, 2:5],
     )
     assert (path / "zarr.json").is_file()
+
+
+def test_zarr_commit_preserves_target_created_during_copy(tmp_path: Path) -> None:
+    pytest.importorskip("zarr")
+    target = tmp_path / "并发.zarr"
+    source = _CreateTargetOnReadHandle(
+        MemoryArrayHandle(np.arange(24, dtype=np.float32).reshape(4, 6)),
+        target,
+        directory=True,
+    )
+
+    with pytest.raises(FileExistsError):
+        save_array_handle_zarr(source, target, chunk_shape=(2, 3))
+
+    assert (target / "并发写入.txt").read_text(encoding="utf-8") == "保留"
+    assert not list(tmp_path.glob(".并发.zarr.*.tmp"))

@@ -32,6 +32,7 @@ from pixelprobe_mcp.service import (
     MCP_GENERATE_RESOURCES,
     MCP_MAX_CHANGE_SOURCE_FRAMES,
     MCP_MAX_GRID_POINTS,
+    MCP_MAX_GENERATE_SOURCE_FRAMES,
     MCP_MAX_STANDARD_SOURCE_FRAMES,
     PixelProbeService,
 )
@@ -226,6 +227,49 @@ async def test_mcp_standard_and_changes_reject_source_frame_budget_before_decode
     )
     assert changes.isError is True
     assert "MCP_RESOURCE_LIMIT" in changes.content[0].text  # type: ignore[union-attr]
+
+
+@pytest.mark.anyio
+async def test_mcp_generate_budgets_full_shared_frame_store_decode(
+    mcp_session: ClientSession,
+    test_video: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target = tmp_path / "生成预算视频.mkv"
+    target.write_bytes(test_video.read_bytes())
+    info = core.get_media_info(target).model_copy(update={
+        "frame_count": MCP_MAX_GENERATE_SOURCE_FRAMES + 1,
+        "frame_count_estimated": False,
+    })
+    monkeypatch.setattr(
+        "pixelprobe_mcp.service.core.get_media_info", lambda _: info,
+    )
+
+    def generate_must_not_run(*args: object, **kwargs: object) -> object:
+        raise AssertionError("超限视频即使只选一帧也不应开始生成")
+
+    monkeypatch.setattr(
+        "pixelprobe_mcp.service.pixelprobe.generate", generate_must_not_run,
+    )
+    result = await mcp_session.call_tool(
+        "pixelprobe_generate_representation",
+        {
+            "media_path": str(target),
+            "request": {
+                "source": {
+                    "source_id": "source_main", "kind": "file", "uri": "由工具覆盖",
+                },
+                "selection": {"mode": "indices", "requested_indices": [0]},
+                "representation": "frames",
+                "output": {"format": "bundle", "include_preview": False},
+            },
+        },
+    )
+
+    assert result.isError is True
+    assert "MCP_RESOURCE_LIMIT" in result.content[0].text  # type: ignore[union-attr]
+    assert "完整视频" in result.content[0].text  # type: ignore[union-attr]
 
 
 @pytest.mark.anyio

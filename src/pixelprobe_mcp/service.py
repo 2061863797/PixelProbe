@@ -378,29 +378,20 @@ class PixelProbeService:
 
     @classmethod
     def _ensure_generation_budget(
-        cls, info: MediaInfo, request: RepresentationRequest,
+        cls, info: MediaInfo,
     ) -> None:
         if info.media_type != "video":
             return
         frame_count = cls._require_bounded_video_frame_count(info, operation="表示生成")
-        selection = request.selection
-        if selection.mode == "indices":
-            source_frame_count = len(selection.requested_indices)
-        elif selection.mode == "frame_interval":
-            assert selection.requested_start_frame is not None
-            assert selection.requested_end_frame_exclusive is not None
-            source_frame_count = (
-                selection.requested_end_frame_exclusive - selection.requested_start_frame
-            )
-        elif selection.mode == "time_interval":
-            source_frame_count = frame_count
-        else:
-            source_frame_count = frame_count
+        # SharedFrameStore 当前为共享计算始终从 0 解码完整视频。选择区间只
+        # 限制下游输出，不能被当作源解码预算；支持局部 FrameStore 后方可收窄。
+        source_frame_count = frame_count
         if source_frame_count > MCP_MAX_GENERATE_SOURCE_FRAMES:
             raise McpResourceLimitError(
                 "表示生成最多处理 "
-                f"{MCP_MAX_GENERATE_SOURCE_FRAMES} 个源帧，当前选择包含至少 "
-                f"{source_frame_count} 帧；请缩小选择范围。sample_every 不会避免底层解码"
+                f"{MCP_MAX_GENERATE_SOURCE_FRAMES} 个源帧，当前媒体包含 "
+                f"{source_frame_count} 帧；当前共享 FrameStore 会解码完整视频，"
+                "选择少量帧或设置 sample_every 都不会减少底层解码量"
             )
 
     def _ensure_frame_budget(
@@ -775,7 +766,7 @@ class PixelProbeService:
         path, identity = self._resolve_media(params.media_path)
         request = RepresentationRequest.model_validate(params.request)
         source_info = core.get_media_info(path)
-        self._ensure_generation_budget(source_info, request)
+        self._ensure_generation_budget(source_info)
         request = request.model_copy(update={
             "source": MediaSource(
                 source_id=request.source.source_id,

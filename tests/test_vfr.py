@@ -6,9 +6,11 @@ import bisect
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from conftest import VFR_FRAME_COUNT, run_json, vfr_frame
 from pixelprobe.core import extract_timelines, get_media_info
+from pixelprobe.core.frame_selector import resolve_range
 from pixelprobe.core.video_reader import VideoReader
 
 
@@ -112,3 +114,22 @@ def test_open_resets_pts_index(
         second_index = reader.build_pts_index()
         assert second_index is not None and len(second_index) == VFR_FRAME_COUNT
         assert second_index[0] != first_index[0]
+
+
+def test_time_range_falls_back_to_sequential_metadata_scan(
+    vfr_video: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with VideoReader() as indexed_reader:
+        indexed_reader.open(vfr_video)
+        times = indexed_reader.frame_timestamps()
+    start = (times[2] + times[3]) / 2
+    end = (times[6] + times[7]) / 2
+    monkeypatch.setattr(VideoReader, "build_pts_index", lambda self: None)
+
+    with VideoReader() as reader:
+        reader.open(vfr_video)
+        frame_range = resolve_range(reader, start=start, end=end)
+
+    assert frame_range.start == 2
+    assert frame_range.end == 6
+    assert frame_range.count == 5

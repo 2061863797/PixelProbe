@@ -12,6 +12,7 @@ import pytest
 from PIL import Image
 
 import pixelprobe
+import pixelprobe.engine.executor as executor_module
 from conftest import FRAME_COUNT, RED_Y, make_frame, run_json
 from pixelprobe import core
 from pixelprobe.domain.geometry import PathGeometry
@@ -174,6 +175,23 @@ def test_dag_keeps_distinct_time_selections_after_shared_decode(
     assert first.attributes["presentation_indices"] == [0]
     assert second.attributes["presentation_indices"] == [1]
     assert not np.array_equal(first.data.materialize(), second.data.materialize())
+
+
+def test_shared_source_is_hashed_once_per_verification_phase(
+    test_video: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    requests = (_xt(test_video), _xt(test_video))
+    calls: list[Path] = []
+    real_sha256_file = executor_module.sha256_file
+
+    def counting_sha256(path: Path) -> str:
+        calls.append(Path(path))
+        return real_sha256_file(path)
+
+    monkeypatch.setattr(executor_module, "sha256_file", counting_sha256)
+    pixelprobe.generate(requests)
+
+    assert calls == [test_video.resolve(), test_video.resolve()]
 
 
 def test_bundle_keeps_same_named_tensors_from_distinct_dag_nodes(

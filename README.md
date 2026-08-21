@@ -35,11 +35,22 @@ PixelProbe 是一个本地图片与视频分析命令行工具。它可以定位
 | Linux 64 位 | `pixelprobe-linux-x86_64.tar.gz` |
 | macOS Apple 芯片 | `pixelprobe-macos-arm64.tar.gz` |
 
-解压后运行：
+压缩包根目录直接包含可执行文件。解压到单独目录后运行：
+
+```powershell
+# Windows PowerShell
+Expand-Archive .\pixelprobe-windows-x86_64.zip -DestinationPath .\pixelprobe
+Set-Location .\pixelprobe
+.\pixelprobe.exe --version
+```
 
 ```bash
-./pixelprobe --version       # Linux / macOS
-.\pixelprobe.exe --version  # Windows PowerShell
+# Linux；macOS 请替换为 pixelprobe-macos-arm64.tar.gz
+mkdir pixelprobe
+tar -xzf pixelprobe-linux-x86_64.tar.gz -C pixelprobe
+cd pixelprobe
+chmod +x pixelprobe
+./pixelprobe --version
 ```
 
 需要光流、Zarr 或 MCP 等可选能力时，请使用 Python 3.11+ 安装固定版本：

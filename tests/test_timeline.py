@@ -142,6 +142,21 @@ def test_orientation_vertical(test_video: Path, tmp_path: Path) -> None:
     assert data["raw_width"] == 2 and data["raw_height"] == FRAME_COUNT
 
 
+@pytest.mark.parametrize(
+    "option,value",
+    (("--sort", "invalid"), ("--orientation", "diagonal")),
+)
+def test_invalid_enum_option_is_reported_as_argument_error(
+    test_video: Path, option: str, value: str,
+) -> None:
+    code, data = run_json_error(
+        "timeline", test_video, "--point", "0,0", option, value, "--json",
+    )
+
+    assert code == 2
+    assert data["error"]["code"] == "INVALID_ARGUMENT"
+
+
 def test_grid_sampling(test_video: Path) -> None:
     result = extract_timelines(
         test_video, grid=(0, 0, 32, 32), step=16,

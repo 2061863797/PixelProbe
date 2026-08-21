@@ -23,6 +23,7 @@ from pixelprobe.cli import (
     spacetime_cmd,
     spectrum_cmd,
     timeline_cmd,
+    usage_error_details,
     validate_cmd,
 )
 from pixelprobe.output import json_writer
@@ -101,7 +102,7 @@ def main() -> None:
         else:
             exc.show()
         raise SystemExit(exc.exit_code) from exc
-    except click.Abort as exc:
+    except (click.Abort, typer.Abort) as exc:
         if json_mode_requested:
             json_writer.print_error("pixelprobe", {
                 "code": "CANCELLED", "message": "操作已取消",
@@ -120,6 +121,26 @@ def main() -> None:
         raise SystemExit(130) from None
     except typer.Exit as exc:
         raise SystemExit(exc.exit_code) from exc
+    except Exception as exc:
+        # Typer 0.27 起可使用其内置 Click，异常不再是外部
+        # click.UsageError 的实例；按公共错误行为识别后维持稳定协议。
+        usage_error = usage_error_details(exc)
+        if usage_error is None:
+            raise
+        message, exit_code = usage_error
+        if json_mode_requested:
+            command = next(
+                (argument for argument in sys.argv[1:] if not argument.startswith("-")),
+                "pixelprobe",
+            )
+            json_writer.print_error(command, {
+                "code": "INVALID_ARGUMENT", "message": message,
+            })
+        else:
+            show = getattr(exc, "show", None)
+            if callable(show):
+                show()
+        raise SystemExit(exit_code) from exc
 
 
 if __name__ == "__main__":

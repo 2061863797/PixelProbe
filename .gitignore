@@ -21,6 +21,7 @@ evaluations/fixtures/
 .agents/
 .npm-cache/
 
-# 本地架构设计文档
-docs/design/
+# 本地架构设计文档；核心数据模型规范参与契约测试，必须随仓库发布
+docs/design/*
+!docs/design/PixelProbe 核心数据模型设计.md
 /时空表示生成引擎总体架构总结.md

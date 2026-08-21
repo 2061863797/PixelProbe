@@ -120,10 +120,13 @@ def motion_video(assets_dir: Path) -> Path:
     return generate_motion_video(assets_dir / "运动视频.mkv")
 
 
-def run_cli(*args: object) -> subprocess.CompletedProcess[str]:
+def run_cli(
+    *args: object,
+    python_io_encoding: str = "utf-8",
+) -> subprocess.CompletedProcess[str]:
     """以子进程方式运行 pixelprobe，返回 CompletedProcess（UTF-8 文本）。"""
     env = dict(os.environ)
-    env["PYTHONIOENCODING"] = "utf-8"
+    env["PYTHONIOENCODING"] = python_io_encoding
     return subprocess.run(
         [sys.executable, "-m", "pixelprobe", *map(str, args)],
         capture_output=True,

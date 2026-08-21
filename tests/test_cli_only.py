@@ -79,6 +79,37 @@ def test_json_mode_cancellation_keeps_stdout_machine_readable(capsys: pytest.Cap
     assert captured.err == ""
 
 
+def test_cli_guard_recognizes_typer_vendored_usage_error(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Typer 内置 Click 后，参数错误仍保持稳定退出码和 JSON。"""
+
+    class UsageError(Exception):
+        exit_code = 2
+
+        def format_message(self) -> str:
+            return "参数无效"
+
+    UsageError.__module__ = "typer._click.exceptions"
+    with pytest.raises(typer.Exit) as raised:
+        with cli_guard("timeline", CliContext(json_mode=True)):
+            raise UsageError
+
+    assert raised.value.exit_code == 2
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["error"] == {
+        "code": "INVALID_ARGUMENT", "message": "参数无效",
+    }
+
+
+def test_cli_help_falls_back_to_utf8_for_incompatible_output_encoding() -> None:
+    result = run_cli("--help", python_io_encoding="cp1252")
+
+    assert result.returncode == 0
+    assert "本地图片与视频像素分析" in result.stdout
+    assert result.stderr == ""
+
+
 def test_ci_checks_tests_wheel_and_standalone_cli_before_release() -> None:
     """常规提交必须在打标签前覆盖测试、wheel 安装和三平台 CLI。"""
     workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(

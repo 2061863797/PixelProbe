@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import sys
 from contextlib import contextmanager
 from typing import Iterator
 
@@ -19,6 +20,22 @@ from rich.progress import (
 )
 from rich.table import Table
 
+
+def _configure_output_encoding() -> None:
+    """输出编码无法表示中文界面时切换到 UTF-8。"""
+    probe = "PixelProbe：本地图片与视频像素分析"
+    for stream in (sys.stdout, sys.stderr):
+        encoding = getattr(stream, "encoding", None)
+        reconfigure = getattr(stream, "reconfigure", None)
+        if not encoding or not callable(reconfigure):
+            continue
+        try:
+            probe.encode(encoding)
+        except (LookupError, UnicodeEncodeError):
+            reconfigure(encoding="utf-8", errors="strict")
+
+
+_configure_output_encoding()
 out_console = Console()
 err_console = Console(stderr=True)
 

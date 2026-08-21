@@ -24,6 +24,22 @@ VERBOSE_OPT = typer.Option(False, "--verbose", help="显示调试信息")
 NO_PROGRESS_OPT = typer.Option(False, "--no-progress", help="关闭进度条")
 
 
+def usage_error_details(error: BaseException) -> tuple[str, int] | None:
+    """兼容 Click 及 Typer 内置 Click 的参数错误。"""
+    is_click_usage_error = isinstance(error, click.UsageError)
+    is_typer_usage_error = any(
+        base.__name__ == "UsageError" and base.__module__.startswith("typer.")
+        for base in type(error).__mro__
+    )
+    if not is_click_usage_error and not is_typer_usage_error:
+        return None
+    formatter = getattr(error, "format_message", None)
+    exit_code = getattr(error, "exit_code", None)
+    if not callable(formatter) or not isinstance(exit_code, int):
+        return None
+    return str(formatter()), exit_code
+
+
 @dataclass
 class CliContext:
     """单次命令调用的输出模式。"""
@@ -70,18 +86,21 @@ def cli_guard(command: str, ctx: CliContext) -> Iterator[None]:
         else:
             err_console.print("已取消，临时文件已清理", style="yellow")
         raise typer.Exit(130) from exc
-    except click.UsageError as exc:
-        message = exc.format_message()
-        if ctx.json_mode:
-            json_writer.print_error(command, {
-                "code": "INVALID_ARGUMENT", "message": message,
-            })
-        else:
-            err_console.print(f"参数错误：{message}", style="red", highlight=False)
-        raise typer.Exit(exc.exit_code) from exc
     except typer.Exit:
         raise
     except Exception as exc:  # 未预期错误 → 一般运行错误（退出码 1）
+        usage_error = usage_error_details(exc)
+        if usage_error is not None:
+            message, exit_code = usage_error
+            if ctx.json_mode:
+                json_writer.print_error(command, {
+                    "code": "INVALID_ARGUMENT", "message": message,
+                })
+            else:
+                err_console.print(
+                    f"参数错误：{message}", style="red", highlight=False,
+                )
+            raise typer.Exit(exit_code) from exc
         if ctx.verbose:
             err_console.print_exception()
         if ctx.json_mode:

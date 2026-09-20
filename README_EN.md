@@ -27,7 +27,7 @@ PixelProbe is a local command-line tool for image and video analysis. It can loc
 Official releases contain the Python wheel and source archive only. They do not publish a standalone executable containing third-party native libraries such as FFmpeg. Install a pinned release with Python 3.11 or later:
 
 ```bash
-python -m pip install "pixelprobe[mcp,flow,storage,evidence] @ git+https://github.com/2061863797/PixelProbe.git@v1.0.3"
+python -m pip install "pixelprobe[mcp,flow,storage,evidence] @ git+https://github.com/2061863797/PixelProbe.git@v1.1.0"
 pixelprobe --version
 ```
 
@@ -38,7 +38,7 @@ python -m pip install -e ".[dev,mcp,flow,storage,evidence]" pyinstaller
 python scripts/build_local_standalone.py --output build/local-pixelprobe
 ```
 
-The script runs real CLI/MCP distribution checks by default and writes `LOCAL-BUILD.txt` plus `build-info.json`. The result is not an official release and must not be redistributed before reviewing the licenses of the native libraries selected by the local environment.
+The script runs real CLI/MCP checks against the local frozen executable by default and writes `LOCAL-BUILD.txt` plus `build-info.json`. The result is not an official release and must not be redistributed before reviewing the licenses of the native libraries selected by the local environment.
 
 See the [installation guide](https://github.com/2061863797/PixelProbe/blob/main/docs/installation.md) for uvx, wheel installation, optional dependencies, updates, local builds, and uninstall instructions.
 

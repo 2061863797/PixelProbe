@@ -26,7 +26,7 @@ PIXELPROBE_TEST_COMMAND 是测试启动器的 JSON 数组，不是产品配置�
 ```powershell
 $env:PIXELPROBE_TEST_COMMAND = ConvertTo-Json -Compress -InputObject @(
   "uvx", "--offline", "--python", "3.12", "--from",
-  "pixelprobe[mcp,flow,storage,evidence] @ file:///C:/候选目录/pixelprobe-1.0.3-py3-none-any.whl",
+  "pixelprobe[mcp,flow,storage,evidence] @ file:///C:/候选目录/pixelprobe-1.1.0-py3-none-any.whl",
   "pixelprobe"
 )
 python -m pytest tests/test_distribution.py
@@ -68,31 +68,9 @@ v1.0.2。这是本地 wheel 演练，不代表远程发行物和用户实际客�
 
 正式工作流构建 wheel 和 sdist，通过 twine 检查并在干净虚拟环境安装 wheel；
 标签 Release 只上传这些 Python 包及顶层 SHA256SUMS.txt。
+wheel 和 sdist 不内嵌 PyAV、FFmpeg、OpenCV 或 C2PA 原生库；这些依赖由安装器按
+所选 extra 获取。发布验收检查包元数据、安装后的 CLI/MCP 入口和实际媒体操作。
 
-以下原生清单流程保留给本地审计，以及未来重新评估独立版再分发时使用：
-
-scripts/build_release_inventory.py --executable <exe> --output <新目录> --wheel-dir <固定wheel目录>
-根据完整版 extra 的实际运行时依赖闭包生成 dependencies.json、
-runtime-requirements.txt、THIRD-PARTY-NOTICES.txt、licenses/ 和 SHA256SUMS.txt，
-并包含项目文档及许可。生成器拒绝覆盖已有目录；缺失许可时明确失败。
-随后将对应 exe 复制到目录根部，再归档；SHA256SUMS.txt 已包含该 exe 的指纹。
-
-独立版使用 packaging/release-constraints.txt 固定 PyAV 18.1.0、C2PA Python
-0.37.10 和 OpenCV 5.0.0.93。packaging/native-sources.json 保存三个目标平台的
-官方 wheel SHA256、上游构建提交、原生发布包和 Windows FFmpeg 组件源码指纹。
-传入 --wheel-dir 后，生成器先验证当前平台三个官方 wheel 的文件哈希，再按 wheel
-RECORD 逐项核对已安装运行文件；`.a`/`.lib` 仅为编译链接输入，不计入运行文件。
-
-若未来恢复独立版公开发行，必须再传 --require-redistribution-review。当前清单仍有
-原生传递许可核对项，redistribution_review_complete=false，因此该参数以非零状态
-退出。当前正式工作流完全不调用这条独立版路径。
-
-C2PA 0.37.10 wheel 未附许可，packaging/licenses/ 中保存了对应
-[官方版本的 MIT](https://raw.githubusercontent.com/contentauth/c2pa-python/v0.37.10/LICENSE-MIT)
-和 [Apache](https://raw.githubusercontent.com/contentauth/c2pa-python/v0.37.10/LICENSE-APACHE)
-原文；SOURCE.json 绑定来源与 SHA256，版本变化或内容变化不能静默复用。
-
-该清单覆盖 Python 包附带或补充的许可、CPython、PyInstaller、关键 wheel 来源和
-已安装运行文件一致性；仍不是原生库嵌入的全部传递许可原文或再分发审核结论。
-无 Python 的全新系统验收不再是当前 Python 包发行门槛。本机历史冻结候选仍仅作为
-本地功能证据；Linux/macOS 的冻结程序真实验收按用户要求暂缓。
+本地单文件脚本产生的程序不进入正式 Release。其 `LOCAL-BUILD.txt` 和
+`build-info.json` 会明确标记本地私有范围、依赖版本、程序哈希，以及不支持公开
+再分发。无 Python 系统与 Linux/macOS 冻结程序不再属于正式发行验收范围。

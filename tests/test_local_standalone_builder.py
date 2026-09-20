@@ -26,8 +26,8 @@ def test_local_builder_marks_private_artifact_and_runs_distribution_tests(tmp_pa
     output = builder.build(tmp_path / "local-build")
     info = json.loads((output / "build-info.json").read_text(encoding="utf-8"))
     assert info["scope"] == "local_private_build"
-    assert info["redistribution_review_complete"] is False
-    assert info["distribution_tests_run"] is True
+    assert info["public_redistribution_supported"] is False
+    assert info["acceptance_tests_run"] is True
     assert "请勿公开再分发" in (output / "LOCAL-BUILD.txt").read_text(encoding="utf-8")
     assert any("pytest" in command for command, _env in calls)
     assert sorted(path.name for path in tmp_path.iterdir()) == ["local-build"]

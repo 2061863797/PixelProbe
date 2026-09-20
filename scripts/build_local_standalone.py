@@ -49,7 +49,7 @@ def run(command: list[str], *, env: dict[str, str] | None = None) -> None:
     subprocess.run(command, cwd=ROOT, env=env, check=True)
 
 
-def build(output: Path, *, skip_distribution_tests: bool = False) -> Path:
+def build(output: Path, *, skip_acceptance_tests: bool = False) -> Path:
     output = output.expanduser().resolve()
     if output.exists():
         raise FileExistsError(f"输出目录已存在，拒绝覆盖：{output}")
@@ -71,7 +71,7 @@ def build(output: Path, *, skip_distribution_tests: bool = False) -> Path:
         run([str(executable), "--version"])
         run([str(executable), "--help"])
         run([str(executable), "doctor", "--json"])
-        if not skip_distribution_tests:
+        if not skip_acceptance_tests:
             environment = os.environ.copy()
             environment["PIXELPROBE_TEST_EXECUTABLE"] = str(executable)
             run([
@@ -95,7 +95,7 @@ def build(output: Path, *, skip_distribution_tests: bool = False) -> Path:
         )
         (delivery / "build-info.json").write_text(json.dumps({
             "scope": "local_private_build",
-            "redistribution_review_complete": False,
+            "public_redistribution_supported": False,
             "python": platform.python_version(),
             "platform": platform.platform(),
             "packages": versions,
@@ -104,7 +104,7 @@ def build(output: Path, *, skip_distribution_tests: bool = False) -> Path:
                 "sha256": sha256(target_executable),
                 "size_bytes": target_executable.stat().st_size,
             },
-            "distribution_tests_run": not skip_distribution_tests,
+            "acceptance_tests_run": not skip_acceptance_tests,
         }, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         os.replace(delivery, output)
     finally:
@@ -116,12 +116,12 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True, help="必须尚不存在的新目录")
     parser.add_argument(
-        "--skip-distribution-tests", action="store_true",
-        help="只执行启动/帮助/doctor 冒烟；默认还运行真实 CLI/MCP 发行验收",
+        "--skip-acceptance-tests", action="store_true",
+        help="只执行启动/帮助/doctor 冒烟；默认还运行真实 CLI/MCP 本地验收",
     )
     args = parser.parse_args()
     try:
-        result = build(args.output, skip_distribution_tests=args.skip_distribution_tests)
+        result = build(args.output, skip_acceptance_tests=args.skip_acceptance_tests)
     except (FileExistsError, RuntimeError, subprocess.CalledProcessError) as exc:
         parser.exit(1, f"错误：{exc}\n")
     print(json.dumps({"output": str(result), "scope": "local_private_build"}, ensure_ascii=False))

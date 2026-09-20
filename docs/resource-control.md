@@ -97,4 +97,5 @@ pixelprobe_get_job 增加两个兼容字段：
 同时保留现有取消竞争、重启及完整结果校验回归。
 
 Windows 本地测试结果记录在 [优化实施检查点](optimization-progress.md)。
-Linux/macOS 实际运行和冻结程序验证属于发行验收，未将 CI 配置等同于通过。
+Linux 保留正式 Python 测试矩阵；macOS 的 Python/uvx 真实运行仍需在对应平台验证。
+开发者本地冻结程序只验证该机器生成的私有产物，不属于正式发行门槛。

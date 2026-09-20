@@ -29,6 +29,7 @@ from pixelprobe.artifacts.errors import (
     ZarrDependencyMissingError,
 )
 import pixelprobe.artifacts.bundle as bundle_module
+import pixelprobe.artifacts.zarr_io as zarr_module
 from pixelprobe.domain.geometry import PathGeometry
 from pixelprobe.domain.media import MediaSource
 from pixelprobe.domain.time import TemporalSelection
@@ -475,13 +476,16 @@ def test_zarr_v3_is_optional_but_never_silently_downgrades(
         assert not path.exists()
         return
     handle = save_zarr(source, path, chunk_shape=(2, 3))
-    assert handle.storage_kind.value == "zarr"
-    assert handle.chunk_shape == (2, 3)
-    assert np.array_equal(
-        handle.read((slice(1, 4), slice(2, 5))),
-        source[1:4, 2:5],
-    )
-    assert (path / "zarr.json").is_file()
+    try:
+        assert handle.storage_kind.value == "zarr"
+        assert handle.chunk_shape == (2, 3)
+        assert np.array_equal(
+            handle.read((slice(1, 4), slice(2, 5))),
+            source[1:4, 2:5],
+        )
+        assert (path / "zarr.json").is_file()
+    finally:
+        handle.close()
 
 
 def test_zarr_commit_preserves_target_created_during_copy(tmp_path: Path) -> None:
@@ -498,3 +502,33 @@ def test_zarr_commit_preserves_target_created_during_copy(tmp_path: Path) -> Non
 
     assert (target / "并发写入.txt").read_text(encoding="utf-8") == "保留"
     assert not list(tmp_path.glob(".并发.zarr.*.tmp"))
+
+
+def test_zarr_commit_retries_transient_windows_permission_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    temporary = tmp_path / "temporary.zarr"
+    target = tmp_path / "target.zarr"
+    backup = tmp_path / "backup.zarr"
+    temporary.mkdir()
+    (temporary / "zarr.json").write_text("{}", encoding="utf-8")
+    real_rename = os.rename
+    attempts = 0
+
+    def transient_rename(source, destination):
+        nonlocal attempts
+        attempts += 1
+        if attempts < 3:
+            raise PermissionError("temporary Windows directory lock")
+        real_rename(source, destination)
+
+    monkeypatch.setattr(zarr_module, "_WINDOWS", True)
+    monkeypatch.setattr(zarr_module.os, "rename", transient_rename)
+    monkeypatch.setattr(zarr_module.time, "sleep", lambda _seconds: None)
+
+    zarr_module._commit_zarr_directory(
+        temporary, target, backup, overwrite=False,
+    )
+
+    assert attempts == 3
+    assert (target / "zarr.json").read_text(encoding="utf-8") == "{}"

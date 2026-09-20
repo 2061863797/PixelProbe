@@ -6,6 +6,8 @@ import importlib
 import os
 import shutil
 import tempfile
+import time
+from pathlib import Path
 
 import typer
 
@@ -13,6 +15,46 @@ from pixelprobe.cli import JSON_OPT
 from pixelprobe.output import json_writer
 from pixelprobe.output.console import out_console
 from pixelprobe_mcp.config import ServerConfig
+
+
+def _remove_probe(path: Path) -> None:
+    """删除写入探针；Windows 扫描器可能短暂持有刚关闭的文件。"""
+    deadline = time.monotonic() + 1.0
+    while True:
+        try:
+            path.unlink(missing_ok=True)
+            return
+        except PermissionError:
+            if os.name != "nt" or time.monotonic() >= deadline:
+                raise
+            time.sleep(0.05)
+
+
+def _probe_writable_directory(parent: Path) -> bool:
+    probe_path: Path | None = None
+    write_succeeded = False
+    cleanup_succeeded = True
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w+b",
+            prefix=".pixelprobe-write-probe-",
+            dir=parent,
+            delete=False,
+        ) as probe:
+            probe_path = Path(probe.name)
+            probe.write(b"pixelprobe")
+            probe.flush()
+            os.fsync(probe.fileno())
+        write_succeeded = True
+    except OSError:
+        pass
+    finally:
+        if probe_path is not None:
+            try:
+                _remove_probe(probe_path)
+            except OSError:
+                cleanup_succeeded = False
+    return write_succeeded and cleanup_succeeded
 
 
 def inspect_environment(
@@ -40,14 +82,8 @@ def inspect_environment(
         while not parent.exists():
             parent = parent.parent
         free_bytes = shutil.disk_usage(parent).free
-        try:
-            # 实际创建并立即删除探针；os.access 在 Windows ACL 下不足以验证写权限。
-            with tempfile.TemporaryFile(dir=parent) as probe:
-                probe.write(b"pixelprobe")
-                probe.flush()
-            writable = True
-        except OSError:
-            writable = False
+        # 实际创建、刷盘并删除探针；os.access 在 Windows ACL 下不足以验证写权限。
+        writable = _probe_writable_directory(parent)
         checks.append({
             "name": "artifact_storage", "status": "ok" if writable else "error",
             "free_bytes": free_bytes,

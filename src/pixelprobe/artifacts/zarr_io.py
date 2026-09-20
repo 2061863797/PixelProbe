@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib
 import os
 import shutil
+import time
 import uuid
 from pathlib import Path
 
@@ -15,6 +16,9 @@ from pixelprobe.artifacts.errors import ZarrDependencyMissingError
 from pixelprobe.domain.errors import MaterializationLimitExceededError
 from pixelprobe.domain.tensor import ArrayHandle, MemoryArrayHandle, StorageKind
 from pixelprobe.utils.resource_budget import current_budget, moved, removed, check_active, require_memory
+
+
+_WINDOWS = os.name == "nt"
 
 
 def _budget_store(path):
@@ -47,7 +51,7 @@ def _commit_zarr_directory(
         if os.path.lexists(target):
             raise FileExistsError(f"输出目录已存在：{target}")
         try:
-            os.rename(temporary, target)
+            _move_zarr_directory(temporary, target, replace=False)
             moved(temporary, target)
         except OSError as exc:
             if os.path.lexists(target):
@@ -55,13 +59,13 @@ def _commit_zarr_directory(
             raise
         return
     if os.path.lexists(target):
-        os.replace(target, backup)
+        _move_zarr_directory(target, backup, replace=True)
     try:
-        os.replace(temporary, target)
+        _move_zarr_directory(temporary, target, replace=True)
         moved(temporary, target)
     except Exception:
         if backup.exists() and not os.path.lexists(target):
-            os.replace(backup, target)
+            _move_zarr_directory(backup, target, replace=True)
         raise
     if backup.exists():
         shutil.rmtree(backup)
@@ -77,6 +81,27 @@ def _zarr():
     if int(module.__version__.split(".", 1)[0]) != 3:
         raise ZarrDependencyMissingError("PixelProbe 只支持 Zarr Python 3.x")
     return module
+
+
+def _close_zarr_store(array) -> None:
+    """关闭 Zarr store，确保 Windows 可以移动或删除对应目录。"""
+    close = getattr(getattr(array, "store", None), "close", None)
+    if callable(close):
+        close()
+
+
+def _move_zarr_directory(source: Path, target: Path, *, replace: bool) -> None:
+    """重命名完整目录；Windows 短暂占用时最多等待两秒。"""
+    operation = os.replace if replace else os.rename
+    deadline = time.monotonic() + 2.0
+    while True:
+        try:
+            operation(source, target)
+            return
+        except PermissionError:
+            if not _WINDOWS or time.monotonic() >= deadline:
+                raise
+            time.sleep(0.05)
 
 
 class ZarrArrayHandle:
@@ -120,6 +145,9 @@ class ZarrArrayHandle:
             )
         return np.asarray(self._array[:]).copy()
 
+    def close(self) -> None:
+        _close_zarr_store(self._array)
+
 
 def save_zarr(
     array: np.ndarray,
@@ -152,13 +180,19 @@ def save_zarr(
             zarr_format=3,
             overwrite=False,
         )
-        for selection in iter_chunk_selections(array.shape, chunk_shape):
-            check_active()
-            require_memory(int(np.prod(chunk_shape)) * dtype.itemsize * 4)
-            stored[selection] = np.ascontiguousarray(array[selection])
+        try:
+            for selection in iter_chunk_selections(array.shape, chunk_shape):
+                check_active()
+                require_memory(int(np.prod(chunk_shape)) * dtype.itemsize * 4)
+                stored[selection] = np.ascontiguousarray(array[selection])
+        finally:
+            _close_zarr_store(stored)
         checked = ZarrArrayHandle(temporary)
-        if checked.shape != array.shape or np.dtype(checked.dtype) != dtype:
-            raise ValueError("Zarr 写入后 shape/dtype 验证失败")
+        try:
+            if checked.shape != array.shape or np.dtype(checked.dtype) != dtype:
+                raise ValueError("Zarr 写入后 shape/dtype 验证失败")
+        finally:
+            checked.close()
         _commit_zarr_directory(
             temporary, target, backup, overwrite=overwrite,
         )
@@ -192,13 +226,19 @@ def save_array_handle_zarr(
             store=_budget_store(temporary), shape=source.shape, chunks=chunk_shape,
             dtype=dtype, zarr_format=3, overwrite=False,
         )
-        for selection in iter_chunk_selections(source.shape, chunk_shape):
-            check_active()
-            require_memory(int(np.prod(chunk_shape)) * dtype.itemsize * 4)
-            stored[selection] = source.read(selection)
+        try:
+            for selection in iter_chunk_selections(source.shape, chunk_shape):
+                check_active()
+                require_memory(int(np.prod(chunk_shape)) * dtype.itemsize * 4)
+                stored[selection] = source.read(selection)
+        finally:
+            _close_zarr_store(stored)
         checked = ZarrArrayHandle(temporary)
-        if checked.shape != source.shape or np.dtype(checked.dtype) != dtype:
-            raise ValueError("Zarr 写入后 shape/dtype 验证失败")
+        try:
+            if checked.shape != source.shape or np.dtype(checked.dtype) != dtype:
+                raise ValueError("Zarr 写入后 shape/dtype 验证失败")
+        finally:
+            checked.close()
         _commit_zarr_directory(
             temporary, target, backup, overwrite=overwrite,
         )

@@ -38,7 +38,7 @@ MCP 用户可先参考 [uvx 启动与更新指南](docs/uvx.md)，无需手动�
 使用 Python 3.11+ 安装固定版本；需要完整能力时选择对应 extra：
 
 ```bash
-python -m pip install "pixelprobe[mcp,flow,storage,evidence] @ git+https://github.com/2061863797/PixelProbe.git@v1.0.3"
+python -m pip install "pixelprobe[mcp,flow,storage,evidence] @ git+https://github.com/2061863797/PixelProbe.git@v1.1.0"
 pixelprobe --version
 ```
 
@@ -50,7 +50,7 @@ python -m pip install -e ".[dev,mcp,flow,storage,evidence]" pyinstaller
 python scripts/build_local_standalone.py --output build/local-pixelprobe
 ```
 
-脚本默认执行真实 CLI/MCP 发行验收，并写入 `LOCAL-BUILD.txt` 和 `build-info.json`。
+脚本默认执行真实 CLI/MCP 本地冻结版验收，并写入 `LOCAL-BUILD.txt` 和 `build-info.json`。
 该产物包含当前环境的第三方原生库，不属于官方发行物，也不应在许可审查前公开再分发。
 完整安装、更新、卸载和本地构建说明见
 [安装指南](https://github.com/2061863797/PixelProbe/blob/main/docs/installation.md)。

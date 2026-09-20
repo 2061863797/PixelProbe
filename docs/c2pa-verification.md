@@ -64,7 +64,8 @@ SDK 0.37.10 的验证器要求测试签名证书包含组织字段；测试显�
 
 Linux Python 矩阵及三平台核心 CI 已配置真实 evidence 依赖。
 Windows 本机运行结果记录在 optimization-progress.md；
-Linux/macOS、冻结程序的 C2PA 验证与完整发行门槛仍需实际运行，不由本机测试替代。
+Linux/macOS 的 Python/uvx C2PA 验证仍需在对应平台实际运行，不由 Windows 测试替代。
+开发者本地冻结程序的验证结果只适用于该本地产物。
 
 参考：[官方上下文与离线设置](https://github.com/contentauth/c2pa-python/blob/main/docs/context-settings.md)，
 [官方清单结果与读取接口](https://github.com/contentauth/c2pa-python/blob/main/docs/working-stores.md)。

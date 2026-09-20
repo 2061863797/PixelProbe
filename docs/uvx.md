@@ -13,7 +13,7 @@ uvx 管理隔离的 Python 环境，不是安全沙箱，也不会消除原生�
       "command": "uvx",
       "args": [
         "--python", "3.12",
-        "--from", "pixelprobe[mcp] @ git+https://github.com/2061863797/PixelProbe.git@v1.0.3",
+        "--from", "pixelprobe[mcp] @ git+https://github.com/2061863797/PixelProbe.git@v1.1.0",
         "pixelprobe-mcp"
       ],
       "env": {"PIXELPROBE_MCP_ROOTS": "C:/Media"}
@@ -28,7 +28,7 @@ uvx 管理隔离的 Python 环境，不是安全沙箱，也不会消除原生�
 连接客户端前，用同一 --from 参数执行 pixelprobe --version 完成环境预热：
 
 ```powershell
-uvx --python 3.12 --from "pixelprobe[mcp] @ git+https://github.com/2061863797/PixelProbe.git@v1.0.3" pixelprobe --version
+uvx --python 3.12 --from "pixelprobe[mcp] @ git+https://github.com/2061863797/PixelProbe.git@v1.1.0" pixelprobe --version
 ```
 
 预热成功仅表示环境与 CLI 可启动，仍须在客户端验证 MCP 连接和真实媒体调用。

@@ -2,7 +2,9 @@
 
 ## 当前状态：2026-09-20 正式发行改为 Python 包与本地打包脚本
 
-本节优先于下方历史检查点。Linux/macOS 冻结程序实测继续按用户要求暂缓。
+本节优先于下方历史检查点。正式发行不再包含冻结程序；Linux/macOS 的本地
+冻结程序实测不属于发布门槛，并继续按用户要求暂缓。下方历史检查点保留当时的
+实施记录，其中已经取消的独立版目标不再表示当前待办。
 
 - 正式 GitHub Release 和 CI 已移除 Windows/Linux/macOS PyInstaller 构建、冻结程序
   上传和相关原生 wheel 下载；标签只发布 PixelProbe wheel、sdist 和校验和。
@@ -10,23 +12,43 @@
   输出目录拒绝覆盖，先在同级临时目录构建，启动/帮助/doctor 和默认真实 CLI/MCP
   验收全部成功后才原子提交。
 - 本地输出包含 README、项目 LICENSE、LOCAL-BUILD.txt 和 build-info.json；后者记录
-  local_private_build 范围、平台、Python、实际依赖版本、程序 SHA256，并保持
-  redistribution_review_complete=false。脚本不会把本地产物上传或发布。
-- README 中英文版、安装、uvx、发行验收与原生审查文档均改为新的发行边界；
+  local_private_build 范围、平台、Python、实际依赖版本、程序 SHA256，并明确
+  public_redistribution_supported=false。脚本不会把本地产物上传或发布。
+- README 中英文版、安装、uvx 与发行验收文档均改为新的发行边界；
   正式用户使用固定 wheel 或 uvx，本地单文件不得误称官方发行物。
-- 原生来源清单、审计生成器和历史 Windows 验收证据保留，供本地核对及未来恢复
-  独立版再分发时使用；它们不再阻止不携带原生 DLL 的 Python 包标签发布。
+- 删除只服务于官方独立版的原生 wheel 指纹、再分发约束、许可补充、清单生成器、
+  专项测试和原生审查文档；本地脚本实际依赖的 PyInstaller spec 与冻结版入口测试保留。
 - Windows 本地脚本已完成一次真实构建：产出 204346072 字节的 `pixelprobe.exe`，
   `--version`、`--help`、`doctor --json` 和冻结版 CLI/MCP 验收通过；测试结果为
   **5 passed、22 deselected，59.07 秒**。`build-info.json` 记录的 SHA256 与独立
   复算结果一致，且无同名前缀的临时目录残留。
-- 新建 sdist 与 wheel 成功；sdist 已核对包含 `scripts/build_local_standalone.py`。
-  本机验证环境未安装 Twine，因此未执行本轮本地 `twine check`；正式工作流仍会
-  安装 Twine 并运行该检查。旧发行描述搜索、工作流 YAML 解析、受影响专项测试
-  （**7 passed，1.09 秒**）、脚本语法检查和 `git diff --check` 均通过。
-- 推送前全量测试首次发现两个仍要求构建独立程序的过时工作流断言；产品用例没有
-  失败。断言已改为验证只发布 wheel/sdist 且不得恢复 PyInstaller 任务，定向测试
-  **2 passed，0.14 秒**，随后全量回归 **433 passed、0 skipped，100.68 秒**。
+- 清理后新建 sdist 与 wheel 成功；sdist 已核对包含本地打包脚本和 PyInstaller
+  spec，并排除已删除的原生审计资产。本机验证环境未安装 Twine，因此未执行本轮
+  本地 `twine check`；正式工作流仍会安装 Twine 并运行该检查。
+- 推送前全量测试发现并改正两个仍要求发布独立程序的过时工作流断言；清理后的
+  首轮全量又稳定复现 Zarr 临时读写 store 未关闭导致 Windows 目录重命名返回
+  `WinError 5`。写入和校验句柄现均在提交前关闭，公开的 Zarr handle 也提供
+  `close()`；相关专项 **6 passed**。
+- 删除 5 个已经失去对象的原生发行清单测试后，最终全量回归为
+  **428 passed、0 skipped，102.44 秒**。本地构建/正式发布边界专项 **4 passed**；
+  旧发行引用搜索、工作流 YAML 解析、脚本语法检查和 `git diff --check` 均通过。
+- 发布候选版本已更新为 **1.1.0**，README、安装文档和 uvx 配置统一固定该版本。
+  首个 wheel 的真实 uvx Zarr 往返验收暴露 Windows 在关闭 store 后仍可能短暂拒绝
+  目录重命名；提交现在仅在 Windows 对 `PermissionError` 做最多 2 秒的有限重试，
+  其他平台和其他异常立即返回。对应回归覆盖一次瞬时失败后成功提交。
+- 全量复验还发现 `doctor` 的匿名临时文件在 Windows 上可能短暂显示为待删除目录项。
+  写入检查现改为显式命名探针，刷盘、关闭后主动删除，并仅对 Windows 短暂占用做
+  最多 1 秒重试；诊断完成时不留下输出目录或探针文件。
+- 最终源码全量回归为 **429 passed、0 skipped，113.65 秒**。从该源码重建的 final
+  wheel 通过离线 uvx 的 `--version`、完整 `doctor --json`、真实 MCP stdio 握手、
+  CLI/MCP 分发与 Zarr 往返验收：**5 passed、0 skipped，34.85 秒**；doctor 中 av、
+  numpy、Pillow、psutil、MCP、OpenCV、Zarr、C2PA 和目录配置均为可用。
+- 最终本地产物位于 `build/release-1.1.0-final-20260920/`。wheel SHA256 为
+  `1a45c2daf531fc65f8b4133f0c2e7cc92a52eb5c70cb46636cbb9a2237f1fbde`，sdist SHA256
+  为 `145827847b249abfc139d0bd0d58994fcce9c5c364d81fcddc5cd3803853b13c`；包内两项
+  Windows 修复与当前源码哈希一致，sdist 共 203 个成员，清单边界复验通过。
+- 本机仍未安装 Twine；`twine check` 由标签发布工作流执行。Linux/macOS 真实运行按
+  用户要求未执行。当前尚未提交、推送、创建 `v1.1.0` 标签或发布 Release。
 
 ## 历史状态：2026-09-20 原生来源链锁定与正式发布阻断
 
@@ -71,7 +93,7 @@
 - 受影响专项 **2 passed，0.98 秒**；本轮未修改媒体引擎，未重复全量回归。
   上次全量结果仍为 428 passed，属于此前验证记录。
 - 原生审核附件：build/acceptance-windows/native-audit-20260920/。
-  详见 [Windows 原生依赖核对](native-dependency-review.md)。
+  对应审查文档已随官方独立版目标取消而移除，本节仅保留当时结论摘要。
 - 仍需取得与当前二进制精确对应的上游源码/补丁/组件版本并完成再分发核对，
   以及无 Python 全新 Windows 系统验收。未宣称正式发布验收完成。
   既有 ZIP 未覆盖；未上传、推送、发布或变更项目许可证。

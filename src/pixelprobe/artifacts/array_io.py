@@ -14,12 +14,16 @@ from pixelprobe.domain.errors import (
     MaterializationLimitExceededError,
 )
 from pixelprobe.domain.tensor import ArrayHandle, StorageKind
+from pixelprobe.utils.resource_budget import (
+    reserve_write, moved, removed, npy_size, check_active, require_memory,
+)
 
 
 def _commit_npy(temporary: Path, target: Path, *, overwrite: bool) -> None:
     """原子提交同目录临时文件，并严格遵守不覆盖语义。"""
     if overwrite:
         os.replace(temporary, target)
+        moved(temporary, target)
         return
     try:
         # 临时文件与目标位于同一目录。硬链接创建是原子的，且目标已存在时
@@ -30,6 +34,7 @@ def _commit_npy(temporary: Path, target: Path, *, overwrite: bool) -> None:
             raise FileExistsError(f"输出文件已存在：{target}") from exc
         raise
     temporary.unlink()
+    moved(temporary, target)
 
 
 def _validate_selection(
@@ -153,6 +158,7 @@ def save_npy(
         raise FileExistsError(f"输出文件已存在：{target}")
     temporary = target.with_name(f".{target.name}.{uuid.uuid4().hex}.tmp")
     try:
+        reserve_write(temporary, npy_size(array.shape, array.dtype))
         with temporary.open("xb") as handle:
             np.save(handle, np.ascontiguousarray(array), allow_pickle=False)
             handle.flush()
@@ -160,6 +166,7 @@ def save_npy(
         _commit_npy(temporary, target, overwrite=overwrite)
     finally:
         temporary.unlink(missing_ok=True)
+        removed(temporary)
     return NpyArrayHandle(target)
 
 
@@ -204,6 +211,7 @@ def save_array_handle_npy(
     array = None
     try:
         dtype = np.dtype(target_dtype or source.dtype)
+        reserve_write(temporary, npy_size(source.shape, dtype))
         array = np.lib.format.open_memmap(
             temporary, mode="w+", dtype=dtype, shape=source.shape,
         )
@@ -211,6 +219,10 @@ def save_array_handle_npy(
             source.shape, str(dtype), chunk_bytes,
         )
         for selection in iter_chunk_selections(source.shape, chunk_shape):
+            check_active()
+            require_memory(int(np.prod(tuple(s.stop - s.start for s in selection))) * (
+                np.dtype(source.dtype).itemsize + dtype.itemsize
+            ))
             array[selection] = source.read(selection)
         array.flush()
         mmap = getattr(array, "_mmap", None)
@@ -226,4 +238,5 @@ def save_array_handle_npy(
             if mmap is not None:
                 mmap.close()
         temporary.unlink(missing_ok=True)
+        removed(temporary)
     return NpyArrayHandle(target)

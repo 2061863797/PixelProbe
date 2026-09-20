@@ -26,9 +26,6 @@ _LABEL_BAR = 14
 _GAP = 2
 _BG = (24, 24, 28)
 
-# 目标帧占范围比例低于该值时用 PTS seek 逐帧取，否则单遍顺序解码
-_SEEK_DENSITY_LIMIT = 0.3
-
 
 @dataclass
 class ContactSheetResult:
@@ -127,31 +124,17 @@ def sample_frames(
         frames: list[int] = []
         times: list[float] = []
         tiles: list[np.ndarray] = []
-        density = len(targets) / (frame_range.end - frame_range.start + 1)
-        if density < _SEEK_DENSITY_LIMIT:
-            for i, f in enumerate(targets):
-                t, arr = reader.get_frame_by_index(f)
-                frames.append(f)
+        # 底层按展示顺序解码；统一单遍采样，避免为每个目标重复扫描。
+        wanted = set(targets)
+        for idx, t, arr in reader.iter_frames(targets[0], targets[-1], 1):
+            if idx in wanted:
+                frames.append(idx)
                 times.append(t)
-                # 收集时即缩放：避免长视频/高分辨率下囤积全分辨率帧
                 tiles.append(fit_within(arr, tile_max_dim, tile_max_dim))
                 if progress is not None:
-                    progress(i + 1, len(targets))
-        else:
-            wanted = set(targets)
-            done = 0
-            for idx, t, arr in reader.iter_frames(
-                frame_range.start, frame_range.end, 1
-            ):
-                if idx in wanted:
-                    frames.append(idx)
-                    times.append(t)
-                    tiles.append(fit_within(arr, tile_max_dim, tile_max_dim))
-                    done += 1
-                    if progress is not None:
-                        progress(done, len(targets))
-                    if done == len(targets):
-                        break
+                    progress(len(frames), len(targets))
+                if len(frames) == len(targets):
+                    break
 
     if not tiles:
         raise DecodeError("指定范围内没有解码出任何帧")

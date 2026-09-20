@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from hashlib import sha256
 import os
+import re
+import json
 from pathlib import Path
 
 
@@ -85,11 +87,26 @@ class ServerConfig:
     allowed_roots: tuple[Path, ...]
     artifact_root: Path
     max_image_bytes: int = 16 * 1024 * 1024
+    workers: int = 2
+    queue_size: int = 16
+    queue_timeout_seconds: float = 30.0
+    job_retention_days: int = 7
+    total_memory_bytes: int = 512 * 1024 * 1024
+    total_temporary_bytes: int = 4 * 1024 * 1024 * 1024
 
     @classmethod
-    def from_environment(cls) -> "ServerConfig":
+    def from_environment(
+        cls, *, allowed_roots: tuple[str, ...] | None = None,
+        artifact_root: str | None = None,
+        workers: int | None = None,
+        queue_size: int | None = None,
+        total_memory_bytes: int | None = None,
+        total_temporary_bytes: int | None = None,
+    ) -> "ServerConfig":
         raw_roots = os.environ.get("PIXELPROBE_MCP_ROOTS")
-        values = raw_roots.split(os.pathsep) if raw_roots else [os.getcwd()]
+        values = allowed_roots if allowed_roots is not None else (
+            raw_roots.split(os.pathsep) if raw_roots else [os.getcwd()]
+        )
         roots = tuple(
             dict.fromkeys(
                 Path(value).expanduser().resolve(strict=True)
@@ -98,7 +115,9 @@ class ServerConfig:
         )
         if not roots or any(not root.is_dir() for root in roots):
             raise PathAccessError("PIXELPROBE_MCP_ROOTS 必须包含现有目录")
-        configured_output = os.environ.get("PIXELPROBE_MCP_ARTIFACT_ROOT")
+        configured_output = artifact_root if artifact_root is not None else os.environ.get(
+            "PIXELPROBE_MCP_ARTIFACT_ROOT"
+        )
         artifact_root = (
             Path(configured_output).expanduser()
             if configured_output else roots[0] / ".pixelprobe-mcp" / "artifacts"
@@ -112,7 +131,41 @@ class ServerConfig:
             raise ValueError("PIXELPROBE_MCP_MAX_IMAGE_BYTES 必须是整数") from exc
         if max_image_bytes < 1024:
             raise ValueError("PIXELPROBE_MCP_MAX_IMAGE_BYTES 必须至少为 1024")
-        return cls(roots, artifact_root, max_image_bytes)
+        resolved_workers = workers if workers is not None else int(
+            os.environ.get("PIXELPROBE_MCP_WORKERS", "2")
+        )
+        resolved_queue = queue_size if queue_size is not None else int(
+            os.environ.get("PIXELPROBE_MCP_QUEUE_SIZE", "16")
+        )
+        if not 1 <= resolved_workers <= 16:
+            raise ValueError("MCP workers 必须在 1～16 之间")
+        if not 0 <= resolved_queue <= 256:
+            raise ValueError("MCP queue_size 必须在 0～256 之间")
+
+        def _positive_int(value: int | None, env_name: str, default: int) -> int:
+            raw = value if value is not None else os.environ.get(env_name, str(default))
+            try:
+                parsed = int(raw)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"{env_name} 必须是整数") from exc
+            if parsed < 1:
+                raise ValueError(f"{env_name} 必须为正整数")
+            return parsed
+
+        memory_budget = _positive_int(
+            total_memory_bytes, "PIXELPROBE_MCP_TOTAL_MEMORY_BYTES",
+            512 * 1024 * 1024,
+        )
+        temporary_budget = _positive_int(
+            total_temporary_bytes, "PIXELPROBE_MCP_TOTAL_TEMPORARY_BYTES",
+            4 * 1024 * 1024 * 1024,
+        )
+        return cls(
+            roots, artifact_root, max_image_bytes,
+            workers=resolved_workers, queue_size=resolved_queue,
+            total_memory_bytes=memory_budget,
+            total_temporary_bytes=temporary_budget,
+        )
 
     def resolve_file(self, value: str) -> Path:
         path = Path(value).expanduser().resolve(strict=True)
@@ -181,6 +234,28 @@ class ServerConfig:
         if not root.is_dir():
             raise PathAccessError(f"Artifact 根目录无效：{root}")
         self._require_allowed(root)
+        return root
+
+    def checkpoint_directory(self, checkpoint_id: str, *, create: bool = False) -> Path:
+        """仅在受管目录中访问 checkpoint，不接受用户提供的任意路径。"""
+        if re.fullmatch(r"[0-9a-f]{32}", checkpoint_id) is None:
+            raise PathAccessError("checkpoint ID 无效")
+        root = self.prepare_artifact_root()
+        for name in (".checkpoints", checkpoint_id):
+            root = root / name
+            if root.is_symlink() or _is_reparse_point(root):
+                raise PathAccessError("checkpoint 目录不能是链接或重解析点")
+            if create:
+                existed = root.exists()
+                root.mkdir(exist_ok=True)
+                if name == checkpoint_id and not existed:
+                    from pixelprobe.utils.resource_budget import write_bytes
+                    write_bytes(root / ".pixelprobe-owned.json", json.dumps({
+                        "owner": "pixelprobe", "kind": "checkpoint",
+                        "checkpoint_id": checkpoint_id,
+                    }).encode("utf-8"))
+            if not root.is_dir():
+                raise PathAccessError("checkpoint 目录不存在")
         return root
 
     def prepare_artifact_target(self, name: str) -> Path:

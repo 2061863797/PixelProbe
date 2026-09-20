@@ -9,26 +9,25 @@ import os
 from dataclasses import replace
 from pathlib import Path
 import sys
-import threading
-import time
 from types import SimpleNamespace
 
-import anyio
 import numpy as np
 import pytest
 from PIL import Image
 from mcp import StdioServerParameters
 from mcp.client.session import ClientSession
 from mcp.client.stdio import stdio_client
-from mcp.server.fastmcp.exceptions import ToolError
 from mcp.shared.memory import create_connected_server_and_client_session
 from mcp.types import ImageContent
 
 import pixelprobe_mcp.entry as entry_module
 import pixelprobe_mcp.server as server_module
 from pixelprobe import core
+from pixelprobe.domain.time import TemporalSelection
 from pixelprobe_mcp.config import MediaChangedError, PathAccessError, ServerConfig
+from pixelprobe_mcp.models import ChangesInput, FrameInput, GenerateInput, InspectInput
 from pixelprobe_mcp.service import (
+    McpResourceLimitError,
     MCP_GENERATE_RESOURCES,
     MCP_MAX_CHANGE_SOURCE_FRAMES,
     MCP_MAX_GRID_POINTS,
@@ -73,10 +72,23 @@ async def test_mcp_discovery_has_stable_tools_prompt_and_guidance(
         "pixelprobe_analyze_region",
         "pixelprobe_find_changes",
         "pixelprobe_generate_representation",
+        "pixelprobe_evidence",
+        "pixelprobe_workflow",
         "pixelprobe_list_artifacts",
         "pixelprobe_read_artifact",
+        "pixelprobe_submit_job",
+        "pixelprobe_resume_job",
+        "pixelprobe_maintain_storage",
+        "pixelprobe_get_job",
+        "pixelprobe_cancel_job",
+        "pixelprobe_get_job_result",
     }
     assert all(tool.outputSchema for tool in tools.tools)
+    workflow = next(tool for tool in tools.tools if tool.name == "pixelprobe_workflow")
+    import json
+    schema = json.dumps(workflow.inputSchema)
+    assert "min_changed_ratio" in schema
+    assert "first_change" in schema and "compare_media" in schema and "quality_overview" in schema
     generate = next(
         tool for tool in tools.tools
         if tool.name == "pixelprobe_generate_representation"
@@ -123,6 +135,7 @@ def test_mcp_entry_reports_missing_anyio_in_chinese(
         raise ModuleNotFoundError("No module named 'anyio'", name="anyio")
 
     monkeypatch.setattr(entry_module, "_load_server_main", missing_server)
+    monkeypatch.setattr(sys, "argv", ["pixelprobe-mcp"])
     with pytest.raises(SystemExit) as exited:
         entry_module.main()
     assert exited.value.code == 1
@@ -208,12 +221,9 @@ async def test_mcp_standard_and_changes_reject_source_frame_budget_before_decode
         "pixelprobe_mcp.service.core.get_media_info", lambda _: oversized_standard,
     )
     monkeypatch.setattr("pixelprobe_mcp.service.core.scan_media", scan_must_not_run)
-    standard = await mcp_session.call_tool(
-        "pixelprobe_inspect_media",
-        {"media_path": str(target), "detail": "standard"},
-    )
-    assert standard.isError is True
-    assert "MCP_RESOURCE_LIMIT" in standard.content[0].text  # type: ignore[union-attr]
+    # 伪造元数据的预算单元测试在同一进程验证；真实协议覆盖另有 stdio 测试。
+    with pytest.raises(McpResourceLimitError):
+        server_module.SERVICE.inspect_media(InspectInput(media_path=str(target), detail="standard"))
 
     oversized_changes = info.model_copy(update={
         "frame_count": MCP_MAX_CHANGE_SOURCE_FRAMES + 1,
@@ -222,54 +232,22 @@ async def test_mcp_standard_and_changes_reject_source_frame_budget_before_decode
     monkeypatch.setattr(
         "pixelprobe_mcp.service.core.get_media_info", lambda _: oversized_changes,
     )
-    changes = await mcp_session.call_tool(
-        "pixelprobe_find_changes", {"media_path": str(target)},
-    )
-    assert changes.isError is True
-    assert "MCP_RESOURCE_LIMIT" in changes.content[0].text  # type: ignore[union-attr]
+    with pytest.raises(McpResourceLimitError):
+        server_module.SERVICE.find_changes(ChangesInput(media_path=str(target)))
 
 
-@pytest.mark.anyio
-async def test_mcp_generate_budgets_full_shared_frame_store_decode(
-    mcp_session: ClientSession,
-    test_video: Path,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    target = tmp_path / "生成预算视频.mkv"
-    target.write_bytes(test_video.read_bytes())
-    info = core.get_media_info(target).model_copy(update={
+def test_mcp_generate_budget_uses_selected_decode_plan(test_video: Path) -> None:
+    info = core.get_media_info(test_video).model_copy(update={
         "frame_count": MCP_MAX_GENERATE_SOURCE_FRAMES + 1,
         "frame_count_estimated": False,
     })
-    monkeypatch.setattr(
-        "pixelprobe_mcp.service.core.get_media_info", lambda _: info,
+    PixelProbeService._ensure_generation_budget(
+        info, TemporalSelection(mode="indices", requested_indices=(0,)),
     )
-
-    def generate_must_not_run(*args: object, **kwargs: object) -> object:
-        raise AssertionError("超限视频即使只选一帧也不应开始生成")
-
-    monkeypatch.setattr(
-        "pixelprobe_mcp.service.pixelprobe.generate", generate_must_not_run,
-    )
-    result = await mcp_session.call_tool(
-        "pixelprobe_generate_representation",
-        {
-            "media_path": str(target),
-            "request": {
-                "source": {
-                    "source_id": "source_main", "kind": "file", "uri": "由工具覆盖",
-                },
-                "selection": {"mode": "indices", "requested_indices": [0]},
-                "representation": "frames",
-                "output": {"format": "bundle", "include_preview": False},
-            },
-        },
-    )
-
-    assert result.isError is True
-    assert "MCP_RESOURCE_LIMIT" in result.content[0].text  # type: ignore[union-attr]
-    assert "完整视频" in result.content[0].text  # type: ignore[union-attr]
+    with pytest.raises(McpResourceLimitError, match="源解码帧"):
+        PixelProbeService._ensure_generation_budget(
+            info, TemporalSelection(mode="all"),
+        )
 
 
 @pytest.mark.anyio
@@ -320,13 +298,8 @@ async def test_mcp_get_frame_rejects_oversized_visual_request_before_decode(
         raise AssertionError("超限全图不应进入解码")
 
     monkeypatch.setattr("pixelprobe_mcp.service.core.get_frame", decode_must_not_run)
-    result = await mcp_session.call_tool(
-        "pixelprobe_get_frame", {"media_path": str(target)},
-    )
-    assert result.isError is True
-    text = result.content[0].text  # type: ignore[union-attr]
-    assert "MCP_RESOURCE_LIMIT" in text
-    assert "crop" in text
+    with pytest.raises(McpResourceLimitError, match="crop"):
+        server_module.SERVICE.get_frame(FrameInput(media_path=str(target)))
 
 
 @pytest.mark.anyio
@@ -631,15 +604,14 @@ async def test_mcp_generate_clamps_request_resources(
             "allow_partial": True,
         },
     }
-    result = await mcp_session.call_tool(
-        "pixelprobe_generate_representation",
-        {
+    result = server_module.SERVICE.generate_representation(
+        GenerateInput.model_validate({
             "media_path": str(target),
             "request": request,
             "output_name": "resource-limited.bundle",
-        },
+        })
     )
-    assert result.isError is False
+    assert result.success is True
     assert captured["request"].resources == MCP_GENERATE_RESOURCES  # type: ignore[union-attr]
 
 
@@ -690,42 +662,6 @@ def test_mcp_artifact_target_rejects_path_components(tmp_path: Path, name: str) 
 
 
 @pytest.mark.anyio
-async def test_mcp_timeout_keeps_operation_slot_until_sync_work_exits() -> None:
-    """不能强杀同步解码时，超时请求不得让后台任务无限并发累积。"""
-    with pytest.raises(ToolError, match="MCP_TIMEOUT"):
-        await server_module._run(lambda: time.sleep(0.15), timeout_seconds=0.01)
-    with pytest.raises(ToolError, match="MCP_BUSY"):
-        await server_module._run(lambda: "second", timeout_seconds=0.01)
-    await anyio.sleep(0.2)
-    assert await server_module._run(lambda: "ready", timeout_seconds=0.1) == "ready"
-
-
-@pytest.mark.anyio
-async def test_mcp_cancelled_before_worker_start_does_not_run_or_double_release(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """调度线程晚于超时启动时，后台不得开始不可见操作或重复归还槽位。"""
-    invoked = threading.Event()
-
-    async def delayed_run_sync(function: object, *args: object, **kwargs: object) -> object:
-        def run_late() -> None:
-            time.sleep(0.05)
-            function(*args)  # type: ignore[operator]
-
-        threading.Thread(target=run_late, daemon=True).start()
-        await anyio.sleep(1)
-        return None
-
-    monkeypatch.setattr(server_module.anyio.to_thread, "run_sync", delayed_run_sync)
-    with pytest.raises(ToolError, match="MCP_TIMEOUT"):
-        await server_module._run(
-            lambda: invoked.set(), timeout_seconds=0.01,
-        )
-    await anyio.sleep(0.1)
-    assert invoked.is_set() is False
-
-
-@pytest.mark.anyio
 async def test_mcp_rejects_paths_outside_allowlist(
     mcp_session: ClientSession, test_image: Path,
 ) -> None:
@@ -739,13 +675,25 @@ async def test_mcp_rejects_paths_outside_allowlist(
 @pytest.mark.anyio
 async def test_mcp_stdio_transport_handshake(tmp_path: Path) -> None:
     """真实 stdio 子进程只能输出 MCP 消息，并能完成初始化与工具调用。"""
-    source = tmp_path / "stdio-alpha.png"
+    if executable := os.environ.get("PIXELPROBE_TEST_EXECUTABLE"):
+        import json
+        import subprocess
+        diagnostic = subprocess.run(
+            [executable, "doctor", "--json"], capture_output=True, timeout=60,
+            encoding="utf-8", check=True,
+        )
+        checks = json.loads(diagnostic.stdout)["data"]["checks"]
+        available = {item["name"] for item in checks if item["status"] == "ok"}
+        assert {"av", "numpy", "PIL", "psutil", "mcp", "cv2", "zarr", "c2pa"} <= available
+    source = tmp_path / "中文路径-透明像素.png"
     Image.new("RGBA", (1, 1), (7, 8, 9, 10)).save(source)
     environment = dict(os.environ)
     environment["PIXELPROBE_MCP_ROOTS"] = str(tmp_path)
+    environment["PIXELPROBE_MCP_ARTIFACT_ROOT"] = str(tmp_path / "artifacts")
     parameters = StdioServerParameters(
-        command=sys.executable,
-        args=["-m", "pixelprobe_mcp.entry"],
+        command=os.environ.get("PIXELPROBE_TEST_EXECUTABLE", sys.executable),
+        args=(["--mcp"] if os.environ.get("PIXELPROBE_TEST_EXECUTABLE")
+              else ["-m", "pixelprobe_mcp.entry"]),
         env=environment,
     )
     async with stdio_client(parameters) as (reader, writer):
@@ -769,3 +717,10 @@ async def test_mcp_stdio_transport_handshake(tmp_path: Path) -> None:
             assert pixels.structuredContent is not None
             assert pixels.structuredContent["data"]["sample_semantics"] == "display_rgb8"
             assert pixels.structuredContent["data"]["pixels"][0]["stored_sample"] == [7, 8, 9, 10]
+            workflow = await session.call_tool(
+                "pixelprobe_workflow", {"media_path": str(source),
+                                       "options": {"workflow": "quality_overview"}},
+            )
+            assert workflow.isError is False
+            assert workflow.structuredContent["data"]["records"] == 1
+            assert workflow.structuredContent["data"]["coverage"][0]["eof_confirmed"]

@@ -86,6 +86,7 @@ class NpyArtifactSink:
         *,
         expected_chunks: int,
         overwrite: bool = False,
+        budget=None,
     ) -> None:
         self.target = Path(target)
         self.target.parent.mkdir(parents=True, exist_ok=True)
@@ -94,6 +95,10 @@ class NpyArtifactSink:
         self._temporary = self.target.with_name(
             f".{self.target.name}.{uuid.uuid4().hex}.tmp"
         )
+        from pixelprobe.utils.resource_budget import current_budget, npy_size
+        self._budget = budget or current_budget()
+        if self._budget is not None:
+            self._budget.reserve(self._temporary, npy_size(shape, dtype))
         self._array = np.lib.format.open_memmap(
             self._temporary, mode="w+", dtype=np.dtype(dtype), shape=shape,
         )
@@ -102,6 +107,8 @@ class NpyArtifactSink:
         self._closed = False
 
     def write(self, chunk: TensorChunk) -> None:
+        if self._budget is not None:
+            self._budget.active()
         if self._closed:
             raise ValueError("ArtifactSink 已关闭")
         key = tuple((part.start, part.stop) for part in chunk.core_selection)
@@ -126,6 +133,8 @@ class NpyArtifactSink:
             mmap.close()
         self._closed = True
         os.replace(self._temporary, self.target)
+        if self._budget is not None:
+            self._budget.moved(self._temporary, self.target)
         return NpyArrayHandle(self.target)
 
     def abort(self) -> None:
@@ -135,3 +144,5 @@ class NpyArtifactSink:
                 mmap.close()
             self._closed = True
         self._temporary.unlink(missing_ok=True)
+        if self._budget is not None:
+            self._budget.removed(self._temporary)

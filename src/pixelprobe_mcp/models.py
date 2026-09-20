@@ -6,6 +6,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from pixelprobe.workflows import WorkflowOptions
+
 
 class StrictModel(BaseModel):
     """禁止未知字段的 MCP 输入基类。"""
@@ -108,6 +110,50 @@ class GenerateInput(StrictModel):
         description="可选 Bundle 名称；只能包含字母、数字、点、下划线和短横线",
         pattern=r"^[A-Za-z0-9._-]{1,80}$",
     )
+
+
+class EvidenceInput(StrictModel):
+    media_path: str = Field(description="允许读取根目录内的本地图片路径", min_length=1)
+    output_name: str | None = Field(
+        default=None,
+        pattern=r"^[A-Za-z0-9._-]{1,80}$",
+        description="可选证据 Bundle 名称",
+    )
+    jpeg_quality: int = Field(default=90, ge=1, le=100)
+    block_size: int = Field(default=32, ge=8, le=512)
+    c2pa_trust_anchors_pem: str | None = Field(
+        default=None, min_length=1, max_length=65536,
+        description="可选 PEM 根证书集合，替换 SDK 默认信任锚；不等同于媒体真实性背书",
+    )
+
+
+class WorkflowInput(StrictModel):
+    media_path: str = Field(min_length=1)
+    reference_path: str | None = Field(default=None, min_length=1)
+    options: WorkflowOptions = Field(description="组合流程、闭区间帧范围、采样和阈值")
+    output_name: str | None = Field(default=None, pattern=r"^[A-Za-z0-9._-]{1,80}$")
+
+    @model_validator(mode="after")
+    def validate_workflow(self):
+        if (self.reference_path is not None) != (self.options.workflow == "compare_media"):
+            raise ValueError("仅 compare_media 必须提供 reference_path")
+        return self
+
+
+JobOperation = Literal[
+    "inspect_media", "get_frame", "read_pixels", "analyze_region",
+    "find_changes", "generate_representation", "evidence", "workflow",
+    "list_artifacts", "read_artifact",
+]
+
+
+class JobSubmitInput(StrictModel):
+    operation: JobOperation = Field(description="要异步执行的 PixelProbe 服务操作")
+    payload: dict[str, Any] = Field(description="对应操作的完整参数对象")
+
+
+class JobIdInput(StrictModel):
+    job_id: str = Field(pattern=r"^[0-9a-f]{32}$", description="提交任务返回的 ID")
 
 
 class BundleListInput(StrictModel):

@@ -24,39 +24,23 @@ PixelProbe is a local command-line tool for image and video analysis. It can loc
 
 ## Installation
 
-For most users, download the standalone CLI from [GitHub Releases](https://github.com/2061863797/PixelProbe/releases/latest). Python is not required.
-
-| System | Download |
-| --- | --- |
-| Windows x86-64 | `pixelprobe-windows-x86_64.zip` |
-| Linux x86-64 | `pixelprobe-linux-x86_64.tar.gz` |
-| macOS Apple silicon | `pixelprobe-macos-arm64.tar.gz` |
-
-The executable is stored at the archive root. Extract it into its own directory, then run:
-
-```powershell
-# Windows PowerShell
-Expand-Archive .\pixelprobe-windows-x86_64.zip -DestinationPath .\pixelprobe
-Set-Location .\pixelprobe
-.\pixelprobe.exe --version
-```
+Official releases contain the Python wheel and source archive only. They do not publish a standalone executable containing third-party native libraries such as FFmpeg. Install a pinned release with Python 3.11 or later:
 
 ```bash
-# Linux; substitute pixelprobe-macos-arm64.tar.gz on macOS
-mkdir pixelprobe
-tar -xzf pixelprobe-linux-x86_64.tar.gz -C pixelprobe
-cd pixelprobe
-chmod +x pixelprobe
-./pixelprobe --version
+python -m pip install "pixelprobe[mcp,flow,storage,evidence] @ git+https://github.com/2061863797/PixelProbe.git@v1.0.3"
+pixelprobe --version
 ```
 
-For optional optical-flow, Zarr, or MCP support, install a pinned release with Python 3.11 or later:
+MCP users should prefer the pinned [uvx configuration](docs/uvx.md). Developers may create a private local executable from their own environment:
 
 ```bash
-python -m pip install "pixelprobe @ git+https://github.com/2061863797/PixelProbe.git@v1.0.3"
+python -m pip install -e ".[dev,mcp,flow,storage,evidence]" pyinstaller
+python scripts/build_local_standalone.py --output build/local-pixelprobe
 ```
 
-See the [installation guide](https://github.com/2061863797/PixelProbe/blob/main/docs/installation.md) for PATH setup, checksums, optional dependencies, updates, and uninstall instructions.
+The script runs real CLI/MCP distribution checks by default and writes `LOCAL-BUILD.txt` plus `build-info.json`. The result is not an official release and must not be redistributed before reviewing the licenses of the native libraries selected by the local environment.
+
+See the [installation guide](https://github.com/2061863797/PixelProbe/blob/main/docs/installation.md) for uvx, wheel installation, optional dependencies, updates, local builds, and uninstall instructions.
 
 ## Quick Examples
 

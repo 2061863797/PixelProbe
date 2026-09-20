@@ -1,4 +1,4 @@
-name: 打包并发布 CLI
+name: 发布 Python 包
 
 on:
   push:
@@ -17,10 +17,10 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.12"
           cache: pip
       - name: 安装项目与测试依赖
-        run: python -m pip install ".[dev,storage]"
+        run: python -m pip install ".[dev,storage,evidence]"
       - name: 运行完整测试
         run: python -m pytest
 
@@ -32,7 +32,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.12"
           cache: pip
       - name: 安装构建工具
         run: python -m pip install --upgrade build
@@ -54,76 +54,10 @@ jobs:
           path: dist/*
           if-no-files-found: error
 
-  standalone-cli:
-    name: 构建 ${{ matrix.archive_name }}
-    needs: tests
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: windows-latest
-            archive_name: pixelprobe-windows-x86_64
-            executable: pixelprobe.exe
-            archive: pixelprobe-windows-x86_64.zip
-          - os: ubuntu-latest
-            archive_name: pixelprobe-linux-x86_64
-            executable: pixelprobe
-            archive: pixelprobe-linux-x86_64.tar.gz
-          - os: macos-14
-            archive_name: pixelprobe-macos-arm64
-            executable: pixelprobe
-            archive: pixelprobe-macos-arm64.tar.gz
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-          cache: pip
-      - name: 安装项目和打包工具
-        run: python -m pip install . pyinstaller
-      - name: 构建独立 CLI
-        run: python -m PyInstaller --noconfirm --clean packaging/pixelprobe.spec
-      - name: 验证独立 CLI
-        shell: bash
-        run: |
-          ./dist/${{ matrix.executable }} --version
-          ./dist/${{ matrix.executable }} --help
-      - name: 整理发布目录
-        shell: bash
-        run: |
-          mkdir "${{ matrix.archive_name }}"
-          cp "dist/${{ matrix.executable }}" "${{ matrix.archive_name }}/"
-          cp README.md README_EN.md LICENSE "${{ matrix.archive_name }}/"
-      - name: 压缩 Windows 产物
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: Compress-Archive -Path '${{ matrix.archive_name }}\*' -DestinationPath '${{ matrix.archive }}'
-      - name: 压缩 Unix 产物
-        if: runner.os != 'Windows'
-        run: tar -czf "${{ matrix.archive }}" -C "${{ matrix.archive_name }}" .
-      - name: 验证 Windows 压缩包根目录
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          Expand-Archive -LiteralPath '${{ matrix.archive }}' -DestinationPath archive-smoke
-          & '.\archive-smoke\${{ matrix.executable }}' --version
-      - name: 验证 Unix 压缩包根目录
-        if: runner.os != 'Windows'
-        run: |
-          mkdir archive-smoke
-          tar -xzf "${{ matrix.archive }}" -C archive-smoke
-          ./archive-smoke/${{ matrix.executable }} --version
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.archive_name }}
-          path: ${{ matrix.archive }}
-          if-no-files-found: error
-
   release:
     name: 创建 GitHub Release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [python-package, standalone-cli]
+    needs: [python-package]
     runs-on: ubuntu-latest
     permissions:
       contents: write

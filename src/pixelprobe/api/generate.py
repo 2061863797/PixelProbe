@@ -6,7 +6,7 @@ import tempfile
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
-from pixelprobe.engine.execution import LocalExecutionContext
+from pixelprobe.engine.execution import CancellationToken, LocalExecutionContext
 from pixelprobe.engine.cache import LocalArrayCache
 from pixelprobe.engine.executor import GenerationResult, LocalExecutor
 from pixelprobe.engine.graph import GraphBuilder
@@ -45,6 +45,7 @@ def generate(
     cache_root: Path | None = None,
     checkpoint_path: Path | None = None,
     resume_from: Path | None = None,
+    cancellation: CancellationToken | None = None,
     registry: OperatorRegistry | None = None,
 ) -> GenerationResult:
     """验证请求、构建最小 DAG、规划并在本地 CPU 上执行。"""
@@ -59,6 +60,7 @@ def generate(
         context = LocalExecutionContext(
             resources, Path(temporary_root),
             cache=LocalArrayCache(cache_root) if cache_root is not None else None,
+            cancellation=cancellation if cancellation is not None else CancellationToken(),
         )
         return LocalExecutor(operator_registry).execute(
             plan, requests, context, output_path=output_path,
@@ -68,6 +70,7 @@ def generate(
         context = LocalExecutionContext(
             resources, Path(directory),
             cache=LocalArrayCache(cache_root) if cache_root is not None else None,
+            cancellation=cancellation if cancellation is not None else CancellationToken(),
         )
         return LocalExecutor(operator_registry).execute(
             plan, requests, context, output_path=output_path,

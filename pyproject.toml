@@ -19,12 +19,14 @@ dependencies = [
     "numpy>=1.26",
     "pillow>=10",
     "pydantic>=2",
+    "psutil>=7.0,<8",
 ]
 
 [project.optional-dependencies]
 flow = ["opencv-python-headless>=4.10"]
 storage = ["zarr>=3.1,<4"]
 mcp = ["mcp>=1.27,<2"]
+evidence = ["c2pa-python>=0.37.10,<0.38"]
 dev = ["pytest>=8", "opencv-python-headless>=4.10", "mcp>=1.27,<2"]
 
 [project.urls]

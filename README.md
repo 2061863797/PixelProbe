@@ -24,42 +24,35 @@ PixelProbe 是一个本地图片与视频分析命令行工具。它可以定位
 - **统一表示生成**：一次请求生成 X–T、Path–T、ROI–T、聚合或光流结果。
 - **可校验结果包**：保存原始数值、预览、坐标映射、来源和 SHA-256 校验信息。
 
+MCP 用户可先参考 [uvx 启动与更新指南](docs/uvx.md)，无需手动建立虚拟环境。
+
+当前源码中的证据分析支持 EXIF、JPEG ELA、噪声与边缘候选，以及可选的
+[C2PA 离线签名和信任验证](docs/c2pa-verification.md)。分析结果不自动判定媒体真伪。
+
+源码还提供[组合分析流程](docs/workflows.md)：首次变化定位、媒体版本比较和质量概览，
+输出明确的检查范围、数值与可校验结果包。
+
 ## 安装
 
-普通用户建议从 [GitHub Releases](https://github.com/2061863797/PixelProbe/releases/latest)
-下载对应系统的独立 CLI，无需预装 Python：
-
-| 系统 | 下载文件 |
-| --- | --- |
-| Windows 64 位 | `pixelprobe-windows-x86_64.zip` |
-| Linux 64 位 | `pixelprobe-linux-x86_64.tar.gz` |
-| macOS Apple 芯片 | `pixelprobe-macos-arm64.tar.gz` |
-
-压缩包根目录直接包含可执行文件。解压到单独目录后运行：
-
-```powershell
-# Windows PowerShell
-Expand-Archive .\pixelprobe-windows-x86_64.zip -DestinationPath .\pixelprobe
-Set-Location .\pixelprobe
-.\pixelprobe.exe --version
-```
+正式发行只提供 Python wheel 和源码包，不发布包含 FFmpeg 等第三方 DLL 的独立程序。
+使用 Python 3.11+ 安装固定版本；需要完整能力时选择对应 extra：
 
 ```bash
-# Linux；macOS 请替换为 pixelprobe-macos-arm64.tar.gz
-mkdir pixelprobe
-tar -xzf pixelprobe-linux-x86_64.tar.gz -C pixelprobe
-cd pixelprobe
-chmod +x pixelprobe
-./pixelprobe --version
+python -m pip install "pixelprobe[mcp,flow,storage,evidence] @ git+https://github.com/2061863797/PixelProbe.git@v1.0.3"
+pixelprobe --version
 ```
 
-需要光流、Zarr 或 MCP 等可选能力时，请使用 Python 3.11+ 安装固定版本：
+MCP 用户优先使用 [uvx 固定版本配置](docs/uvx.md)，由 uv 管理隔离环境。
+如需在自己的机器上生成仅供本地使用的单文件程序，可运行：
 
 ```bash
-python -m pip install "pixelprobe @ git+https://github.com/2061863797/PixelProbe.git@v1.0.3"
+python -m pip install -e ".[dev,mcp,flow,storage,evidence]" pyinstaller
+python scripts/build_local_standalone.py --output build/local-pixelprobe
 ```
 
-完整的解压、PATH、校验、可选依赖、更新和卸载说明见
+脚本默认执行真实 CLI/MCP 发行验收，并写入 `LOCAL-BUILD.txt` 和 `build-info.json`。
+该产物包含当前环境的第三方原生库，不属于官方发行物，也不应在许可审查前公开再分发。
+完整安装、更新、卸载和本地构建说明见
 [安装指南](https://github.com/2061863797/PixelProbe/blob/main/docs/installation.md)。
 
 ## 快速示例

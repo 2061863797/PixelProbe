@@ -11,6 +11,9 @@ from pixelprobe.cli import (
     cache_cmd,
     changes_cmd,
     compare_cmd,
+    doctor_cmd,
+    evidence_cmd,
+    workflow_cmd,
     flow_cmd,
     generate_cmd,
     frame_cmd,
@@ -36,13 +39,16 @@ app = typer.Typer(
         "PixelProbe：本地图片与视频像素分析 CLI 工具。\n\n"
         "坐标原点在左上角（x 向右，y 向下）；帧号从 0 开始；"
         "帧范围为闭区间（--start-frame 10 --end-frame 20 共 11 帧）；"
-        "时间单位为秒。"
+        "时间单位为秒。使用 pixelprobe --mcp --help 查看 MCP 服务启动参数。"
     ),
     add_completion=False,
     no_args_is_help=True,
 )
 
 app.command("info")(info_cmd.info)
+app.command("doctor")(doctor_cmd.doctor)
+app.command("evidence")(evidence_cmd.evidence)
+app.command("workflow")(workflow_cmd.workflow)
 app.command("frame")(frame_cmd.frame)
 app.command("pixel")(pixel_cmd.pixel)
 app.command("region")(region_cmd.region)
@@ -80,7 +86,17 @@ def _root(
 
 def main() -> None:
     """console_scripts 入口。"""
+    if sys.argv[1:2] == ["--mcp"]:
+        from pixelprobe_mcp.entry import main as mcp_main
+        sys.argv = [sys.argv[0], *sys.argv[2:]]
+        mcp_main()
+        return
     json_mode_requested = "--json" in sys.argv[1:]
+    if json_mode_requested:
+        # JSON 管道固定使用 UTF-8；Windows 的 GBK 虽能显示中文，却不能供 UTF-8 客户端解析。
+        reconfigure = getattr(sys.stdout, "reconfigure", None)
+        if callable(reconfigure):
+            reconfigure(encoding="utf-8", errors="strict")
     try:
         # 仅 JSON 模式让解析错误回到这里；普通终端保留 Typer 原有呈现。
         result = app(standalone_mode=not json_mode_requested)

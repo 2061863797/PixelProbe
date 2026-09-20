@@ -177,6 +177,29 @@ def test_dag_keeps_distinct_time_selections_after_shared_decode(
     assert not np.array_equal(first.data.materialize(), second.data.materialize())
 
 
+def test_generate_decodes_only_to_last_needed_frame_and_converts_selected_frames(
+    test_video: Path,
+) -> None:
+    request = RepresentationRequest(
+        source=_source(test_video),
+        selection=TemporalSelection(
+            mode="indices", requested_indices=(0, 4),
+        ),
+        representation="frames",
+        output=_memory(),
+    )
+
+    result = pixelprobe.generate(request)
+
+    assert result.decode_passes == 1
+    assert result.source_frames_decoded == 5
+    assert result.frames_converted == 2
+    assert result.frames_stored == 2
+    assert result.request_tensors[0][0].attributes[
+        "presentation_indices"
+    ] == [0, 4]
+
+
 def test_shared_source_is_hashed_once_per_verification_phase(
     test_video: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1005,6 +1028,38 @@ def test_shared_frame_store_keeps_packet_metadata(
             item.timeline_time_seconds == timestamp
             for item, timestamp in zip(store.frame_metadata, store.times)
         )
+
+
+def test_sparse_interval_still_validates_unsampled_end(test_video: Path) -> None:
+    request = RepresentationRequest(
+        source=_source(test_video), representation="frames", output=_memory(),
+        selection=TemporalSelection(
+            mode="frame_interval", requested_start_frame=0,
+            requested_end_frame_exclusive=FRAME_COUNT + 1,
+            sample_every=FRAME_COUNT + 1,
+        ),
+    )
+    with pytest.raises(InvalidRangeError, match="超出实际展示帧范围"):
+        pixelprobe.generate(request)
+
+
+def test_time_selection_does_not_stop_before_timestamp_returns_to_range(
+    test_video: Path, tmp_path: Path,
+) -> None:
+    context = LocalExecutionContext(
+        ResourcePolicy(max_memory_bytes=4 * 1024 * 1024), tmp_path / "execution",
+    )
+    store = SharedFrameStore(test_video, context, selections=(TemporalSelection(
+        mode="time_interval", requested_start_seconds=1.0,
+        requested_end_seconds=2.0,
+    ),))
+    select, end_frame, stop_after = store._decode_plan()
+    assert end_frame is None
+    assert stop_after is None
+    # 已越过区间的 PTS 不能证明后续展示帧也不在区间内。
+    assert [i for i, timestamp in enumerate((0.0, 1.5, 3.0, 1.8))
+            if select(i, timestamp)] == [1, 3]
+    assert context.events[-1]["full_scan_required"] is True
 
 
 def test_unified_engine_preserves_native_rgba_while_marking_display_rgb8(

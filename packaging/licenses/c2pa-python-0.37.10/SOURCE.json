@@ -1,0 +1,16 @@
+{
+  "package": "c2pa-python",
+  "version": "0.37.10",
+  "files": [
+    {
+      "file": "LICENSE-MIT",
+      "url": "https://raw.githubusercontent.com/contentauth/c2pa-python/v0.37.10/LICENSE-MIT",
+      "sha256": "89375a50de90d2dcaa04406086da832ad452ebcaf6ab402ef3d51b8401a67c71"
+    },
+    {
+      "file": "LICENSE-APACHE",
+      "url": "https://raw.githubusercontent.com/contentauth/c2pa-python/v0.37.10/LICENSE-APACHE",
+      "sha256": "86bdd5dafab77451044b6fd6d2efab23e3410ce658eb097f04c04f4f54aed62f"
+    }
+  ]
+}

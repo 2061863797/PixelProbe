@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+import sys
 
 import pixelprobe_mcp.entry as entry_module
 
@@ -17,6 +18,7 @@ def test_mcp_entry_reports_missing_mcp_extra(
         raise ModuleNotFoundError("No module named 'mcp'", name="mcp")
 
     monkeypatch.setattr(entry_module, "_load_server_main", missing_server)
+    monkeypatch.setattr(sys, "argv", ["pixelprobe-mcp"])
 
     with pytest.raises(SystemExit) as exited:
         entry_module.main()

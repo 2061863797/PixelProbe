@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import uuid
 from dataclasses import dataclass
 from fractions import Fraction
@@ -15,6 +16,7 @@ from pixelprobe.core.media_reader import detect_media_type
 from pixelprobe.core.video_reader import VideoReader
 from pixelprobe.domain.errors import MediaChangedDuringAnalysisError
 from pixelprobe.domain.errors import MaterializationLimitExceededError
+from pixelprobe.domain.time import TemporalSelection
 from pixelprobe.engine.errors import ResourcePlanUnsatisfiableError
 from pixelprobe.domain.tensor import StorageKind
 from pixelprobe.engine.execution import LocalExecutionContext
@@ -104,13 +106,19 @@ class RawFrameArrayHandle:
 
 
 class SharedFrameStore:
-    def __init__(self, path: Path, context: LocalExecutionContext) -> None:
+    def __init__(
+        self,
+        path: Path,
+        context: LocalExecutionContext,
+        selections: tuple[TemporalSelection, ...] = (),
+    ) -> None:
         self.path = Path(path).resolve(strict=True)
         self.context = context
         self.width = 0
         self.height = 0
         self.fps: float | None = None
         self.times: tuple[float, ...] = ()
+        self.presentation_indices: tuple[int, ...] = ()
         self.frame_metadata: tuple[FramePacketMetadata, ...] = ()
         self.frames: RawFrameArrayHandle | None = None
         # 仅图片可用：保留 Pillow 原生样本（含 Alpha、位深、调色板索引等），
@@ -118,6 +126,10 @@ class SharedFrameStore:
         self.native_image: RawFrameArrayHandle | None = None
         self.native_image_metadata: NativeImageMetadata | None = None
         self.decode_passes = 0
+        self.source_frames_decoded = 0
+        self.frames_converted = 0
+        self._selections = selections
+        self._position_by_presentation: dict[int, int] = {}
         self._raw_path = context.temporary_root / f"frames-{uuid.uuid4().hex}.rgb24"
         self._native_path = context.temporary_root / f"native-image-{uuid.uuid4().hex}.bin"
 
@@ -142,8 +154,25 @@ class SharedFrameStore:
                 f"完整 FrameStore 需要至少 {required} 字节临时空间，"
                 f"超过限制 {temporary_limit} 字节"
             )
+        required_write = frame.nbytes + additional_temporary_bytes
+        free_bytes = shutil.disk_usage(self.context.temporary_root).free
+        if free_bytes < required_write:
+            raise ResourcePlanUnsatisfiableError(
+                f"临时目录剩余 {free_bytes} 字节，下一次原子写入至少需要 "
+                f"{required_write} 字节"
+            )
+        self.context.reserve_temporary(self._raw_path, next_count * frame.nbytes)
+        if additional_temporary_bytes:
+            self.context.reserve_temporary(self._native_path, additional_temporary_bytes)
 
     def decode(self) -> "SharedFrameStore":
+        try:
+            return self._decode()
+        except BaseException:
+            self.close()
+            raise
+
+    def _decode(self) -> "SharedFrameStore":
         before = self.path.stat()
         times: list[float] = []
         metadata: list[FramePacketMetadata] = []
@@ -154,6 +183,7 @@ class SharedFrameStore:
                     reader.open(self.path)
                     info = reader.get_info()
                     self.width, self.height = info.width, info.height
+                    self.context.budget.require_memory(self.width * self.height * 32)
                     self.fps = None
                     native = reader.get_native_frame()
                     native_metadata = reader.get_native_metadata()
@@ -169,6 +199,8 @@ class SharedFrameStore:
                     additional_temporary_bytes=native.nbytes,
                 )
                 self.decode_passes += 1
+                self.source_frames_decoded += 1
+                self.frames_converted += 1
                 output.write(memoryview(frame).cast("B"))
                 with self._native_path.open("xb") as native_output:
                     native_output.write(memoryview(native).cast("B"))
@@ -213,9 +245,14 @@ class SharedFrameStore:
                     reader.open(self.path)
                     info = reader.get_info()
                     self.width, self.height = info.width, info.height
+                    self.context.budget.require_memory(self.width * self.height * 32)
                     self.fps = info.fps
                     self.decode_passes += 1
-                    for packet in reader.iter_frame_packets(0, None):
+                    select_frame, end_frame, stop_after = self._decode_plan()
+                    for packet in reader.iter_frame_packets(
+                        0, end_frame, select_frame=select_frame,
+                        stop_after=stop_after,
+                    ):
                         self.context.ensure_active()
                         frame = np.ascontiguousarray(packet.data, dtype=np.uint8)
                         if frame.shape != (self.height, self.width, 3):
@@ -241,6 +278,8 @@ class SharedFrameStore:
                             flags=packet.flags,
                         ))
                         count += 1
+                    self.source_frames_decoded += reader.last_decoded_frame_count
+                    self.frames_converted += reader.last_converted_frame_count
             output.flush()
             os.fsync(output.fileno())
         after = self.path.stat()
@@ -254,6 +293,13 @@ class SharedFrameStore:
         if self._raw_path.stat().st_size != expected:
             raise ValueError("FrameStore 字节数与完整分辨率不一致")
         self.times = tuple(times)
+        self.presentation_indices = tuple(
+            item.presentation_index for item in metadata
+        )
+        self._position_by_presentation = {
+            presentation_index: position
+            for position, presentation_index in enumerate(self.presentation_indices)
+        }
         self.frame_metadata = tuple(metadata)
         self.frames = RawFrameArrayHandle(
             self._raw_path,
@@ -274,23 +320,80 @@ class SharedFrameStore:
             )
         return self
 
+    def _decode_plan(self):
+        """合并同一来源的选择，返回单遍解码的选帧与停止条件。"""
+        if not self._selections:
+            return None, None, None
+        if any(selection.mode == "all" and selection.sample_every == 1
+               for selection in self._selections):
+            return None, None, None
+
+        explicit_indices: list[set[int]] = []
+        frame_ranges: list[tuple[int, int, int]] = []
+        all_steps: list[int] = []
+        time_ranges: list[tuple[float, float]] = []
+        for selection in self._selections:
+            if selection.mode == "all":
+                all_steps.append(selection.sample_every)
+            elif selection.mode == "indices":
+                explicit_indices.append(set(
+                    selection.requested_indices[::selection.sample_every]
+                ))
+            elif selection.mode == "frame_interval":
+                assert selection.requested_start_frame is not None
+                assert selection.requested_end_frame_exclusive is not None
+                frame_ranges.append((
+                    selection.requested_start_frame,
+                    selection.requested_end_frame_exclusive,
+                    selection.sample_every,
+                ))
+            else:
+                assert selection.requested_start_seconds is not None
+                assert selection.requested_end_seconds is not None
+                # 时间采样必须依据实际 PTS 排序后再应用 sample_every；先保留
+                # 区间内全部帧，避免用平均帧率猜测展示帧号。
+                time_ranges.append((
+                    selection.requested_start_seconds,
+                    selection.requested_end_seconds,
+                ))
+
+        def selected(index: int, timestamp: float) -> bool:
+            decisions = [index % step == 0 for step in all_steps]
+            decisions.extend(index in values for values in explicit_indices)
+            decisions.extend(
+                start <= index < end and (index - start) % step == 0
+                for start, end, step in frame_ranges
+            )
+            decisions.extend(start <= timestamp < end for start, end in time_ranges)
+            return any(decisions)
+
+        if all_steps:
+            return selected, None, None
+        frame_ends = [max(values) for values in explicit_indices if values]
+        frame_ends.extend(end - 1 for _, end, _ in frame_ranges)
+        if not time_ranges:
+            return selected, max(frame_ends), None
+        # 未证明整个来源的时间戳单调时，后续帧可能回到请求区间。
+        # 完整顺序扫描避免提前结束造成漏帧，仍只转换区间内的帧。
+        self.context.events.append({
+            "type": "decode_plan", "full_scan_required": True,
+            "reason": "时间区间需要完整扫描以覆盖非单调时间戳",
+        })
+        return selected, None, None
+
     def selection_indices(self, selection) -> tuple[int, ...]:
-        count = len(self.times)
+        available = self.presentation_indices
+        available_set = set(available)
         if selection.mode == "all":
-            values = tuple(range(0, count, selection.sample_every))
+            values = tuple(
+                index for index in available
+                if index % selection.sample_every == 0
+            )
         elif selection.mode == "frame_interval":
             assert selection.requested_start_frame is not None
             assert selection.requested_end_frame_exclusive is not None
-            if (
-                selection.requested_start_frame >= count
-                or selection.requested_end_frame_exclusive > count
-            ):
-                raise InvalidRangeError(
-                    "请求帧范围 "
-                    f"[{selection.requested_start_frame},"
-                    f"{selection.requested_end_frame_exclusive}) 超出实际展示帧范围 "
-                    f"[0,{count})"
-                )
+            if selection.requested_end_frame_exclusive > self.source_frames_decoded:
+                raise InvalidRangeError("请求帧区间超出实际展示帧范围")
             values = tuple(range(
                 selection.requested_start_frame,
                 selection.requested_end_frame_exclusive,
@@ -300,12 +403,26 @@ class SharedFrameStore:
             values = selection.requested_indices[::selection.sample_every]
         else:
             values = tuple(
-                index for index, timestamp in enumerate(self.times)
+                index for index, timestamp in zip(available, self.times)
                 if selection.requested_start_seconds <= timestamp < selection.requested_end_seconds
             )[::selection.sample_every]
-        if not values or values[-1] >= count:
-            raise ValueError("时间选择超出实际展示帧范围")
+        if not values or any(index not in available_set for index in values):
+            raise InvalidRangeError(
+                "请求选择超出实际展示帧范围 "
+                f"[0,{self.source_frames_decoded})"
+            )
         return values
+
+    def storage_position(self, presentation_index: int) -> int:
+        try:
+            return self._position_by_presentation[presentation_index]
+        except KeyError as exc:
+            raise InvalidRangeError(
+                f"展示帧 {presentation_index} 未包含在共享解码计划中"
+            ) from exc
+
+    def timestamp(self, presentation_index: int) -> float:
+        return self.times[self.storage_position(presentation_index)]
 
     def close(self) -> None:
         if self.frames is not None:
@@ -314,6 +431,8 @@ class SharedFrameStore:
             self.native_image.close()
         self._raw_path.unlink(missing_ok=True)
         self._native_path.unlink(missing_ok=True)
+        self.context.release_temporary(self._raw_path)
+        self.context.release_temporary(self._native_path)
 
     def __enter__(self) -> "SharedFrameStore":
         return self.decode()

@@ -3,5 +3,11 @@ include README_EN.md
 include pyproject.toml
 include scripts/generate_test_image.py
 include scripts/generate_test_video.py
+include scripts/build_release_inventory.py
+include scripts/build_local_standalone.py
+include scripts/verify_uvx_upgrade.py
+include packaging/native-sources.json
+include packaging/release-constraints.txt
+recursive-include packaging/licenses *
 recursive-include src *.py
 recursive-include tests *.py

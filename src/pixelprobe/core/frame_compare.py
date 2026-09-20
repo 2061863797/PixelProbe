@@ -20,6 +20,15 @@ from pixelprobe.utils.coordinates import validate_rect
 CompareColormap = Literal["gray", "fire"]
 
 
+def absolute_difference(arr_a: np.ndarray, arr_b: np.ndarray) -> np.ndarray:
+    """同尺寸 RGB8 的逐通道绝对差；不自动缩放或对齐。"""
+    if arr_a.shape != arr_b.shape or arr_a.ndim != 3 or arr_a.shape[2] != 3:
+        raise InvalidRangeError("比较需要同尺寸 RGB 数组")
+    if arr_a.dtype != np.uint8 or arr_b.dtype != np.uint8:
+        raise InvalidRangeError("比较需要解码后的 RGB8 样本")
+    return np.maximum(arr_a, arr_b) - np.minimum(arr_a, arr_b)
+
+
 @dataclass
 class CompareResult:
     """两帧比较结果。
@@ -97,7 +106,7 @@ def compare_frames(
         arr_b = arr_b[y0 : y0 + h, x0 : x0 + w, :]
 
     # uint8 直接相减会下溢；max-min 与绝对差等价
-    diff = np.maximum(arr_a, arr_b) - np.minimum(arr_a, arr_b)
+    diff = absolute_difference(arr_a, arr_b)
     diff_max = diff.max(axis=2)  # 每像素三通道最大差 [H,W]
     mask = diff_max > threshold
 

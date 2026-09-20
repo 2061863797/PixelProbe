@@ -3,7 +3,7 @@
 关键约定：
 - 返回帧统一为 [height, width, 3] uint8，颜色顺序 RGB（解码后显式转换）；
 - 帧索引从 0 开始，按展示顺序（presentation order）编号；
-- 按帧号取帧：先 seek 到目标帧之前最近的关键帧，再向前解码丢弃，直到命中目标；
+- 按帧号取帧：按展示顺序从头解码计数，直到命中目标；
 - 按时间取帧：选择时间戳不大于目标时间的最后一帧；
 - frame_count 兜底链：PTS 索引（若已构建，精确）→ 容器元数据 →
   duration × fps 估算（info 标记 estimated）；
@@ -20,7 +20,7 @@ from __future__ import annotations
 import bisect
 import math
 from dataclasses import dataclass
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from fractions import Fraction
 from pathlib import Path
 from typing import BinaryIO
@@ -82,6 +82,18 @@ class VideoReader:
         # PTS 不能安全地映射为唯一帧号，必须走顺序解码并在 FramePacket 标记。
         self._pts_index: list[int] | None = None
         self._pts_index_failed: bool = False
+        self._last_decoded_frame_count = 0
+        self._last_converted_frame_count = 0
+
+    @property
+    def last_decoded_frame_count(self) -> int:
+        """最近一次顺序迭代实际送入解码器的展示帧数。"""
+        return self._last_decoded_frame_count
+
+    @property
+    def last_converted_frame_count(self) -> int:
+        """最近一次顺序迭代转换为 RGB 数组的帧数。"""
+        return self._last_converted_frame_count
 
     # ---------- 打开 / 关闭 ----------
 
@@ -227,6 +239,8 @@ class VideoReader:
                 if pts is None or (previous is not None and pts <= previous):
                     self._pts_index_failed = True
                     return None
+                from pixelprobe.utils.resource_budget import check_active
+                check_active()
                 pts_list.append(pts)
                 previous = pts
         except av.FFmpegError as exc:
@@ -346,7 +360,7 @@ class VideoReader:
     def validate_frame_index(self, index: int) -> None:
         """校验帧号范围，越界抛 FrameOutOfRangeError。"""
         count, estimated = self.frame_count()
-        if index < 0 or (count is not None and index >= count):
+        if index < 0 or (count is not None and not estimated and index >= count):
             upper = f"{count - 1}" if count is not None else "?"
             note = "（估算值）" if estimated else ""
             raise FrameOutOfRangeError(
@@ -425,6 +439,9 @@ class VideoReader:
         start_frame: int,
         end_frame: int | None,
         sample_every: int = 1,
+        *,
+        select_frame: Callable[[int, float], bool] | None = None,
+        stop_after: Callable[[int, float], bool] | None = None,
     ) -> Iterator[FramePacket]:
         """迭代规范展示帧包；输入范围沿用旧 CLI 的闭区间语义。
 
@@ -446,6 +463,7 @@ class VideoReader:
 
         for decoded in self._iter_decoded_presentation_frames(
             start_frame, end_frame, sample_every,
+            select_frame=select_frame, stop_after=stop_after,
         ):
             assert decoded.data is not None
             yield FramePacket(
@@ -515,6 +533,8 @@ class VideoReader:
         sample_every: int,
         *,
         include_data: bool = True,
+        select_frame: Callable[[int, float], bool] | None = None,
+        stop_after: Callable[[int, float], bool] | None = None,
     ) -> Iterator[_DecodedPresentationFrame]:
         """顺序解码并保留展示帧元数据，不以包 PTS 或 FPS 推导帧号。"""
         if start_frame < 0:
@@ -531,9 +551,14 @@ class VideoReader:
         previous_pts: int | None = None
         pending: _DecodedPresentationFrame | None = None
         index = -1
+        self._last_decoded_frame_count = 0
+        self._last_converted_frame_count = 0
         try:
             for frame in self._container.decode(self._stream):
                 index += 1
+                from pixelprobe.utils.resource_budget import check_active
+                check_active()
+                self._last_decoded_frame_count += 1
                 pts = frame.pts
                 source_timestamp = (
                     float(pts * time_base) if pts is not None else None
@@ -570,6 +595,10 @@ class VideoReader:
                     and (end_frame is None or index <= end_frame)
                     and (index - start_frame) % sample_every == 0
                 )
+                if selected and select_frame is not None:
+                    selected = select_frame(index, round_seconds(timeline))
+                if selected and include_data:
+                    self._last_converted_frame_count += 1
                 current = _DecodedPresentationFrame(
                     presentation_index=index,
                     data=(
@@ -590,7 +619,15 @@ class VideoReader:
                             pending.duration_seconds = float(duration_pts * time_base)
                     if pending.data is not None or not include_data:
                         yield pending
-                if end_frame is not None and index > end_frame:
+                if end_frame is not None and index >= end_frame:
+                    if current.data is not None or not include_data:
+                        yield current
+                    return
+                if stop_after is not None and stop_after(
+                    index, round_seconds(timeline)
+                ):
+                    if current.data is not None or not include_data:
+                        yield current
                     return
                 pending = current
             if pending is not None and (pending.data is not None or not include_data):

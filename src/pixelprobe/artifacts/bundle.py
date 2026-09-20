@@ -82,9 +82,11 @@ def stable_id(prefix: str, *parts: str) -> str:
 
 
 def sha256_file(path: Path) -> str:
+    from pixelprobe.utils.resource_budget import check_active
     digest = hashlib.sha256()
     with path.open("rb") as handle:
         for block in iter(lambda: handle.read(1024 * 1024), b""):
+            check_active()
             digest.update(block)
     return digest.hexdigest()
 
@@ -116,11 +118,8 @@ def _load_bounded_json(path: Path, *, max_bytes: int = _MAX_METADATA_BYTES) -> o
 
 
 def _write_bytes(path: Path, data: bytes) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("xb") as handle:
-        handle.write(data)
-        handle.flush()
-        os.fsync(handle.fileno())
+    from pixelprobe.utils.resource_budget import write_bytes
+    write_bytes(path, data)
 
 
 def _remove_or_abandon(path: Path) -> None:
@@ -739,6 +738,10 @@ class BundleReader:
     ) -> Bundle:
         if verify not in {"full", "metadata"}:
             raise ValueError("verify 必须是 full 或 metadata")
+        from pixelprobe.utils.resource_budget import current_budget
+        budget = current_budget()
+        if budget is not None and verify == "full":
+            budget.bundle_verification_passes += 1
         unresolved_root = Path(root)
         if unresolved_root.is_symlink() or _is_reparse_point(unresolved_root):
             raise BundlePathUnsafeError(f"Bundle 根目录不能是链接：{unresolved_root}")
@@ -776,6 +779,8 @@ class BundleReader:
                     raise ArtifactChecksumMismatchError(f"Artifact 大小不匹配：{stored.uri}")
                 if verify == "full" and sha256_file(path) != stored.sha256:
                     raise ArtifactChecksumMismatchError(f"Artifact SHA-256 不匹配：{stored.uri}")
+                if budget is not None and verify == "full":
+                    budget.bundle_verified_bytes += stored.size_bytes
             if record.storage.format == "npy":
                 path = _resolve_stored_path(root, record.storage.files[0].uri, expected_top)
                 try:
@@ -825,6 +830,13 @@ class BundleWriter:
         events: tuple[Mapping[str, object], ...] = (),
         execution_id: str | None = None,
     ) -> Bundle:
+        from pixelprobe.utils.resource_budget import (
+            BudgetFile, check_active, moved, removed, require_memory,
+        )
+        from pixelprobe.engine.errors import (
+            ResourcePlanUnsatisfiableError, ExecutionCancelledError, ExecutionTimeoutError,
+        )
+        from pixelprobe.domain.errors import MaterializationLimitExceededError
         if not tensors:
             raise BundleWriteError("Bundle 至少需要一个 TensorField")
         if array_format not in {"npy", "zarr"}:
@@ -865,10 +877,12 @@ class BundleWriter:
                 if not is_preview:
                     data_ids_by_tensor_id.setdefault(tensor.tensor_id, []).append(data_id)
             for tensor, identity_record in zip(tensors, tensor_ids):
+                check_active()
                 persisted_dtype = np.dtype(tensor.data.dtype).newbyteorder("<").str
                 dag_node_id, data_id, schema_id, tensor_provenance_id = identity_record
                 is_preview = tensor.attributes.get("artifact_role") == "preview"
                 if is_preview:
+                    require_memory(int(np.prod(tensor.data.shape)) * 8)
                     preview = tensor.data.materialize()
                     if (
                         preview.dtype != np.uint8
@@ -880,9 +894,11 @@ class BundleWriter:
                         )
                     data_path = temporary / "previews" / data_id / "preview.png"
                     data_path.parent.mkdir(parents=True, exist_ok=True)
-                    Image.fromarray(preview).save(
-                        data_path, format="PNG", optimize=False, compress_level=9
-                    )
+                    with data_path.open("xb") as png_file:
+                        Image.fromarray(preview).save(
+                            BudgetFile(png_file, data_path),
+                            format="PNG", optimize=False, compress_level=9,
+                        )
                     with data_path.open("r+b") as preview_file:
                         os.fsync(preview_file.fileno())
                     data_file = _stored(temporary, data_path, "image/png")
@@ -947,6 +963,7 @@ class BundleWriter:
                 index_artifact_ids: list[str] = []
                 validity_ref: ArtifactRef | None = None
                 if tensor.validity is not None:
+                    require_memory(int(np.prod(tensor.validity.shape)) * 3)
                     validity_array = np.ascontiguousarray(
                         tensor.validity.materialize(), dtype=bool,
                     )
@@ -1307,6 +1324,7 @@ class BundleWriter:
             )
             _write_bytes(temporary / "manifest.json", _json_bytes(manifest))
             BundleReader().open(temporary, verify="full")
+            check_active()
             if overwrite:
                 if os.path.lexists(target):
                     os.replace(target, backup)
@@ -1326,15 +1344,22 @@ class BundleWriter:
                     raise
             if backup.exists():
                 shutil.rmtree(backup)
+            moved(temporary, target)
             return BundleReader().open(target, verify="full")
         except BundleTargetExistsError:
             raise
         except Exception as exc:
             if backup.exists() and not target.exists():
                 os.replace(backup, target)
-            if isinstance(exc, BundleWriteError):
+            import errno
+            if isinstance(exc, OSError) and exc.errno in {errno.ENOSPC, errno.EDQUOT}:
+                raise ResourcePlanUnsatisfiableError("磁盘写满或文件系统配额不足，结果未提交") from exc
+            if isinstance(exc, (BundleWriteError, ResourcePlanUnsatisfiableError,
+                                ExecutionCancelledError, ExecutionTimeoutError,
+                                MaterializationLimitExceededError)):
                 raise
             raise BundleWriteError(f"Bundle 写入失败：{exc}") from exc
         finally:
             if temporary.exists():
                 _remove_or_abandon(temporary)
+            removed(temporary)

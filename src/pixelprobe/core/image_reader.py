@@ -90,6 +90,12 @@ class ImageReader:
         self._path = ensure_file_exists(Path(path))
         try:
             img = Image.open(self._path)
+            from pixelprobe.utils.resource_budget import require_memory
+            try:
+                require_memory(img.width * img.height * 32)
+            except BaseException:
+                img.close()
+                raise
             img.load()
         except UnidentifiedImageError as exc:
             raise UnsupportedMediaError(

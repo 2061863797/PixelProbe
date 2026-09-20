@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import hashlib
+import io
+from pixelprobe.utils.resource_budget import budget_scope
 import os
 import shutil
 from importlib.metadata import PackageNotFoundError, version as package_version
@@ -98,6 +100,9 @@ class GenerationResult:
     bundle: Bundle | None
     events: tuple[dict[str, object], ...]
     decode_passes: int
+    source_frames_decoded: int = 0
+    frames_converted: int = 0
+    frames_stored: int = 0
     cache_hits: int = 0
     cache_writes: int = 0
 
@@ -436,7 +441,14 @@ def _rows_to_handle(
             )
         completed_positions = completed_positions or set()
         completed_hashes = completed_hashes or {}
+        header = io.BytesIO()
+        np.lib.format.write_array_header_2_0(header, {
+            "descr": np.lib.format.dtype_to_descr(first.dtype),
+            "fortran_order": False,
+            "shape": shape,
+        })
         if partial_path is not None:
+            context.reserve_temporary(partial_path, total_bytes + header.tell())
             partial_path.parent.mkdir(parents=True, exist_ok=True)
             if completed_positions and not partial_path.is_file():
                 raise CheckpointIncompatibleError(
@@ -496,6 +508,7 @@ def _rows_to_handle(
             shape,
             str(first.dtype),
             expected_chunks=len(indices),
+            budget=context.budget,
         )
         try:
             for position, index in enumerate(indices):
@@ -670,6 +683,18 @@ class LocalExecutor:
         self.registry.register_runtime(node_type="preview", handler=self._runtime_preview)
 
     def execute(
+        self, plan: ExecutionPlan, requests: tuple[RepresentationRequest, ...],
+        context: LocalExecutionContext, *, output_path: Path | None = None,
+        checkpoint_path: Path | None = None, resume_from: Path | None = None,
+    ) -> GenerationResult:
+        from contextlib import nullcontext
+        with budget_scope(context.budget), (
+            context.cache.reference() if context.cache is not None else nullcontext()
+        ):
+            return self._execute(plan, requests, context, output_path=output_path,
+                                 checkpoint_path=checkpoint_path, resume_from=resume_from)
+
+    def _execute(
         self,
         plan: ExecutionPlan,
         requests: tuple[RepresentationRequest, ...],
@@ -684,6 +709,13 @@ class LocalExecutor:
         source_paths = tuple(dict.fromkeys(
             Path(request.source.uri).resolve(strict=True) for request in requests
         ))
+        selections_by_path = {
+            path: tuple(
+                request.selection for request in requests
+                if Path(request.source.uri).resolve(strict=True) == path
+            )
+            for path in source_paths
+        }
         source_sha_by_path = {
             path: sha256_file(path) for path in source_paths
         }
@@ -793,7 +825,9 @@ class LocalExecutor:
                     assert isinstance(path, Path)
                     store = stores.get(path)
                     if store is None:
-                        store = SharedFrameStore(path, context)
+                        store = SharedFrameStore(
+                            path, context, selections_by_path[path],
+                        )
                         stores[path] = store
                     values[node.node_id] = store
                 elif node.node_type in {"sample", "transform", "reduce", "frequency", "preview"}:
@@ -974,6 +1008,15 @@ class LocalExecutor:
                 plan=result_plan, request_tensors=request_tensors, bundle=bundle,
                 events=tuple(context.events),
                 decode_passes=sum(store.decode_passes for store in stores.values()),
+                source_frames_decoded=sum(
+                    store.source_frames_decoded for store in stores.values()
+                ),
+                frames_converted=sum(
+                    store.frames_converted for store in stores.values()
+                ),
+                frames_stored=sum(
+                    len(store.presentation_indices) for store in stores.values()
+                ),
                 cache_hits=cache_hits,
                 cache_writes=cache_writes,
             )
@@ -1465,12 +1508,25 @@ class LocalExecutor:
     ) -> Path | None:
         if not enabled or context.cache is None:
             return None
+        root = context.cache.partials / request_sha256
+        root.mkdir(exist_ok=True)
+        marker = root / ".pixelprobe-owned.json"
+        try:
+            from pixelprobe.utils.resource_budget import write_bytes
+            write_bytes(marker, json.dumps({
+                "owner": "pixelprobe", "kind": "partial",
+                "request_sha256": request_sha256,
+            }).encode("utf-8"))
+        except FileExistsError:
+            pass
         return context.cache.partials / request_sha256 / node_id / "data.npy"
 
     @staticmethod
     def _remove_partial(path: Path | None) -> None:
         if path is not None and path.parent.exists():
             shutil.rmtree(path.parent)
+            from pixelprobe.utils.resource_budget import removed
+            removed(path.parent)
 
     @classmethod
     def _record_chunk(
@@ -1730,7 +1786,7 @@ class LocalExecutor:
     ) -> tuple[TensorField, ...]:
         selection = TemporalSelection.model_validate(config["selection"])
         indices = store.selection_indices(selection)
-        times = tuple(store.times[index] for index in indices)
+        times = tuple(store.timestamp(index) for index in indices)
         representation = str(config["representation"])
         if representation == "frames":
             assert store.frames is not None
@@ -1738,7 +1794,10 @@ class LocalExecutor:
                 node_id,
                 indices,
                 lambda index: store.frames.read(
-                    (index, slice(None), slice(None), slice(None))
+                    (
+                        store.storage_position(index),
+                        slice(None), slice(None), slice(None),
+                    )
                 ),
                 context,
                 file_backed=file_backed,
@@ -1761,7 +1820,10 @@ class LocalExecutor:
             node_id,
             indices,
             lambda index: _sample_frame(
-                store.frames.read((index, slice(None), slice(None), slice(None))),
+                store.frames.read((
+                    store.storage_position(index),
+                    slice(None), slice(None), slice(None),
+                )),
                 sampling_plan,
             ),
             context,

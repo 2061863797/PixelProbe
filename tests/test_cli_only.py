@@ -110,8 +110,18 @@ def test_cli_help_falls_back_to_utf8_for_incompatible_output_encoding() -> None:
     assert result.stderr == ""
 
 
-def test_ci_checks_tests_wheel_and_standalone_cli_before_release() -> None:
-    """常规提交必须在打标签前覆盖测试、wheel 安装和三平台 CLI。"""
+@pytest.mark.parametrize("encoding", ["gbk", "cp1252"])
+def test_json_output_is_utf8_even_with_local_console_encoding(encoding) -> None:
+    result = run_cli("doctor", "--json", python_io_encoding=encoding)
+    assert result.returncode == 0
+    assert json.loads(result.stdout)["data"]["limitations"][0] == "依赖导入不等于实际媒体解码验证"
+    failure = run_cli("--unknown-option", "--json", python_io_encoding=encoding)
+    assert failure.returncode != 0
+    assert json.loads(failure.stdout)["error"]["code"] == "INVALID_ARGUMENT"
+
+
+def test_ci_checks_tests_and_wheel_before_release() -> None:
+    """常规提交必须覆盖测试和 wheel 安装，且不得恢复独立程序构建。"""
     workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(
         encoding="utf-8",
     )
@@ -120,19 +130,24 @@ def test_ci_checks_tests_wheel_and_standalone_cli_before_release() -> None:
     assert "branches:\n      - main" in workflow
     assert "python-version: [\"3.11\", \"3.12\", \"3.13\"]" in workflow
     assert "python -m pytest" in workflow
+    assert "python -m twine check dist/*" in workflow
     assert "pip install dist/*.whl" in workflow
-    assert all(
-        runner in workflow
-        for runner in ("windows-latest", "ubuntu-latest", "macos-14")
-    )
+    assert "standalone-cli:" not in workflow
+    assert "PyInstaller" not in workflow
 
 
-def test_release_archives_executable_at_archive_root() -> None:
-    """安装文档按解压根目录运行，发布配置必须维持相同布局。"""
+def test_release_publishes_python_packages_without_standalone_archives() -> None:
+    """正式发布只上传 Python 包、校验和，不生成独立程序压缩包。"""
     workflow = (ROOT / ".github" / "workflows" / "release-cli.yml").read_text(
         encoding="utf-8",
     )
 
-    assert "Compress-Archive -Path '${{ matrix.archive_name }}\\*'" in workflow
-    assert 'tar -czf "${{ matrix.archive }}" -C "${{ matrix.archive_name }}" .' in workflow
-    assert "archive-smoke" in workflow
+    assert "name: 发布 Python 包" in workflow
+    assert "needs: [python-package]" in workflow
+    assert "name: python-package" in workflow
+    assert "path: dist/*" in workflow
+    assert "sha256sum * > SHA256SUMS.txt" in workflow
+    assert "standalone-cli:" not in workflow
+    assert "PyInstaller" not in workflow
+    assert "Compress-Archive" not in workflow
+    assert "tar -czf" not in workflow

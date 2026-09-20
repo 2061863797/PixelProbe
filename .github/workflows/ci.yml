@@ -25,7 +25,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
       - name: 安装项目与测试依赖
-        run: python -m pip install ".[dev,storage]"
+        run: python -m pip install ".[dev,storage,evidence]"
       - name: 运行完整测试
         run: python -m pytest
 
@@ -37,7 +37,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.12"
           cache: pip
       - name: 构建并检查发行包
         run: |
@@ -50,33 +50,3 @@ jobs:
           ./.wheel-smoke/bin/python -m pip install dist/*.whl
           ./.wheel-smoke/bin/pixelprobe --version
           ./.wheel-smoke/bin/pixelprobe --help
-
-  standalone-cli:
-    name: ${{ matrix.os }} 独立 CLI
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 25
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: windows-latest
-            executable: pixelprobe.exe
-          - os: ubuntu-latest
-            executable: pixelprobe
-          - os: macos-14
-            executable: pixelprobe
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-          cache: pip
-      - name: 安装项目和打包工具
-        run: python -m pip install . pyinstaller
-      - name: 构建独立 CLI
-        run: python -m PyInstaller --noconfirm --clean packaging/pixelprobe.spec
-      - name: 验证独立 CLI
-        shell: bash
-        run: |
-          ./dist/${{ matrix.executable }} --version
-          ./dist/${{ matrix.executable }} --help

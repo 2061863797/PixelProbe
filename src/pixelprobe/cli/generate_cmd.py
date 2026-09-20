@@ -55,7 +55,7 @@ def generate(
                         declared_media_type=request.source.declared_media_type,
                     ),
                     "output": OutputRequest(
-                        format="bundle",
+                        format="zarr" if request.output.format == "zarr" else "bundle",
                         include_preview=request.output.include_preview,
                         preview_config=request.output.preview_config,
                         metadata_policy=request.output.metadata_policy,

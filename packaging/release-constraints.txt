@@ -1,0 +1,4 @@
+# 独立完整版的原生依赖审查基线。版本变化必须同步更新 native-sources.json。
+av==18.1.0
+c2pa-python==0.37.10
+opencv-python-headless==5.0.0.93

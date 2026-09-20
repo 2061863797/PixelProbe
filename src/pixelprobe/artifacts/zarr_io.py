@@ -14,6 +14,25 @@ from pixelprobe.artifacts.array_io import _validate_selection, iter_chunk_select
 from pixelprobe.artifacts.errors import ZarrDependencyMissingError
 from pixelprobe.domain.errors import MaterializationLimitExceededError
 from pixelprobe.domain.tensor import ArrayHandle, MemoryArrayHandle, StorageKind
+from pixelprobe.utils.resource_budget import current_budget, moved, removed, check_active, require_memory
+
+
+def _budget_store(path):
+    budget = current_budget()
+    if budget is None:
+        return str(path)
+    from zarr.storage import LocalStore
+
+    class BudgetStore(LocalStore):
+        async def set(self, key, value):
+            budget.reserve(Path(path) / key, len(value))
+            return await super().set(key, value)
+
+        async def set_if_not_exists(self, key, value):
+            budget.reserve(Path(path) / key, len(value))
+            return await super().set_if_not_exists(key, value)
+
+    return BudgetStore(path)
 
 
 def _commit_zarr_directory(
@@ -29,6 +48,7 @@ def _commit_zarr_directory(
             raise FileExistsError(f"输出目录已存在：{target}")
         try:
             os.rename(temporary, target)
+            moved(temporary, target)
         except OSError as exc:
             if os.path.lexists(target):
                 raise FileExistsError(f"输出目录已存在：{target}") from exc
@@ -38,6 +58,7 @@ def _commit_zarr_directory(
         os.replace(target, backup)
     try:
         os.replace(temporary, target)
+        moved(temporary, target)
     except Exception:
         if backup.exists() and not os.path.lexists(target):
             os.replace(backup, target)
@@ -124,14 +145,17 @@ def save_zarr(
     try:
         dtype = np.dtype(target_dtype or array.dtype)
         stored = zarr.create_array(
-            store=str(temporary),
+            store=_budget_store(temporary),
             shape=array.shape,
             chunks=chunk_shape,
             dtype=dtype,
             zarr_format=3,
             overwrite=False,
         )
-        stored[:] = np.ascontiguousarray(array)
+        for selection in iter_chunk_selections(array.shape, chunk_shape):
+            check_active()
+            require_memory(int(np.prod(chunk_shape)) * dtype.itemsize * 4)
+            stored[selection] = np.ascontiguousarray(array[selection])
         checked = ZarrArrayHandle(temporary)
         if checked.shape != array.shape or np.dtype(checked.dtype) != dtype:
             raise ValueError("Zarr 写入后 shape/dtype 验证失败")
@@ -141,6 +165,7 @@ def save_zarr(
     finally:
         if temporary.exists():
             shutil.rmtree(temporary, ignore_errors=True)
+        removed(temporary)
     return ZarrArrayHandle(target)
 
 
@@ -152,12 +177,6 @@ def save_array_handle_zarr(
     overwrite: bool = False,
     target_dtype: str | None = None,
 ) -> ZarrArrayHandle:
-    if isinstance(source, MemoryArrayHandle):
-        return save_zarr(
-            source.materialize(), path,
-            chunk_shape=chunk_shape, overwrite=overwrite,
-            target_dtype=target_dtype,
-        )
     if len(chunk_shape) != len(source.shape) or any(size < 1 for size in chunk_shape):
         raise ValueError("chunk_shape 必须与数组同维且全部 >= 1")
     zarr = _zarr()
@@ -170,10 +189,12 @@ def save_array_handle_zarr(
     try:
         dtype = np.dtype(target_dtype or source.dtype)
         stored = zarr.create_array(
-            store=str(temporary), shape=source.shape, chunks=chunk_shape,
+            store=_budget_store(temporary), shape=source.shape, chunks=chunk_shape,
             dtype=dtype, zarr_format=3, overwrite=False,
         )
         for selection in iter_chunk_selections(source.shape, chunk_shape):
+            check_active()
+            require_memory(int(np.prod(chunk_shape)) * dtype.itemsize * 4)
             stored[selection] = source.read(selection)
         checked = ZarrArrayHandle(temporary)
         if checked.shape != source.shape or np.dtype(checked.dtype) != dtype:
@@ -184,4 +205,5 @@ def save_array_handle_zarr(
     finally:
         if temporary.exists():
             shutil.rmtree(temporary, ignore_errors=True)
+        removed(temporary)
     return ZarrArrayHandle(target)

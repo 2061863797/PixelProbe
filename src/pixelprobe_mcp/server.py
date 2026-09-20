@@ -4,32 +4,32 @@ from __future__ import annotations
 
 import base64
 import json
-import threading
 from typing import Annotated, Any
 
-import anyio
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
 from mcp.types import CallToolResult, ImageContent, TextContent, ToolAnnotations
 from pydantic import ValidationError
 
-from pixelprobe.domain.errors import DomainError
-from pixelprobe.models.errors import PixelProbeError
-from pixelprobe_mcp.config import MediaChangedError, PathAccessError, ServerConfig
+from pixelprobe_mcp.config import ServerConfig
 from pixelprobe_mcp.models import (
     ArtifactReadInput,
     BundleListInput,
     ChangesInput,
+    EvidenceInput,
+    WorkflowInput,
+    WorkflowOptions,
     FrameInput,
     GenerateInput,
     InspectInput,
+    JobIdInput,
+    JobSubmitInput,
     PixelInput,
     RegionInput,
     ToolEnvelope,
 )
 from pixelprobe_mcp.service import (
     AGENT_GUIDANCE,
-    McpResourceLimitError,
     PixelProbeService,
     validation_message,
 )
@@ -40,13 +40,21 @@ READ_ONLY = ToolAnnotations(
 WRITE_NON_DESTRUCTIVE = ToolAnnotations(
     readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False,
 )
-MCP_MAX_CONCURRENT_OPERATIONS = 1
 MCP_SHORT_TIMEOUT_SECONDS = 20.0
 MCP_STANDARD_TIMEOUT_SECONDS = 60.0
 MCP_GENERATE_TIMEOUT_SECONDS = 120.0
-_OPERATION_SLOT = threading.BoundedSemaphore(MCP_MAX_CONCURRENT_OPERATIONS)
-
 SERVICE = PixelProbeService(ServerConfig.from_environment())
+_JOB_MANAGER: Any = None
+
+
+def _job_manager():
+    global _JOB_MANAGER
+    from pixelprobe_mcp.jobs import JobManager
+    if _JOB_MANAGER is None or _JOB_MANAGER.config != SERVICE.config:
+        if _JOB_MANAGER is not None:
+            _JOB_MANAGER.shutdown(wait=False)
+        _JOB_MANAGER = JobManager(SERVICE.config)
+    return _JOB_MANAGER
 mcp = FastMCP(
     "pixelprobe_mcp",
     instructions=(
@@ -57,80 +65,6 @@ mcp = FastMCP(
 )
 
 
-async def _run(
-    function: Any,
-    *args: object,
-    timeout_seconds: float = MCP_SHORT_TIMEOUT_SECONDS,
-) -> Any:
-    """在受限槽位中执行同步核心，并统一转换为不会回显输入值的 ToolError。
-
-    超时时底层 PyAV/Pillow 同步调用无法安全终止，因此槽位由工作线程在真正退出时释放。
-    这阻止超时请求在后台无限叠加，但不会把未完成的原生解码伪装成已取消。
-    """
-    if not _OPERATION_SLOT.acquire(blocking=False):
-        raise ToolError(
-            "MCP_BUSY：已有媒体操作仍在执行或清理中；请等待后重试，不要并发提交长任务"
-        )
-    state_lock = threading.Lock()
-    worker_started = False
-    released_before_start = False
-
-    def guarded() -> Any:
-        nonlocal worker_started
-        with state_lock:
-            # 若请求在工作线程调度前被取消，调用方已归还槽位。此时不要在
-            # 后台开始一个客户端已经看不到的媒体操作，也不要二次 release。
-            if released_before_start:
-                return None
-            worker_started = True
-        try:
-            return function(*args)
-        finally:
-            _OPERATION_SLOT.release()
-
-    try:
-        with anyio.fail_after(timeout_seconds):
-            return await anyio.to_thread.run_sync(guarded, abandon_on_cancel=True)
-    except TimeoutError as exc:
-        raise ToolError(
-            "MCP_TIMEOUT：请求超过服务器时限。底层同步解码无法被安全强杀，"
-            "操作槽位会在其退出后释放；请稍后重试，并缩小媒体或帧范围"
-        ) from exc
-    except ValidationError as exc:
-        raise ToolError(f"参数无效：{validation_message(exc)}") from exc
-    except (PixelProbeError, DomainError) as exc:
-        details = exc.to_dict()
-        hint = f"；建议：{details['hint']}" if details.get("hint") else ""
-        raise ToolError(f"{details['code']}：{details['message']}{hint}") from exc
-    except MediaChangedError as exc:
-        raise ToolError(
-            "MEDIA_CHANGED_DURING_ANALYSIS：输入媒体在分析期间变化，结果已丢弃；"
-            "请等待文件写入完成后重试"
-        ) from exc
-    except PathAccessError as exc:
-        raise ToolError(
-            "PATH_NOT_ALLOWED：路径不在 MCP 允许范围内，或包含不安全的链接/输出目标；"
-            "请检查 PIXELPROBE_MCP_ROOTS 和输入路径"
-        ) from exc
-    except McpResourceLimitError as exc:
-        raise ToolError(f"MCP_RESOURCE_LIMIT：{exc}") from exc
-    except (ValueError, OSError, KeyError, RuntimeError) as exc:
-        raise ToolError(
-            "MCP_OPERATION_FAILED：请求无法安全完成；请检查参数、媒体完整性、"
-            "允许目录和资源限制后重试"
-        ) from exc
-    except Exception as exc:
-        raise ToolError(
-            "MCP_INTERNAL_ERROR：服务器未能完成请求；请缩小范围后重试"
-        ) from exc
-    finally:
-        # 若请求在工作线程真正启动前被取消，线程不会执行 guarded 的 finally。
-        with state_lock:
-            if not worker_started:
-                released_before_start = True
-                _OPERATION_SLOT.release()
-
-
 async def _run_model(
     function: Any,
     model_type: Any,
@@ -139,10 +73,22 @@ async def _run_model(
     timeout_seconds: float = MCP_SHORT_TIMEOUT_SECONDS,
 ) -> Any:
     """在统一错误边界内构造 Pydantic 输入模型，避免 SDK 回显输入值。"""
-    return await _run(
-        lambda: function(model_type.model_validate(payload)),
-        timeout_seconds=timeout_seconds,
-    )
+    from pixelprobe_mcp.jobs import QueueFullError, ResourceBudgetExceededError
+    from pixelprobe_mcp.worker import OPERATIONS, WorkerError
+    if function.__name__ in OPERATIONS:
+        try:
+            job = _job_manager().submit(
+                function.__name__, payload, timeout_seconds=timeout_seconds,
+                persistent=False,
+            )
+            return await _job_manager().wait(job)
+        except (QueueFullError, ResourceBudgetExceededError) as exc:
+            raise ToolError(str(exc)) from exc
+        except WorkerError as exc:
+            raise ToolError(str(exc)) from exc
+        except (OSError, RuntimeError) as exc:
+            raise ToolError("MCP_WORKER_FAILED：无法启动或回收媒体工作进程") from exc
+    raise ToolError("MCP_INTERNAL_ERROR：媒体操作未注册到任务调度器")
 
 
 @mcp.resource("pixelprobe://guidance", title="PixelProbe Agent 分析原则", mime_type="text/plain")
@@ -172,7 +118,167 @@ def pixelprobe_analyze_media_prompt(media_path: str, question: str = "请全面�
 )
 async def pixelprobe_get_capabilities() -> ToolEnvelope:
     """读取 MCP 能力和安全边界，不访问媒体，也不修改文件。"""
-    return await _run(SERVICE.capabilities)
+    return SERVICE.capabilities()
+
+
+@mcp.tool(
+    name="pixelprobe_evidence", title="生成图片证据分析包",
+    description=(
+        "提取 EXIF 等元数据，验证 C2PA，并生成 JPEG ELA、局部噪声一致性和边缘候选热力图；"
+        "只提供证据与局限，不自动判定真伪。"
+    ),
+    annotations=WRITE_NON_DESTRUCTIVE,
+)
+async def pixelprobe_evidence(
+    media_path: str,
+    output_name: str | None = None,
+    jpeg_quality: int = 90,
+    block_size: int = 32,
+    c2pa_trust_anchors_pem: str | None = None,
+) -> ToolEnvelope:
+    return await _run_model(
+        SERVICE.evidence, EvidenceInput,
+        {
+            "media_path": media_path, "output_name": output_name,
+            "jpeg_quality": jpeg_quality, "block_size": block_size,
+            "c2pa_trust_anchors_pem": c2pa_trust_anchors_pem,
+        },
+        timeout_seconds=MCP_GENERATE_TIMEOUT_SECONDS,
+    )
+
+
+@mcp.tool(
+    name="pixelprobe_workflow", title="组合媒体分析",
+    description="first_change 首次超阈值变化、compare_media 同帧号媒体比较、quality_overview 质量候选概览；范围为闭区间，默认 0..1799，采样遗漏会明确报告。",
+    annotations=WRITE_NON_DESTRUCTIVE,
+)
+async def pixelprobe_workflow(
+    media_path: str, options: WorkflowOptions, reference_path: str | None = None,
+    output_name: str | None = None,
+) -> ToolEnvelope:
+    return await _run_model(SERVICE.workflow, WorkflowInput, {
+        "media_path": media_path, "options": options.model_dump(mode="json"),
+        "reference_path": reference_path, "output_name": output_name,
+    }, timeout_seconds=MCP_GENERATE_TIMEOUT_SECONDS)
+
+
+@mcp.tool(
+    name="pixelprobe_submit_job", title="提交媒体分析任务",
+    description="将受支持的媒体操作放入有界 FIFO 队列，立即返回 job_id；长任务应使用此入口。",
+    annotations=WRITE_NON_DESTRUCTIVE,
+)
+async def pixelprobe_submit_job(operation: str, payload: dict[str, Any]) -> ToolEnvelope:
+    """验证操作参数后持久化排队，队列满时明确要求稍后重试。"""
+    from pixelprobe_mcp import models
+    from pixelprobe_mcp.jobs import QueueFullError, ResourceBudgetExceededError
+    from pixelprobe_mcp.worker import OPERATIONS
+    try:
+        submitted = JobSubmitInput.model_validate({"operation": operation, "payload": payload})
+        model = getattr(models, OPERATIONS[submitted.operation])
+        model.model_validate(submitted.payload)
+        timeout = (
+            MCP_GENERATE_TIMEOUT_SECONDS
+            if submitted.operation in {"generate_representation", "evidence", "workflow"}
+            else MCP_STANDARD_TIMEOUT_SECONDS
+        )
+        job = _job_manager().submit(
+            submitted.operation, submitted.payload, timeout_seconds=timeout, persistent=True,
+        )
+    except ValidationError as exc:
+        raise ToolError(f"参数无效：{validation_message(exc)}") from exc
+    except (QueueFullError, ResourceBudgetExceededError) as exc:
+        raise ToolError(str(exc)) from exc
+    return ToolEnvelope(data=job.public(), next_actions=[{
+        "tool": "pixelprobe_get_job", "reason": "查询任务状态和结果是否可领取",
+        "arguments": {"job_id": job.job_id},
+    }])
+
+
+@mcp.tool(
+    name="pixelprobe_get_job", title="查询媒体任务",
+    description="查询排队、运行、完成、失败、取消、超时或中断状态；不会占用媒体工作槽位。",
+    annotations=READ_ONLY,
+)
+async def pixelprobe_get_job(job_id: str) -> ToolEnvelope:
+    from pixelprobe_mcp.jobs import JobNotFoundError, Job
+    try:
+        value = _job_manager().get(JobIdInput(job_id=job_id).job_id)
+    except (ValidationError, JobNotFoundError) as exc:
+        raise ToolError("MCP_JOB_NOT_FOUND：任务不存在或 ID 无效") from exc
+    data = value.public() if isinstance(value, Job) else value
+    return ToolEnvelope(data=data)
+
+
+@mcp.tool(
+    name="pixelprobe_resume_job", title="从检查点恢复媒体任务",
+    description="显式恢复中断、取消、超时或失败的生成任务；要求已有匹配 checkpoint，返回新的任务 ID。",
+    annotations=WRITE_NON_DESTRUCTIVE,
+)
+async def pixelprobe_resume_job(job_id: str) -> ToolEnvelope:
+    from pixelprobe_mcp.jobs import JobNotFoundError, QueueFullError, ResourceBudgetExceededError
+    from pixelprobe_mcp.worker import WorkerError
+    try:
+        job = _job_manager().resume(JobIdInput(job_id=job_id).job_id)
+    except (ValidationError, JobNotFoundError) as exc:
+        raise ToolError("MCP_JOB_NOT_FOUND：任务不存在或 ID 无效") from exc
+    except (WorkerError, QueueFullError, ResourceBudgetExceededError) as exc:
+        raise ToolError(str(exc)) from exc
+    except OSError as exc:
+        raise ToolError("MCP_STATE_COMMIT_FAILED：无法保存恢复任务") from exc
+    return ToolEnvelope(data=job.public(), next_actions=[{
+        "tool": "pixelprobe_get_job", "reason": "查询恢复任务状态",
+        "arguments": {"job_id": job.job_id},
+    }])
+
+
+@mcp.tool(
+    name="pixelprobe_maintain_storage", title="检查和清理过期任务存储",
+    description="默认仅预览占用与可清理量。dry_run=false 删除过期任务及无保留任务引用的 checkpoint；不删除正式 Bundle。活动任务存在时拒绝清理。",
+    annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=False),
+)
+async def pixelprobe_maintain_storage(dry_run: bool = True) -> ToolEnvelope:
+    import anyio
+    try:
+        data = await anyio.to_thread.run_sync(lambda: _job_manager().maintain_storage(dry_run=dry_run))
+    except (OSError, ValueError) as exc:
+        raise ToolError("MCP_STORAGE_UNAVAILABLE：无法安全检查任务存储") from exc
+    return ToolEnvelope(data=data)
+
+
+@mcp.tool(
+    name="pixelprobe_cancel_job", title="取消媒体任务",
+    description="幂等取消排队或运行任务；运行进程会在宽限期后被终止并回收。",
+    annotations=WRITE_NON_DESTRUCTIVE,
+)
+async def pixelprobe_cancel_job(job_id: str) -> ToolEnvelope:
+    from pixelprobe_mcp.jobs import JobNotFoundError
+    try:
+        data = _job_manager().cancel(JobIdInput(job_id=job_id).job_id)
+    except (ValidationError, JobNotFoundError) as exc:
+        raise ToolError("MCP_JOB_NOT_FOUND：任务不存在或 ID 无效") from exc
+    return ToolEnvelope(data=data)
+
+
+@mcp.tool(
+    name="pixelprobe_get_job_result", title="领取媒体任务结果",
+    description="只领取成功任务的结构化结果；画面任务同时返回 PNG ImageContent。",
+    annotations=READ_ONLY,
+)
+async def pixelprobe_get_job_result(job_id: str) -> Annotated[CallToolResult, ToolEnvelope]:
+    from pixelprobe_mcp.jobs import JobNotFoundError
+    from pixelprobe_mcp.worker import WorkerError
+    try:
+        result, image = _job_manager().result(JobIdInput(job_id=job_id).job_id)
+    except (ValidationError, JobNotFoundError) as exc:
+        raise ToolError("MCP_JOB_NOT_FOUND：任务不存在或 ID 无效") from exc
+    except WorkerError as exc:
+        raise ToolError(str(exc)) from exc
+    content: list[Any] = [TextContent(type="text", text=json.dumps(result, ensure_ascii=False))]
+    if image is not None:
+        content.append(ImageContent(
+            type="image", data=base64.b64encode(image).decode("ascii"), mimeType="image/png",
+        ))
+    return CallToolResult(content=content, structuredContent=result)
 
 
 @mcp.tool(

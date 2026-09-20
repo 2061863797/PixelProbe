@@ -22,6 +22,8 @@ from pixelprobe.core.image_reader import (
 )
 from pixelprobe.core.media_reader import detect_media_type
 from pixelprobe.domain.media import MediaSource
+from pixelprobe.domain.time import TemporalSelection
+from pixelprobe.evidence import analyze_evidence
 from pixelprobe.engine.request import OutputRequest, RepresentationRequest
 from pixelprobe.models.media_info import MediaInfo
 from pixelprobe.operators.base import ResourcePolicy
@@ -31,6 +33,8 @@ from pixelprobe_mcp.models import (
     ArtifactReadInput,
     BundleListInput,
     ChangesInput,
+    EvidenceInput,
+    WorkflowInput,
     FrameInput,
     GenerateInput,
     InspectInput,
@@ -309,7 +313,10 @@ def _read_alpha_visual_frame(
 class PixelProbeService:
     """只负责编排现有核心，不复制媒体分析算法。"""
 
-    def __init__(self, config: ServerConfig) -> None:
+    def __init__(self, config: ServerConfig, *, cancellation=None, checkpoint_id=None, resume=False) -> None:
+        self.checkpoint_id = checkpoint_id
+        self.resume = resume
+        self.cancellation = cancellation
         self.config = config
 
     def _resolve_media(self, value: str) -> tuple[Path, FileIdentity]:
@@ -378,20 +385,48 @@ class PixelProbeService:
 
     @classmethod
     def _ensure_generation_budget(
-        cls, info: MediaInfo,
+        cls, info: MediaInfo, selection: TemporalSelection,
     ) -> None:
         if info.media_type != "video":
             return
-        frame_count = cls._require_bounded_video_frame_count(info, operation="表示生成")
-        # SharedFrameStore 当前为共享计算始终从 0 解码完整视频。选择区间只
-        # 限制下游输出，不能被当作源解码预算；支持局部 FrameStore 后方可收窄。
-        source_frame_count = frame_count
+        if selection.mode in {"all", "time_interval"}:
+            frame_count = cls._require_bounded_video_frame_count(info, operation="表示生成")
+            # all 必须扫描完整来源；时间区间依据实际 PTS 停止，准入阶段不能
+            # 用平均帧率伪造展示帧映射，因此保守按完整来源估算。
+            source_frame_count = frame_count
+            stored_frame_count = frame_count
+            if selection.mode == "all":
+                stored_frame_count = (
+                    frame_count + selection.sample_every - 1
+                ) // selection.sample_every
+        elif selection.mode == "frame_interval":
+            assert selection.requested_start_frame is not None
+            assert selection.requested_end_frame_exclusive is not None
+            source_frame_count = selection.requested_end_frame_exclusive
+            length = (
+                selection.requested_end_frame_exclusive
+                - selection.requested_start_frame
+            )
+            stored_frame_count = (
+                length + selection.sample_every - 1
+            ) // selection.sample_every
+        else:
+            selected = selection.requested_indices[::selection.sample_every]
+            source_frame_count = selection.requested_indices[-1] + 1
+            stored_frame_count = len(selected)
         if source_frame_count > MCP_MAX_GENERATE_SOURCE_FRAMES:
             raise McpResourceLimitError(
                 "表示生成最多处理 "
-                f"{MCP_MAX_GENERATE_SOURCE_FRAMES} 个源帧，当前媒体包含 "
-                f"{source_frame_count} 帧；当前共享 FrameStore 会解码完整视频，"
-                "选择少量帧或设置 sample_every 都不会减少底层解码量"
+                f"{MCP_MAX_GENERATE_SOURCE_FRAMES} 个源解码帧，当前执行计划最多需要 "
+                f"{source_frame_count} 帧；请缩小选择范围的末端"
+            )
+        frame_bytes = info.width * info.height * 3
+        temporary_bytes = stored_frame_count * frame_bytes
+        temporary_limit = MCP_GENERATE_RESOURCES.max_temporary_bytes
+        if temporary_limit is not None and temporary_bytes > temporary_limit:
+            raise McpResourceLimitError(
+                f"选择帧的共享存储预计需要 {temporary_bytes} 字节，超过 MCP 临时空间限制 "
+                f"{temporary_limit} 字节；请减少选中帧数"
             )
 
     def _ensure_frame_budget(
@@ -402,14 +437,13 @@ class PixelProbeService:
         include_image_payload: bool,
     ) -> None:
         source_rgb_bytes = info.width * info.height * 3
-        # 仅限制发给视觉模型的“完整画面”请求。精确像素/区域工具不受像素上限限制；
-        # 带 crop 的画面请求按返回区域估算，绝不静默缩放。
+        # 裁剪只减少返回载荷，完整源帧仍需要解码，不能绕过内存准入。
         working_bytes = source_rgb_bytes * 4
-        if crop is None and working_bytes > MCP_MAX_FRAME_WORKING_BYTES:
+        if working_bytes > MCP_MAX_FRAME_WORKING_BYTES:
             raise McpResourceLimitError(
                 "原始全帧解码工作集约 "
                 f"{working_bytes} 字节，超过 MCP 限制 {MCP_MAX_FRAME_WORKING_BYTES} 字节；"
-                "请提供 crop 分区查看；精确像素或区域统计仍可单独调用"
+                "请使用较小的源媒体；crop 不减少完整解码开销"
             )
         if not include_image_payload:
             return
@@ -445,22 +479,38 @@ class PixelProbeService:
                 "max_image_payload_bytes": self.config.max_image_bytes,
                 "max_text_characters": CHARACTER_LIMIT,
                 "max_standard_source_frames": MCP_MAX_STANDARD_SOURCE_FRAMES,
+                "max_workflow_records": 10000,
                 "max_change_source_frames": MCP_MAX_CHANGE_SOURCE_FRAMES,
                 "max_grid_points": MCP_MAX_GRID_POINTS,
                 "max_generate_source_frames": MCP_MAX_GENERATE_SOURCE_FRAMES,
                 "max_frame_working_bytes": MCP_MAX_FRAME_WORKING_BYTES,
                 "generate_resources": MCP_GENERATE_RESOURCES.model_dump(mode="json"),
+                "total_memory_bytes": self.config.total_memory_bytes,
+                "total_temporary_bytes": self.config.total_temporary_bytes,
+                "worker_memory_monitor": "rss_sampled_20ms",
+                "disk_budget": "shared_pre_write_accounting",
+                "job_control_storage_bytes": 4 * 1024 * 1024,
+                "workers": self.config.workers,
+                "queue_size": self.config.queue_size,
+                "queue_timeout_seconds": self.config.queue_timeout_seconds,
+                "job_retention_days": self.config.job_retention_days,
             },
             "timeout_semantics": (
-                "MCP 在超时后会停止等待结果；已进入底层同步解码的任务无法被安全强杀，"
-                "会继续占用服务器操作槽位直到自行结束"
+                "媒体操作在独立工作进程执行；取消或超时后先协作退出，"
+                "两秒内未结束则终止进程，确认退出后释放资源"
             ),
             "tools": [
                 "pixelprobe_get_capabilities",
                 "pixelprobe_inspect_media", "pixelprobe_get_frame",
                 "pixelprobe_read_pixels", "pixelprobe_analyze_region",
                 "pixelprobe_find_changes", "pixelprobe_generate_representation",
+                "pixelprobe_evidence",
+                "pixelprobe_workflow",
                 "pixelprobe_list_artifacts", "pixelprobe_read_artifact",
+                "pixelprobe_submit_job", "pixelprobe_get_job",
+                "pixelprobe_resume_job",
+                "pixelprobe_maintain_storage",
+                "pixelprobe_cancel_job", "pixelprobe_get_job_result",
             ],
             "guarantees": [
                 "帧号按显示顺序从 0 开始", "坐标基于原始存储像素",
@@ -766,7 +816,7 @@ class PixelProbeService:
         path, identity = self._resolve_media(params.media_path)
         request = RepresentationRequest.model_validate(params.request)
         source_info = core.get_media_info(path)
-        self._ensure_generation_budget(source_info)
+        self._ensure_generation_budget(source_info, request.selection)
         request = request.model_copy(update={
             "source": MediaSource(
                 source_id=request.source.source_id,
@@ -775,7 +825,7 @@ class PixelProbeService:
                 declared_media_type=request.source.declared_media_type,
             ),
             "output": OutputRequest(
-                format="bundle",
+                format="zarr" if request.output.format == "zarr" else "bundle",
                 include_preview=request.output.include_preview,
                 preview_config=request.output.preview_config,
                 metadata_policy=request.output.metadata_policy,
@@ -786,7 +836,27 @@ class PixelProbeService:
         if not name.endswith(".bundle"):
             name += ".bundle"
         output = self.config.prepare_artifact_target(name)
-        result = pixelprobe.generate(request, output_path=output)
+        options = {"cancellation": self.cancellation} if self.cancellation is not None else {}
+        if self.checkpoint_id is not None:
+            from pixelprobe_mcp.config import PathAccessError, _is_reparse_point
+            root = self.config.checkpoint_directory(self.checkpoint_id, create=not self.resume)
+            for name in ("cache", "checkpoint.json"):
+                target = root / name
+                if target.is_symlink() or _is_reparse_point(target):
+                    raise PathAccessError("checkpoint 内容不能是链接或重解析点")
+            cache = root / "cache"
+            if cache.exists():
+                # 缓存内部条目也不能通过链接跳出受管目录。
+                import os
+                for directory, directories, files in os.walk(cache, followlinks=False):
+                    for name in directories + files:
+                        target = Path(directory) / name
+                        if target.is_symlink() or _is_reparse_point(target):
+                            raise PathAccessError("checkpoint 缓存内容不能是链接或重解析点")
+            options.update(cache_root=root / "cache", checkpoint_path=root / "checkpoint.json")
+            if self.resume:
+                options["resume_from"] = root / "checkpoint.json"
+        result = pixelprobe.generate(request, output_path=output, **options)
         if result.bundle is None:
             raise RuntimeError("生成完成但没有返回 Bundle")
         self._verify_media_unchanged(identity)
@@ -801,6 +871,9 @@ class PixelProbeService:
                 "schema_version": result.bundle.manifest.schema_version,
                 "plan_id": result.plan.plan_id,
                 "decode_passes": result.decode_passes,
+                "source_frames_decoded": getattr(result, "source_frames_decoded", None),
+                "frames_converted": getattr(result, "frames_converted", None),
+                "frames_stored": getattr(result, "frames_stored", None),
                 "artifact_count": len(result.bundle.manifest.artifacts),
                 "data_artifact_ids": data_records,
             },
@@ -812,6 +885,61 @@ class PixelProbeService:
                     "artifact_id": data_records[0] if data_records else "",
                 },
             )],
+        ))
+
+    def evidence(self, params: EvidenceInput) -> ToolEnvelope:
+        path, identity = self._resolve_media(params.media_path)
+        name = params.output_name or f"evidence-{uuid.uuid4().hex}.bundle"
+        if not name.endswith(".bundle"):
+            name += ".bundle"
+        output = self.config.prepare_artifact_target(name)
+        result = analyze_evidence(
+            path, output_path=output, jpeg_quality=params.jpeg_quality,
+            block_size=params.block_size,
+            c2pa_trust_anchors_pem=params.c2pa_trust_anchors_pem,
+            cancellation=self.cancellation,
+        )
+        self._verify_media_unchanged(identity)
+        report = dict(result.report)
+        metadata = dict(report.get("metadata") or {})
+        exif = metadata.pop("exif", {})
+        metadata["exif_fields"] = sorted(exif)[:100]
+        report["metadata"] = metadata
+        warnings = ["证据工具只报告可复核线索和适用边界，不自动判定媒体真伪"]
+        if report.get("c2pa", {}).get("status") == "unavailable":
+            reason = report["c2pa"].get("reason", "验证能力不可用")
+            warnings.append(f"C2PA 未完成检查：{reason}")
+        return _ensure_response_size(ToolEnvelope(
+            data=report,
+            warnings=warnings,
+            next_actions=[NextAction(
+                tool="pixelprobe_list_artifacts",
+                reason="查看 ELA、噪声、边缘热力图和结构化证据 Artifact",
+                arguments={"bundle_path": str(result.bundle.root)},
+            )],
+        ))
+
+    def workflow(self, params: WorkflowInput) -> ToolEnvelope:
+        from pixelprobe.workflows import run_workflow
+        path, identity = self._resolve_media(params.media_path)
+        reference, reference_identity = (
+            self._resolve_media(params.reference_path) if params.reference_path else (None, None)
+        )
+        name = params.output_name or f"workflow-{uuid.uuid4().hex}.bundle"
+        if not name.endswith(".bundle"):
+            name += ".bundle"
+        output = self.config.prepare_artifact_target(name)
+        result = run_workflow(path, reference_path=reference, output_path=output,
+                              options=params.options,
+                              cancellation=self.cancellation)
+        self._verify_media_unchanged(identity)
+        if reference_identity is not None:
+            self._verify_media_unchanged(reference_identity)
+        return _ensure_response_size(ToolEnvelope(
+            data=result.report, warnings=result.report["limitations"],
+            next_actions=[NextAction(tool="pixelprobe_list_artifacts",
+                                     reason="分页读取正式数值、差异预览和覆盖范围",
+                                     arguments={"bundle_path": str(result.bundle.root)})],
         ))
 
     def list_artifacts(self, params: BundleListInput) -> ToolEnvelope:

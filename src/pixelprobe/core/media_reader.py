@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Literal
 
 import numpy as np
+from PIL import Image, UnidentifiedImageError
 
 from pixelprobe.core.image_reader import ImageReader, NativeImageMetadata
 from pixelprobe.core.video_reader import VideoReader
@@ -32,10 +33,10 @@ def detect_media_type(path: Path) -> Literal["image", "video"]:
         return "video"
     # 未知扩展名：先按图片试，再按视频试
     try:
-        with ImageReader() as reader:
-            reader.open(path)
+        with Image.open(path):
+            pass
         return "image"
-    except UnsupportedMediaError:
+    except UnidentifiedImageError:
         pass
     try:
         with VideoReader() as reader:
@@ -53,9 +54,13 @@ def get_media_info(path: Path) -> MediaInfo:
     """读取图片或视频的基本信息。"""
     path = ensure_file_exists(Path(path))
     if detect_media_type(path) == "image":
-        with ImageReader() as reader:
-            reader.open(path)
-            return reader.get_info()
+        with Image.open(path) as image:
+            return MediaInfo(
+                path=str(path), media_type="image", width=image.width, height=image.height,
+                channels=len(image.getbands()), color_mode=image.mode,
+                codec=(image.format or "").lower() or None,
+                file_size_bytes=path.stat().st_size,
+            )
     with VideoReader() as reader:
         reader.open(path)
         return reader.get_info()
@@ -65,9 +70,7 @@ def detect_actual_format(path: Path) -> str | None:
     """通过实际解码器识别格式；结果与扩展名无关。"""
     path = ensure_file_exists(Path(path))
     if detect_media_type(path) == "image":
-        with ImageReader() as reader:
-            reader.open(path)
-            return reader.get_info().codec
+        return get_media_info(path).codec
     with VideoReader() as reader:
         reader.open(path)
         return reader.container_format

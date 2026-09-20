@@ -1,38 +1,10 @@
 # 安装 PixelProbe
 
-## 推荐：下载独立 CLI
+## 推荐：Python wheel 或 uvx
 
-独立 CLI 不要求预先安装 Python。打开 [GitHub Releases](https://github.com/2061863797/PixelProbe/releases/latest)，按系统下载：
-
-| 系统 | 文件 |
-| --- | --- |
-| Windows 64 位 | `pixelprobe-windows-x86_64.zip` |
-| Linux 64 位 | `pixelprobe-linux-x86_64.tar.gz` |
-| macOS Apple 芯片 | `pixelprobe-macos-arm64.tar.gz` |
-
-发布压缩包的根目录直接包含可执行文件、README 和许可证。建议解压到独立目录后验证：
-
-```powershell
-# Windows PowerShell
-Expand-Archive .\pixelprobe-windows-x86_64.zip -DestinationPath .\pixelprobe
-Set-Location .\pixelprobe
-.\pixelprobe.exe --version
-.\pixelprobe.exe --help
-```
-
-```bash
-# Linux；macOS 请替换下载文件名
-mkdir pixelprobe
-tar -xzf pixelprobe-linux-x86_64.tar.gz -C pixelprobe
-cd pixelprobe
-chmod +x pixelprobe
-./pixelprobe --version
-./pixelprobe --help
-```
-
-把可执行文件所在目录加入 `PATH` 后，就可以在任意目录使用 `pixelprobe`。下载页同时提供 `SHA256SUMS.txt`；可用 `Get-FileHash -Algorithm SHA256 <文件>`（Windows）或 `sha256sum <文件>`（Linux）核对。
-
-独立 CLI 包含核心图片与视频分析能力。光流、Zarr 存储和 MCP 属于可选 Python 依赖，请使用下一节的 Python 安装方式。
+正式发行只提供 PixelProbe 的 Python wheel 和源码包，不发布包含 PyAV、FFmpeg、
+OpenCV、C2PA 等第三方原生库的独立可执行程序。MCP 用户优先使用
+[uvx 固定版本配置](uvx.md)；普通 CLI 用户安装 Release 中的 wheel。
 
 ## 使用 Python 安装
 
@@ -62,6 +34,12 @@ python -m pip install "pixelprobe[storage] @ git+https://github.com/2061863797/P
 python -m pip install "pixelprobe[mcp] @ git+https://github.com/2061863797/PixelProbe.git@v1.0.3"
 ```
 
+完整安装可一次选择全部 extra：
+
+```bash
+python -m pip install "pixelprobe[mcp,flow,storage,evidence] @ git+https://github.com/2061863797/PixelProbe.git@v1.0.3"
+```
+
 ## 从源码安装（开发者）
 
 ```bash
@@ -71,9 +49,33 @@ python -m pip install -e ".[dev]"
 pytest
 ```
 
+## 仅供本地使用的单文件构建
+
+仓库保留 PyInstaller 配置和本地构建脚本，方便开发者在自己的机器和依赖环境中
+生成私人使用的单文件程序。该流程不产生官方发行物：
+
+```bash
+python -m pip install -e ".[dev,mcp,flow,storage,evidence]" pyinstaller
+python scripts/build_local_standalone.py --output build/local-pixelprobe
+```
+
+输出目录必须尚不存在，脚本不会覆盖已有文件。它会先构建到临时目录，依次运行
+`--version`、`--help`、`doctor --json`，默认再运行冻结程序真实 CLI/MCP 发行测试；
+全部成功后才原子提交输出目录。使用 `--skip-distribution-tests` 可只执行启动冒烟。
+
+输出包含：
+
+- `pixelprobe` 或 `pixelprobe.exe`；
+- `README.md`、`README_EN.md` 和 `LICENSE`；
+- `build-info.json`，记录平台、Python、依赖版本和可执行文件 SHA256；
+- `LOCAL-BUILD.txt`，明确其为本地私有构建。
+
+本地产物会收集当前环境中的原生库。除非已经完成这些具体二进制的许可、通知和
+对应源码交付审查，否则不要公开上传、发布或转发该可执行文件。
+
 ## 更新与卸载
 
-- 独立 CLI：下载新版本并替换原可执行文件；删除该文件即可卸载。
 - Python 安装：用新 wheel 执行 `python -m pip install --upgrade <wheel>`；用 `python -m pip uninstall pixelprobe` 卸载。
+- 本地单文件：用新输出目录重新构建并切换路径；删除该目录即可卸载。
 
-如果安装成功但终端提示找不到 `pixelprobe`，请重新打开终端，并确认 Python 的 Scripts 目录或独立 CLI 所在目录已加入 `PATH`。
+如果安装成功但终端提示找不到 `pixelprobe`，请重新打开终端，并确认 Python 的 Scripts 目录已加入 `PATH`。

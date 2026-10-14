@@ -6,11 +6,20 @@ PixelProbe 除了命令行，也可以在 Python 脚本中读取媒体、生成�
 ```python
 from pixelprobe.core import (
     get_media_info, get_frame, load_frame, load_native_image, inspect_pixels,
-    inspect_native_pixels, analyze_region,
-    extract_timelines, create_xt_slice, create_yt_slice,
-    detect_changes, top_changes,
+    inspect_native_pixels, analyze_region, detect_changes, top_changes,
+)
+import pixelprobe
+from pixelprobe.request_builders import (
+    spacetime_request, timeline_request, reduce_request,
+    temporal_spectrum_request, spatial_spectrum_request, flow_request,
 )
 ```
+
+> 2.0 起，时空切片、时间线、时间域合成、频谱和光流只有一条实现：先用
+> `pixelprobe.request_builders` 构造请求，再交给 `pixelprobe.generate` 执行。
+> 1.x 中直接解码的 `extract_timelines`、`create_xt_slice`、`create_yt_slice`、
+> `temporal_reduce`、`temporal_spectrum`、`spatial_spectrum`、`compute_flow`
+> 已移除，数值结果与这些函数一致（由 `scripts/capture_golden.py` 基线保证）。
 
 安装请使用 README 中的仓库克隆命令；若需可复现的直接安装，请固定到发布标签或提交哈希。
 
@@ -80,22 +89,6 @@ alpha_representation、sample_semantics`。明确识别的 PNG/BMP/GIF/PNM 常�
 mean_lab、mean_luminance、std_luminance`。注意 `mean_hsv.h` 为算术平均
 （未做圆周平均）。
 
-### extract_timelines(path, points=None, pixel_ids=None, grid=None, step=None, block_size=None, start_frame=None, end_frame=None, start=None, end=None, sample_every=1, sort="selection", progress=None) -> TimelineResult
-
-多像素时间线，**视频只解码一次**。`points` 与 `grid=(x,y,w,h)` 二选一；
-`block_size=N` 为像素块模式（每个采样位置取 N×N 块平均，边界裁剪）。
-`sort`: `selection|pixel-id|yx|xy`。`progress` 为 `callable(done, total)`。
-
-返回 `TimelineResult`：`matrix[K,T,3] uint8`、`points: list[PixelCoordinate]`、
-`frames: list[int]`、`times: list[float]`、`frame_range`、`sample_type`、
-`block_size`、`sort`、`width`、`height`。
-
-### create_xt_slice(path, y, ...) / create_yt_slice(path, x, ...) -> SpacetimeResult
-
-时空切片，范围参数同上。返回 `SpacetimeResult`：`array[T, 空间, 3]`
-（xt 空间=宽，yt 空间=高；第 0 行为范围内最早帧）、`slice_type`、
-`fixed_coordinate`、`frames`、`times`、`frame_range`。
-
 ### detect_changes(path, point=None, rect=None, grid=None, step=None, ..., progress=None) -> ChangesResult
 
 相邻（采样）帧变化量，`point/rect/grid` 最多指定一个，都不给时为
@@ -115,22 +108,6 @@ mean_lab、mean_luminance、std_luminance`。注意 `mean_hsv.h` 为算术平均
 `start_frame`（变化前最后一帧）、`end_frame`、`start_time/end_time`、
 `peak_frame/peak_time/peak_score/peak_normalized`、`mean_normalized`、
 `record_count`。
-
-### temporal_reduce(path, op="std", rect=None, ..., p_low=1.0, p_high=99.0, destripe=False, smooth=0, max_median_bytes=1GB, progress=None) -> TemporalReduceResult
-
-时间域合成：把帧序列折叠为一张逐像素统计图，**视频只解码一次**。
-`op`: `mean|median|min|max|std|diff`（diff=相邻采样帧绝对差均值，即运动
-能量）。除 median 外全部流式聚合（内存 O(H*W)）；median 需持有全部采样帧，
-超过 `max_median_bytes`（估算含工作拷贝）抛 `InvalidRangeError`。
-`destripe` 做双向去趋势（抑制条纹伪影；显示统计量变为零中心残差：
-0=符合行列趋势，负=更静止），`smooth=N` 做 N×N 邻域均值（N>=2 生效）
-——两者只影响可视化图像，`stat_*` 始终是原始统计量摘要。
-返回 `TemporalReduceResult`：`image[H,W,3] uint8`（按 `p_low/p_high`
-百分位拉伸）、`stat_min/stat_max/stat_mean`（拉伸前每通道摘要）、
-`stretch_low_value/stretch_high_value` 与 `stretch_domain`（端点所在
-数值空间：`raw` / `detrended_residual` / `smoothed`，可用 `+` 组合；
-destripe 启用后端点为残差空间数值，可为负）、`frame_range`、
-`frames_analyzed`。
 
 ### compare_frames(path, frame_a|time_a, frame_b|time_b, rect=None, threshold=10, colormap="fire") -> CompareResult
 
@@ -157,36 +134,70 @@ destripe 启用后端点为残差空间数值，可为负）、`frame_range`、
 `records`、`events`、`event_threshold`、`anomalies`（最多 200 条，
 超出置 `anomalies_truncated`）、`effective_sample_every`、`frames_analyzed`。
 
-### temporal_spectrum(path, source="luma", rect=None, point=None, ..., progress=None) -> TemporalSpectrumResult
+## 经引擎的表示（request_builders + generate）
+
+下列构造函数只校验参数并返回 `RepresentationRequest`，真正解码在
+`pixelprobe.generate()` 中进行；同一媒体的多个请求可放进一个元组，共享一次解码。
+帧范围参数统一为 `start_frame/end_frame`（闭区间）或 `start/end`（秒）二选一，
+外加 `sample_every`。
+
+```python
+request = reduce_request("input.mp4", operation="std", rect=None)
+data, preview = pixelprobe.generate(request).request_tensors[0]
+values = data.data.materialize()      # 正式数值（float64）
+image = preview.data.materialize()    # 由数值派生的预览（uint8）
+```
+
+### spacetime_request(path, "xt"|"yt", fixed_coordinate, ...)
+
+时空切片：固定一行（xt）或一列（yt）贯穿时间。输出 Tensor 轴为
+`[time, x|y, channel]`，第 0 行为范围内最早帧；`attributes` 中有
+`presentation_indices` 与 `timeline_timestamps_seconds`。
+
+### timeline_request(path, points=None, pixel_ids=None, grid=None, step=None, block_size=None, ..., sort="selection")
+
+多像素时间线，**视频只解码一次**。`points` 与 `grid=(x,y,w,h)` 二选一；
+`block_size=N` 为像素块模式（每个采样位置取 N×N 块平均，边界裁剪）。
+`sort`: `selection|pixel-id|yx|xy`。返回 `(请求, 排序后的点, 宽, 高)`；
+输出 Tensor 轴为 `[time, path, channel]`，`timeline_matrix(tensor)` 转为 `[K, T, 3]`。
+
+### reduce_request(path, operation, rect, ..., p_low=1.0, p_high=99.0, destripe=False, smooth=0)
+
+时间域合成：把帧序列折叠为一张逐像素统计图，**视频只解码一次**。
+`operation`: `mean|median|min|max|std|diff`（diff=相邻采样帧绝对差均值，即运动
+能量）。输出 `(Data, Preview)`：Data 为原始统计量（float64）；Preview 按
+`p_low/p_high` 百分位拉伸。`destripe` 做双向去趋势（抑制条纹伪影；显示统计量
+变为零中心残差：0=符合行列趋势，负=更静止），`smooth=N` 做 N×N 邻域均值
+（N>=2 生效）——两者只影响 Preview。Preview 的 `attributes` 记录
+`stretch_low_value/stretch_high_value` 与 `stretch_domain`（端点所在数值空间：
+`raw` / `detrended_residual` / `smoothed`，可用 `+` 组合）。
+
+### temporal_spectrum_request(path, source, rect, point, ...)
 
 时间域 FFT 周期检测。`source`: `luma`（区域平均亮度序列）或 `change`
-（相邻帧变化量序列）；`rect` 与 `point` 最多给一个。采样率与 VFR 判定
-基于解码得到的真实帧时间戳（帧间隔波动 >10% 置 `vfr_warning`）。
-至少需要 8 个采样值。返回：`dominant_freq_hz/period_seconds/period_frames`
-（序列平坦时为 None）、`peak_ratio`、`top_peaks`（幅度并列偏向低频；
-偶数样本时 Nyquist bin 幅度已折半以与其他 bin 可比）、
-`spectrum_image`、`effective_fps`、`nyquist_hz`（可检测频率上限；
-`sample_every > 1` 时更高频率的成分会混叠或漏采）、`samples`。
+（相邻帧变化量序列）；`rect` 与 `point` 最多给一个；至少需要 8 个采样值。
+Data 为复数频谱（单位 hertz）。VFR 输入按估计处理，精度标为 `estimated` 并置
+`requires_explicit_resampling`。主频、周期、`top_peaks`（幅度并列偏向低频；
+偶数样本时 Nyquist bin 幅度已折半）与 `nyquist_hz`（`sample_every > 1` 时更高
+频率的成分会混叠或漏采）记录在 Data 的 `attributes` 中。
 
-### spatial_spectrum(path, frame=None, time=None, rect=None) -> SpatialSpectrumResult
+### spatial_spectrum_request(path, frame, time, rect)
 
-单帧二维 FFT，检测条纹/摩尔纹/周期纹理（区域至少 8×8）。返回中心化
-log 幅度谱图与 `peaks`（屏蔽中心低频、按共轭对称去重）：每项含
-`u/v`（相对中心的频率坐标）、`period_px`（条纹周期）、`angle_deg`
-（频率向量方向，条纹走向与其垂直）、`magnitude`。
+单帧二维 FFT，检测条纹/摩尔纹/周期纹理（区域至少 8×8）。Data 为中心化复数
+频谱（单位 cycle/pixel）；`peaks` 屏蔽中心低频、按共轭对称去重，每项含
+`u/v`、`period_px`（条纹周期）、`angle_deg`（频率向量方向，条纹走向与其垂直）、
+`magnitude`。
 
-### compute_flow(path, frame_a|time_a, frame_b|time_b, ..., accumulate=False, compensate_global=False, mag_threshold=1.0, progress=None) -> FlowResult
+### flow_request(path, frame_a|time_a, frame_b|time_b, ..., accumulate=False, compensate_global=False, mag_threshold=1.0)
 
 Farneback 稠密光流。**需要可选依赖**：`pip install "pixelprobe[flow]"`，
-未安装时抛 `DependencyMissingError`（模块可正常导入，仅调用时报错）。
-两帧模式与累积模式（`accumulate=True`，改用帧范围参数，逐对光流相加、
-单遍解码）二选一。`compensate_global=True` 时从稠密流网格采样估计全局
-仿射（平移/旋转/缩放）并逐像素扣除。返回 `FlowResult`：
-`flow_image`（HSV 方向着色）、`magnitude_image`（幅度伪彩）、
-`mean/max/p95_magnitude`、`dominant_angle_deg`（0°=向右，y 向下为正；
-运动区域内幅度加权方向，无运动或方向相互抵消时为 None）、
-`global_motion`（dx/dy/rotation_deg/scale/matrix）、`motion_bbox`、
-`frames_analyzed`。
+未安装时执行阶段抛 `DependencyMissingError`。两帧模式与累积模式
+（`accumulate=True`，改用帧范围参数，逐对光流相加、单遍解码）二选一。
+`compensate_global=True` 时估计全局仿射（平移/旋转/缩放）并逐像素扣除。
+输出依次为：原始流场、补偿后流场（仅 `compensate_global=True` 时存在）、幅度、
+方向着色预览、幅度预览，因此幅度 Tensor 总是倒数第三个；其 `attributes` 记录 `mean/max/p95_magnitude`、`dominant_angle_deg`
+（0°=向右，y 向下为正；无运动或方向相互抵消时为 None）、`global_motion`
+（dx/dy/rotation_deg/scale/matrix）、`motion_bbox`、`frames_analyzed`。
 
 ## VideoReader（底层接口）
 

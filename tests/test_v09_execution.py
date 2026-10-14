@@ -7,8 +7,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from conftest import RED_Y
-from pixelprobe import core
+from conftest import RED_Y, engine_xt
 from pixelprobe.engine import (
     CacheKeyInput,
     CheckpointRecord,
@@ -30,7 +29,7 @@ from pixelprobe.operators.base import HaloSpec, ResourcePolicy
 def test_chunks_with_halo_merge_without_duplicates_or_gaps(
     test_video: Path, tmp_path: Path,
 ) -> None:
-    tensor = core.create_xt_slice(test_video, RED_Y).tensor
+    tensor = engine_xt(test_video, RED_Y)
     chunks = tuple(iter_tensor_chunks(
         tensor,
         (2, 11, 3),
@@ -150,7 +149,7 @@ def test_cache_invalidates_and_quarantines_corruption(tmp_path: Path) -> None:
 def test_cache_restores_complete_tensor_metadata(
     test_video: Path, tmp_path: Path,
 ) -> None:
-    original = core.create_xt_slice(test_video, RED_Y).tensor
+    original = engine_xt(test_video, RED_Y)
     cache = LocalArrayCache(tmp_path / "tensor-cache")
     cached = cache.put_tensor(_cache_key(), original)
     cached.data.close()  # type: ignore[attr-defined]

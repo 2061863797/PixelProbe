@@ -1,52 +1,41 @@
-"""将 1.0 前 CLI 参数精确转换为统一请求模型。"""
+"""把 CLI/MCP 的分析参数转换为统一请求 RepresentationRequest。
+
+帧范围沿用 CLI 的闭区间 `[start,end]` 与"目标时间之前最后一帧"语义，
+在这里一次性转换为统一模型的半开区间 `[start,end+1)`。坐标与范围错误在
+构造请求时就报出，真正解码只在 Executor 中发生。
+"""
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from pixelprobe.core.frame_selector import resolve_range
+import numpy as np
+
+from pixelprobe.core.frame_selector import FrameRange, resolve_range
+from pixelprobe.core.media_reader import detect_media_type
+from pixelprobe.core.timeline_extractor import build_points, sort_points
 from pixelprobe.core.video_reader import VideoReader
-from pixelprobe.domain.media import MediaSource
-from pixelprobe.domain.time import TemporalSelection
 from pixelprobe.domain.geometry import PathGeometry, PointGeometry
+from pixelprobe.domain.media import MediaSource
+from pixelprobe.domain.tensor import TensorField
+from pixelprobe.domain.time import TemporalSelection
 from pixelprobe.engine.request import (
     FeatureRequest,
     OutputRequest,
     ReductionRequest,
     RepresentationRequest,
 )
-from pixelprobe.core.timeline_extractor import build_points, sort_points
-from pixelprobe.utils.coordinates import validate_point
-from pixelprobe.utils.coordinates import validate_rect
 from pixelprobe.models.errors import InvalidRangeError
-from pixelprobe.core.media_reader import detect_media_type
+from pixelprobe.utils.coordinates import validate_point, validate_rect
 
 
-def legacy_media_source(path: Path) -> MediaSource:
+def media_source(path: Path) -> MediaSource:
     resolved = Path(path).resolve(strict=True)
     return MediaSource(source_id="source_main", kind="file", uri=str(resolved))
 
 
-def legacy_temporal_selection(
-    path: Path,
-    *,
-    start_frame: int | None = None,
-    end_frame: int | None = None,
-    start: float | None = None,
-    end: float | None = None,
-    sample_every: int = 1,
-) -> TemporalSelection:
-    """保留旧 CLI 的闭区间及“目标时间之前最后一帧”语义。"""
-    with VideoReader() as reader:
-        reader.open(Path(path))
-        frame_range = resolve_range(
-            reader,
-            start_frame,
-            end_frame,
-            start,
-            end,
-            sample_every,
-        )
+def interval_selection(frame_range: FrameRange) -> TemporalSelection:
+    """闭区间帧范围转为统一模型的半开区间，不改变采样帧。"""
     return TemporalSelection(
         mode="frame_interval",
         requested_start_frame=frame_range.start,
@@ -55,7 +44,7 @@ def legacy_temporal_selection(
     )
 
 
-def legacy_spacetime_request(
+def spacetime_request(
     path: Path,
     kind: str,
     fixed_coordinate: int,
@@ -66,7 +55,7 @@ def legacy_spacetime_request(
     end: float | None = None,
     sample_every: int = 1,
 ) -> RepresentationRequest:
-    """构造 X-T/Y-T 请求，同时保留旧坐标错误与范围解析语义。"""
+    """构造 X-T/Y-T 请求：固定一行（xt）或一列（yt）贯穿时间。"""
     with VideoReader() as reader:
         reader.open(Path(path))
         info = reader.get_info()
@@ -87,15 +76,9 @@ def legacy_spacetime_request(
         frame_range = resolve_range(
             reader, start_frame, end_frame, start, end, sample_every,
         )
-    selection = TemporalSelection(
-        mode="frame_interval",
-        requested_start_frame=frame_range.start,
-        requested_end_frame_exclusive=frame_range.end + 1,
-        sample_every=frame_range.sample_every,
-    )
     return RepresentationRequest(
-        source=legacy_media_source(path),
-        selection=selection,
+        source=media_source(path),
+        selection=interval_selection(frame_range),
         representation=kind,  # type: ignore[arg-type]
         geometry=PathGeometry(
             type="line", coordinate_space_id="storage_pixels", points=points,
@@ -104,7 +87,7 @@ def legacy_spacetime_request(
     )
 
 
-def legacy_timeline_request(
+def timeline_request(
     path: Path,
     *,
     points: list[tuple[int, int]] | None = None,
@@ -119,7 +102,7 @@ def legacy_timeline_request(
     sample_every: int = 1,
     sort: str = "selection",
 ) -> tuple[RepresentationRequest, tuple[tuple[int, int], ...], int, int]:
-    """构造离散点时间线请求，并返回旧输出需要的点序与尺寸。"""
+    """构造离散点时间线请求，并返回输出需要的点序与画面尺寸。"""
     with VideoReader() as reader:
         reader.open(Path(path))
         info = reader.get_info()
@@ -139,12 +122,6 @@ def legacy_timeline_request(
         frame_range = resolve_range(
             reader, start_frame, end_frame, start, end, sample_every,
         )
-    selection = TemporalSelection(
-        mode="frame_interval",
-        requested_start_frame=frame_range.start,
-        requested_end_frame_exclusive=frame_range.end + 1,
-        sample_every=frame_range.sample_every,
-    )
     geometry = (
         PointGeometry(
             coordinate_space_id="storage_pixels",
@@ -160,8 +137,8 @@ def legacy_timeline_request(
     )
     return (
         RepresentationRequest(
-            source=legacy_media_source(path),
-            selection=selection,
+            source=media_source(path),
+            selection=interval_selection(frame_range),
             representation="points_t",
             geometry=geometry,
             feature=FeatureRequest(
@@ -179,7 +156,7 @@ def legacy_timeline_request(
     )
 
 
-def legacy_reduce_request(
+def reduce_request(
     path: Path,
     *,
     operation: str,
@@ -218,13 +195,8 @@ def legacy_reduce_request(
             f"op={operation} 至少需要两帧，请扩大帧范围或减小 sample_every"
         )
     return RepresentationRequest(
-        source=legacy_media_source(path),
-        selection=TemporalSelection(
-            mode="frame_interval",
-            requested_start_frame=frame_range.start,
-            requested_end_frame_exclusive=frame_range.end + 1,
-            sample_every=frame_range.sample_every,
-        ),
+        source=media_source(path),
+        selection=interval_selection(frame_range),
         representation="frames",
         reduction=ReductionRequest(
             name=operation,
@@ -245,7 +217,7 @@ def legacy_reduce_request(
     )
 
 
-def legacy_flow_request(
+def flow_request(
     path: Path,
     *,
     frame_a: int | None = None,
@@ -277,12 +249,7 @@ def legacy_flow_request(
                 raise InvalidRangeError(
                     "累积光流至少需要两帧，请扩大帧范围或减小 sample_every"
                 )
-            selection = TemporalSelection(
-                mode="frame_interval",
-                requested_start_frame=frame_range.start,
-                requested_end_frame_exclusive=frame_range.end + 1,
-                sample_every=frame_range.sample_every,
-            )
+            selection = interval_selection(frame_range)
             pair = None
         else:
             if any(value is not None for value in (start_frame, end_frame, start, end)):
@@ -304,7 +271,7 @@ def legacy_flow_request(
             selected = tuple(sorted(set(pair)))
             selection = TemporalSelection(mode="indices", requested_indices=selected)
     return RepresentationRequest(
-        source=legacy_media_source(path),
+        source=media_source(path),
         selection=selection,
         representation="feature_t",
         feature=FeatureRequest(
@@ -320,7 +287,7 @@ def legacy_flow_request(
     )
 
 
-def legacy_temporal_spectrum_request(
+def temporal_spectrum_request(
     path: Path,
     *,
     source: str,
@@ -353,13 +320,8 @@ def legacy_temporal_spectrum_request(
             "请扩大帧范围或减小 sample_every"
         )
     return RepresentationRequest(
-        source=legacy_media_source(path),
-        selection=TemporalSelection(
-            mode="frame_interval",
-            requested_start_frame=frame_range.start,
-            requested_end_frame_exclusive=frame_range.end + 1,
-            sample_every=frame_range.sample_every,
-        ),
+        source=media_source(path),
+        selection=interval_selection(frame_range),
         representation="feature_t",
         feature=FeatureRequest(
             name="temporal_fft",
@@ -375,7 +337,7 @@ def legacy_temporal_spectrum_request(
     )
 
 
-def legacy_spatial_spectrum_request(
+def spatial_spectrum_request(
     path: Path,
     *,
     frame: int | None,
@@ -398,7 +360,7 @@ def legacy_spatial_spectrum_request(
             )
             reader.validate_frame_index(index)
     return RepresentationRequest(
-        source=legacy_media_source(path),
+        source=media_source(path),
         selection=TemporalSelection(mode="indices", requested_indices=(index,)),
         representation="feature_t",
         feature=FeatureRequest(
@@ -407,3 +369,10 @@ def legacy_spatial_spectrum_request(
         ),
         output=OutputRequest(format="memory", include_preview=True),
     )
+
+
+def timeline_matrix(tensor: TensorField) -> np.ndarray:
+    """规范 `[time,path,channel]` 转为时间线输出使用的 `[path,time,channel]`。"""
+    if [axis.name for axis in tensor.axes] != ["time", "path", "channel"]:
+        raise ValueError("timeline Tensor 轴必须为 time,path,channel")
+    return np.transpose(tensor.data.materialize(), (1, 0, 2))

@@ -15,11 +15,24 @@ from conftest import (
     MOTION_Y,
     run_cli,
 )
+from types import SimpleNamespace
+
+import pixelprobe
 from pixelprobe.models.errors import DependencyMissingError, InvalidRangeError
+from pixelprobe.request_builders import flow_request
 
 cv2 = pytest.importorskip("cv2")
 
-from pixelprobe.core import compute_flow  # noqa: E402
+
+def compute_flow(path: Path, **options) -> SimpleNamespace:
+    """经统一引擎计算光流，返回幅度 Tensor 上记录的统计量与两张预览图。"""
+    tensors = pixelprobe.generate(flow_request(path, **options)).request_tensors[0]
+    flow_preview, magnitude_preview = tensors[-2:]
+    return SimpleNamespace(
+        **tensors[-3].attributes,
+        flow_image=flow_preview.data.materialize(),
+        magnitude_image=magnitude_preview.data.materialize(),
+    )
 
 
 def test_rightward_motion_direction(motion_video: Path) -> None:
@@ -78,7 +91,7 @@ def test_flow_images_shapes(motion_video: Path) -> None:
 
 def test_dependency_missing_error(motion_video: Path, monkeypatch) -> None:
     """无 cv2 环境的行为：工具应返回 DEPENDENCY_MISSING 且提示安装 extra。"""
-    import pixelprobe.core.optical_flow as of
+    import pixelprobe.engine.executor as executor_module
 
     def missing():
         raise DependencyMissingError(
@@ -86,9 +99,9 @@ def test_dependency_missing_error(motion_video: Path, monkeypatch) -> None:
             hint='pip install "pixelprobe[flow]"',
         )
 
-    monkeypatch.setattr(of, "require_cv2", missing)
+    monkeypatch.setattr(executor_module, "require_cv2", missing)
     with pytest.raises(DependencyMissingError) as excinfo:
-        of.compute_flow(motion_video, frame_a=0, frame_b=1)
+        compute_flow(motion_video, frame_a=0, frame_b=1)
     assert excinfo.value.code == "DEPENDENCY_MISSING"
     assert "pixelprobe[flow]" in (excinfo.value.hint or "")
 

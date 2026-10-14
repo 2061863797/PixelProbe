@@ -14,7 +14,11 @@ from conftest import (
     run_json,
     run_json_error,
 )
-from pixelprobe.core import create_yt_slice
+from conftest import engine_slice
+
+
+def create_yt_slice(video: Path, x: int, **range_options):
+    return engine_slice(video, "yt", x, **range_options)
 
 
 def test_yt_matches_source_video(test_video: Path) -> None:

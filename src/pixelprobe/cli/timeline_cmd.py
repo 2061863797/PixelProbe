@@ -23,8 +23,7 @@ from pixelprobe.cli import (
 )
 from pixelprobe.models.timeline import TimelineMetadata
 from pixelprobe.models.pixel import PixelCoordinate
-from pixelprobe.compat.legacy_requests import legacy_timeline_request
-from pixelprobe.compat.legacy_results import timeline_matrix
+from pixelprobe.request_builders import timeline_matrix, timeline_request
 from pixelprobe.core.frame_selector import FrameRange
 from pixelprobe.core.timeline_extractor import TimelineResult
 from pixelprobe.output import csv_writer, json_writer
@@ -104,7 +103,7 @@ def timeline(
         ensure_scale(scale, "--scale")
         points = [parse_point(p) for p in (point or [])]
         grid_rect = parse_rect(grid) if grid else None
-        request, ordered_points, width, height = legacy_timeline_request(
+        request, ordered_points, width, height = timeline_request(
             media,
             points=points or None,
             pixel_ids=pixel_id or None,

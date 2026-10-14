@@ -16,8 +16,41 @@ from conftest import (
     run_json,
     run_json_error,
 )
-from pixelprobe.core import temporal_reduce
+from types import SimpleNamespace
+
+import pixelprobe
+from pixelprobe.domain.errors import MaterializationLimitExceededError
 from pixelprobe.models.errors import InvalidRangeError
+from pixelprobe.operators.base import ResourcePolicy
+from pixelprobe.request_builders import reduce_request
+
+
+def temporal_reduce(
+    path: Path, op: str = "std", rect=None, max_memory_bytes: int | None = None, **options,
+) -> SimpleNamespace:
+    """经引擎做时间域合成，按 CLI 的方式汇总统计量与预览拉伸端点。"""
+    request = reduce_request(path, operation=op, rect=rect, **options)
+    if max_memory_bytes is not None:
+        request = request.model_copy(
+            update={"resources": ResourcePolicy(max_memory_bytes=max_memory_bytes)},
+        )
+    data, preview = pixelprobe.generate(request).request_tensors[0]
+    statistic = data.data.materialize()
+
+    def summary(values) -> list[float]:
+        return [round(float(value), 4) for value in values]
+
+    return SimpleNamespace(
+        image=preview.data.materialize(),
+        stat_min=summary(statistic.min(axis=(0, 1))),
+        stat_max=summary(statistic.max(axis=(0, 1))),
+        stat_mean=summary(statistic.mean(axis=(0, 1))),
+        stretch_low_value=preview.attributes["stretch_low_value"],
+        stretch_high_value=preview.attributes["stretch_high_value"],
+        stretch_domain=preview.attributes["stretch_domain"],
+        frames_analyzed=len(data.attributes["presentation_indices"]),
+        destripe=options.get("destripe", False),
+    )
 
 
 def test_std_reveals_hidden_quiet_region(noise_video: Path) -> None:
@@ -86,9 +119,9 @@ def test_diff_counts_pairs(test_video: Path) -> None:
 
 
 def test_median_memory_guard(test_video: Path) -> None:
-    with pytest.raises(InvalidRangeError) as excinfo:
-        temporal_reduce(test_video, op="median", max_median_bytes=1)
-    assert "sample_every" in (excinfo.value.hint or "")
+    # median 需要持有全部采样帧；超出请求的内存预算时在计算前拒绝
+    with pytest.raises(MaterializationLimitExceededError, match="内存预算"):
+        temporal_reduce(test_video, op="median", max_memory_bytes=4096)
 
 
 def test_invalid_op_and_percentiles(test_video: Path) -> None:

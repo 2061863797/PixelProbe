@@ -1,26 +1,19 @@
-"""像素时间线提取。
+"""像素时间线的选点、排序与结果结构。
 
-核心约束：无论选择多少个点，视频只解码一次；
-每帧用 NumPy 花式索引一次性取出所有点。
+采样计算统一经引擎完成（见 `pixelprobe.request_builders.timeline_request`），
+无论选择多少个点，视频只解码一次。
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Callable, Literal
+from typing import Literal
 
 import numpy as np
 
-from pixelprobe.compat.legacy_results import timeline_matrix
-from pixelprobe.core.frame_selector import FrameRange, resolve_range
-from pixelprobe.core.video_reader import VideoReader
+from pixelprobe.core.frame_selector import FrameRange
 from pixelprobe.domain.tensor import TensorField
 from pixelprobe.models.errors import InvalidRangeError
-from pixelprobe.operators.sampling import (
-    SamplingPlan,
-    execute_sampling,
-)
 from pixelprobe.models.pixel import PixelCoordinate
 from pixelprobe.utils.coordinates import (
     grid_points,
@@ -29,8 +22,6 @@ from pixelprobe.utils.coordinates import (
     validate_rect,
     xy_from_pixel_id,
 )
-
-ProgressCallback = Callable[[int, int], None]
 
 SortMode = Literal["selection", "pixel-id", "yx", "xy"]
 
@@ -103,67 +94,3 @@ def sort_points(
     if sort == "xy":
         return sorted(pts, key=lambda p: (p[0], p[1]))
     raise InvalidRangeError(f"未知排序方式：{sort}")
-
-
-def extract_timelines(
-    path: Path,
-    points: list[tuple[int, int]] | None = None,
-    pixel_ids: list[int] | None = None,
-    grid: tuple[int, int, int, int] | None = None,
-    step: int | None = None,
-    block_size: int | None = None,
-    start_frame: int | None = None,
-    end_frame: int | None = None,
-    start: float | None = None,
-    end: float | None = None,
-    sample_every: int = 1,
-    sort: SortMode = "selection",
-    progress: ProgressCallback | None = None,
-) -> TimelineResult:
-    """提取多像素时间线，返回 [K, T, 3] 矩阵。视频只解码一遍。"""
-    with VideoReader() as reader:
-        reader.open(Path(path))
-        info = reader.get_info()
-        width, height = info.width, info.height
-
-        pts = build_points(
-            width, height,
-            points=points, pixel_ids=pixel_ids,
-            grid=grid, step=step, block_size=block_size,
-        )
-        pts = sort_points(pts, sort, width)
-        frame_range = resolve_range(
-            reader, start_frame, end_frame, start, end, sample_every
-        )
-
-        plan = SamplingPlan(
-            kind="points_t",
-            frame_range=frame_range,
-            width=width,
-            height=height,
-            points=tuple((float(x), float(y)) for x, y in pts),
-            block_size=block_size,
-        )
-        output = execute_sampling(reader, plan, progress)
-        matrix = timeline_matrix(output.tensor)
-        if block_size is not None:
-            # 旧 CLI 历史上把块均值四舍五入为 uint8；新 Tensor 保留 float64。
-            matrix = np.round(matrix).astype(np.uint8)
-
-        coords = [
-            PixelCoordinate(x=x, y=y, pixel_id=pixel_id_from_xy(x, y, width))
-            for x, y in pts
-        ]
-        return TimelineResult(
-            matrix=matrix,
-            points=coords,
-            frames=list(output.frames),
-            times=list(output.times),
-            frame_range=frame_range,
-            sample_type="point" if block_size is None else "block_mean",
-            block_size=block_size,
-            sort=sort,
-            width=width,
-            height=height,
-            tensor=output.tensor,
-        )

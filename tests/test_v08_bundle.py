@@ -13,8 +13,7 @@ import pytest
 from PIL import Image
 from pydantic import ValidationError
 
-from conftest import RED_Y
-from pixelprobe import core
+from conftest import RED_Y, engine_reduce, engine_xt
 from pixelprobe.artifacts import BundleManifest, BundleReader, BundleWriter, save_zarr
 from pixelprobe.artifacts.array_io import save_array_handle_npy
 from pixelprobe.artifacts.zarr_io import save_array_handle_zarr
@@ -109,7 +108,7 @@ def test_representation_request_is_typed_and_geometry_aware() -> None:
 def test_bundle_round_trip_preserves_tensor_exactly(
     test_video: Path, tmp_path: Path,
 ) -> None:
-    source = core.create_xt_slice(test_video, RED_Y).tensor
+    source = engine_xt(test_video, RED_Y)
     target = tmp_path / "result.bundle"
     bundle = BundleWriter().write(target, (source,))
     assert bundle.manifest.schema_version == "0.1.0"
@@ -138,7 +137,7 @@ def test_bundle_round_trip_preserves_tensor_exactly(
 def test_bundle_round_trip_preserves_broadcastable_validity_mask(
     test_video: Path, tmp_path: Path,
 ) -> None:
-    source = core.create_xt_slice(test_video, RED_Y).tensor
+    source = engine_xt(test_video, RED_Y)
     validity_values = np.zeros((source.data.shape[0], 1, 1), dtype=bool)
     validity_values[::2] = True
     tensor = replace(
@@ -177,7 +176,7 @@ def test_bundle_round_trip_preserves_broadcastable_validity_mask(
 def test_bundle_reader_rejects_tampered_validity_schema(
     test_video: Path, tmp_path: Path, field: str, value: object,
 ) -> None:
-    source = core.create_xt_slice(test_video, RED_Y).tensor
+    source = engine_xt(test_video, RED_Y)
     tensor = replace(
         source,
         validity=MemoryArrayHandle(np.ones((source.data.shape[0], 1, 1), dtype=bool)),
@@ -205,7 +204,7 @@ def test_bundle_reader_rejects_tampered_validity_schema(
 def test_bundle_npy_writer_streams_array_handle_without_materialize(
     test_video: Path, tmp_path: Path,
 ) -> None:
-    source = core.create_xt_slice(test_video, RED_Y).tensor
+    source = engine_xt(test_video, RED_Y)
     streamed = replace(source, data=_NoMaterializeHandle(source.data))
     bundle = BundleWriter().write(tmp_path / "streamed.bundle", (streamed,))
     data_record = next(
@@ -223,7 +222,7 @@ def test_bundle_npy_writer_streams_array_handle_without_materialize(
 def test_bundle_persists_numeric_npy_as_explicit_little_endian(
     test_video: Path, tmp_path: Path,
 ) -> None:
-    source = core.create_xt_slice(test_video, RED_Y).tensor
+    source = engine_xt(test_video, RED_Y)
     values = source.data.materialize().astype(">u2")
     big_endian = replace(source, data=MemoryArrayHandle(values))
     bundle = BundleWriter().write(tmp_path / "endian.bundle", (big_endian,))
@@ -240,10 +239,10 @@ def test_bundle_persists_numeric_npy_as_explicit_little_endian(
 def test_bundle_separates_data_and_preview(
     test_video: Path, tmp_path: Path,
 ) -> None:
-    result = core.temporal_reduce(test_video, op="mean")
+    data_tensor, preview_tensor = engine_reduce(test_video, "mean")
     target = tmp_path / "preview.bundle"
     bundle = BundleWriter().write(
-        target, (result.data_tensor, result.preview_tensor)
+        target, (data_tensor, preview_tensor)
     )
     data = next(item for item in bundle.manifest.artifacts if item.kind == "data")
     preview = next(
@@ -256,7 +255,7 @@ def test_bundle_separates_data_and_preview(
     preview_path = target.joinpath(*preview.storage.files[0].uri.split("/"))
     with Image.open(preview_path) as image:
         restored = np.asarray(image)
-    assert np.array_equal(restored, result.preview_tensor.data.materialize())
+    assert np.array_equal(restored, preview_tensor.data.materialize())
     provenance_record = bundle.artifact(bundle.manifest.provenance_artifact_id)
     provenance_path = target.joinpath(
         *provenance_record.storage.files[0].uri.split("/")
@@ -272,7 +271,7 @@ def test_bundle_separates_data_and_preview(
 def test_bundle_full_validation_detects_tampering(
     test_video: Path, tmp_path: Path,
 ) -> None:
-    source = core.create_xt_slice(test_video, RED_Y).tensor
+    source = engine_xt(test_video, RED_Y)
     target = tmp_path / "tampered.bundle"
     bundle = BundleWriter().write(target, (source,))
     data_record = next(item for item in bundle.manifest.artifacts if item.kind == "data")
@@ -287,7 +286,7 @@ def test_bundle_reader_rejects_path_traversal(
     test_video: Path, tmp_path: Path,
 ) -> None:
     target = tmp_path / "unsafe.bundle"
-    BundleWriter().write(target, (core.create_xt_slice(test_video, RED_Y).tensor,))
+    BundleWriter().write(target, (engine_xt(test_video, RED_Y),))
     manifest_path = target / "manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     data = next(item for item in manifest["artifacts"] if item["kind"] == "data")
@@ -301,7 +300,7 @@ def test_bundle_writer_does_not_overwrite_by_default(
     test_video: Path, tmp_path: Path,
 ) -> None:
     target = tmp_path / "existing.bundle"
-    tensor = core.create_xt_slice(test_video, RED_Y).tensor
+    tensor = engine_xt(test_video, RED_Y)
     BundleWriter().write(target, (tensor,))
     with pytest.raises(BundleTargetExistsError):
         BundleWriter().write(target, (tensor,))
@@ -328,7 +327,7 @@ def test_bundle_commit_preserves_target_created_during_copy(
     test_video: Path, tmp_path: Path,
 ) -> None:
     target = tmp_path / "并发.bundle"
-    original = core.create_xt_slice(test_video, RED_Y).tensor
+    original = engine_xt(test_video, RED_Y)
     raced = replace(
         original,
         data=_CreateTargetOnReadHandle(
@@ -347,8 +346,8 @@ def test_bundle_overwrite_failure_restores_previous_complete_bundle(
     test_video: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     target = tmp_path / "rollback.bundle"
-    original = core.create_xt_slice(test_video, RED_Y).tensor
-    replacement = core.create_xt_slice(test_video, RED_Y + 1).tensor
+    original = engine_xt(test_video, RED_Y)
+    replacement = engine_xt(test_video, RED_Y + 1)
     BundleWriter().write(target, (original,))
     expected = original.data.materialize()
     real_replace = os.replace
@@ -376,11 +375,11 @@ def test_bundle_overwrite_failure_restores_previous_complete_bundle(
 def test_bundle_cleanup_failure_is_isolated_and_reported(
     test_video: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    result = core.temporal_reduce(test_video, op="mean")
+    _, preview_tensor = engine_reduce(test_video, "mean")
     invalid_preview = replace(
-        result.preview_tensor,
+        preview_tensor,
         data=MemoryArrayHandle(
-            result.preview_tensor.data.materialize().astype(np.float32)
+            preview_tensor.data.materialize().astype(np.float32)
         ),
     )
     real_rmtree = bundle_module.shutil.rmtree
@@ -402,7 +401,7 @@ def test_bundle_unknown_optional_field_is_notice_but_strict_rejects(
     test_video: Path, tmp_path: Path,
 ) -> None:
     target = tmp_path / "future.bundle"
-    BundleWriter().write(target, (core.create_xt_slice(test_video, RED_Y).tensor,))
+    BundleWriter().write(target, (engine_xt(test_video, RED_Y),))
     manifest_path = target / "manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     manifest["future_optional"] = {"enabled": True}
@@ -417,7 +416,7 @@ def test_bundle_reader_rejects_excessive_json_nesting(
     test_video: Path, tmp_path: Path,
 ) -> None:
     target = tmp_path / "deep-json.bundle"
-    BundleWriter().write(target, (core.create_xt_slice(test_video, RED_Y).tensor,))
+    BundleWriter().write(target, (engine_xt(test_video, RED_Y),))
     manifest_path = target / "manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     nested: object = True
@@ -435,7 +434,7 @@ def test_bundle_reader_validates_tensor_data_ref_semantics(
 ) -> None:
     target = tmp_path / "bad-schema.bundle"
     bundle = BundleWriter().write(
-        target, (core.create_xt_slice(test_video, RED_Y).tensor,),
+        target, (engine_xt(test_video, RED_Y),),
     )
     data = next(item for item in bundle.manifest.artifacts if item.kind == "data")
     schema = bundle.artifact(data.tensor_schema_artifact_id)
@@ -452,7 +451,7 @@ def test_bundle_reader_rejects_provenance_missing_reference(
 ) -> None:
     target = tmp_path / "bad-provenance.bundle"
     bundle = BundleWriter().write(
-        target, (core.create_xt_slice(test_video, RED_Y).tensor,),
+        target, (engine_xt(test_video, RED_Y),),
     )
     record = bundle.artifact(bundle.manifest.provenance_artifact_id)
     path = target.joinpath(*record.storage.files[0].uri.split("/"))

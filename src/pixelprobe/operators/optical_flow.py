@@ -30,6 +30,22 @@ FLOW_OPERATOR_SPEC = OperatorSpec(
 _AFFINE_GRID_STEP = 8
 
 
+def flow_gray(arr: np.ndarray) -> np.ndarray:
+    """光流输入使用的 BT.601 灰度，float32。"""
+    return (
+        0.299 * arr[..., 0] + 0.587 * arr[..., 1] + 0.114 * arr[..., 2]
+    ).astype(np.float32)
+
+
+def farneback(cv2, prev: np.ndarray, cur: np.ndarray) -> np.ndarray:
+    """固定参数的 Farneback 稠密光流；参数属于算子版本语义，修改需升级版本。"""
+    return cv2.calcOpticalFlowFarneback(
+        prev, cur, None,
+        pyr_scale=0.5, levels=3, winsize=15,
+        iterations=3, poly_n=5, poly_sigma=1.2, flags=0,
+    )
+
+
 def _estimate_global(flow: np.ndarray) -> dict[str, object] | None:
     cv2 = require_cv2()
     height, width = flow.shape[:2]

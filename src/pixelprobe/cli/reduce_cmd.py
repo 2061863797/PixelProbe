@@ -20,7 +20,7 @@ from pixelprobe.output import json_writer
 from pixelprobe.output.console import out_console, print_kv, progress_bar
 from pixelprobe.output.image_writer import save_png
 from pixelprobe.utils.coordinates import parse_rect
-from pixelprobe.compat.legacy_requests import legacy_reduce_request
+from pixelprobe.request_builders import reduce_request
 
 
 def reduce(
@@ -65,7 +65,7 @@ def reduce(
     ctx = CliContext(json_mode, quiet, verbose, no_progress)
     with cli_guard("reduce", ctx):
         rect_tuple = parse_rect(rect) if rect else None
-        request = legacy_reduce_request(
+        request = reduce_request(
             media,
             operation=op,
             rect=rect_tuple,

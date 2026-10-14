@@ -9,10 +9,6 @@ import numpy as np
 import pytest
 from pydantic import ValidationError
 
-from pixelprobe.compat import (
-    legacy_frame_range_to_selection,
-    selection_to_legacy_frame_range,
-)
 from pixelprobe.core.frame_selector import FrameRange
 from pixelprobe.core.video_reader import VideoReader
 from pixelprobe.domain import (
@@ -34,6 +30,7 @@ from pixelprobe.domain import (
     TensorField,
     TensorFieldDescriptor,
 )
+from pixelprobe.request_builders import interval_selection
 from pixelprobe.domain.errors import (
     ArraySelectionOutOfRangeError,
     AxisShapeMismatchError,
@@ -88,11 +85,13 @@ def test_geometry_rejects_non_finite_coordinates(factory) -> None:
         factory()
 
 
-def test_legacy_closed_range_round_trip_is_lossless() -> None:
-    legacy = FrameRange(start=2, end=8, sample_every=2)
-    selection = legacy_frame_range_to_selection(legacy)
+def test_closed_frame_range_becomes_half_open_selection() -> None:
+    closed = FrameRange(start=2, end=8, sample_every=2)
+    selection = interval_selection(closed)
+    assert selection.mode == "frame_interval"
+    assert selection.requested_start_frame == 2
     assert selection.requested_end_frame_exclusive == 9
-    assert selection_to_legacy_frame_range(selection) == legacy
+    assert selection.sample_every == 2
 
 
 def test_selection_modes_cannot_be_mixed() -> None:

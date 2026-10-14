@@ -102,6 +102,15 @@ def build_cases() -> list[dict[str, Any]]:
         {"id": "spectrum_luma", "args": ["spectrum", "{blink}", "--source", "luma"]},
         {"id": "spectrum2d", "args": ["spectrum2d", "{blink}", "--frame", "0", "--output", "{out:fft2.png}"]},
         {"id": "flow_pair", "args": ["flow", "{motion}", "--frame-a", "0", "--frame-b", "1", "--flow-output", "{out:flow.png}", "--magnitude-output", "{out:mag.png}"]},
+        # 以下用例锁定原先由"与旧实现逐值一致"测试覆盖的参数组合
+        {"id": "reduce_diff_rect", "args": ["reduce", "{video}", "--op", "diff", "--rect", "3,4,12,10", "--p-low", "5", "--p-high", "95", "--destripe", "--smooth", "3", "--output", "{out:diff_rect.png}"]},
+        {"id": "reduce_median_range", "args": ["reduce", "{noise}", "--op", "median", "--start-frame", "2", "--end-frame", "20", "--sample-every", "2", "--output", "{out:median.png}"]},
+        {"id": "flow_compensated", "args": ["flow", "{motion}", "--frame-a", "0", "--frame-b", "4", "--compensate", "--mag-threshold", "0.5", "--flow-output", "{out:flow_c.png}", "--magnitude-output", "{out:mag_c.png}"]},
+        {"id": "flow_accumulate", "args": ["flow", "{motion}", "--accumulate", "--start-frame", "0", "--end-frame", "5"]},
+        {"id": "timeline_block_grid", "args": ["timeline", "{video}", "--grid", "0,0,32,32", "--block-size", "8", "--sort", "yx", "--csv", "{out:block.csv}"]},
+        {"id": "xt_range_sampled", "args": ["xt", "{video}", "--y", str(RED_Y), "--start-frame", "3", "--end-frame", "25", "--sample-every", "3", "--output", "{out:xt_range.png}"]},
+        {"id": "spectrum_point", "args": ["spectrum", "{blink}", "--point", f"{BLINK_RECT[0]},{BLINK_RECT[1]}", "--source", "luma"]},
+        {"id": "spectrum2d_rect", "args": ["spectrum2d", "{video}", "--frame", "15", "--rect", "0,0,16,16", "--output", "{out:fft2_rect.png}"]},
         {"id": "workflow_quality", "args": ["workflow", "{video}", "--mode", "quality_overview"]},
         {"id": "evidence_image", "args": ["evidence", "{image}"]},
     ]

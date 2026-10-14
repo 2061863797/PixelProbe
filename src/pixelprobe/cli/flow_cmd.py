@@ -19,7 +19,7 @@ from pixelprobe.cli import (
 from pixelprobe.output import json_writer
 from pixelprobe.output.console import out_console, print_kv, progress_bar
 from pixelprobe.output.image_writer import save_png
-from pixelprobe.compat.legacy_requests import legacy_flow_request
+from pixelprobe.request_builders import flow_request
 
 
 def flow(
@@ -68,7 +68,7 @@ def flow(
     """稠密光流：运动方向/幅度、全局运动估计与运动区域 bbox。"""
     ctx = CliContext(json_mode, quiet, verbose, no_progress)
     with cli_guard("flow", ctx):
-        request = legacy_flow_request(
+        request = flow_request(
             media,
             frame_a=frame_a,
             time_a=time_a,

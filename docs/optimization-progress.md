@@ -1,6 +1,35 @@
 # 优化实施检查点
 
-## 当前状态：2026-10-14 2.0 重构阶段 0（定位、规则与基线）
+## 当前状态：2026-10-14 2.0 重构阶段 1（统一计算核心）
+
+本节优先于下方历史检查点。
+
+- 实际核查修正了计划中的判断：`compat/` 主要是"CLI 参数 → 统一请求"的构造函数，
+  并非多余的来回翻译；真正多余的是 CLI/MCP 从未调用、只被测试使用的直接解码实现
+  （`core/frequency.py`、`core/temporal_reduce.py`、`core/spacetime_slice.py`、
+  `core/optical_flow.py`、`extract_timelines`，以及 `operators/sampling.py` 中的
+  `sample_xt/yt/points_t/path_t/roi_t` 与 `execute_sampling`）。
+- 删除上述实现与 `compat/` 包；请求构造函数迁入 `src/pixelprobe/request_builders.py`
+  （去掉 `legacy_` 前缀，重复六次的"闭区间→半开区间"合并为 `interval_selection`）。
+  Farneback 固定参数与灰度转换迁入 `operators/optical_flow.py`。FFT、光流算法现在只在
+  `operators/` 各有一处实现。`pixelprobe` 包由约 18,070 行降到 16,699 行。
+- 引擎文件身份改为两级（`utils/fingerprint.py`）：内存/NPY 输出用快速指纹（大小、
+  修改时间、文件标识、头尾各 1 MiB），Bundle/Zarr 输出仍用完整 SHA-256 并写入溯源；
+  溯源记录只在结果包中生成，快速指纹不会冒充 sha256。1 GiB 文件实测（已在系统缓存）：
+  每次查询的身份计算由 1.571 秒降到 0.003 秒。局限已写入模块文档：中间内容被改写而
+  大小、修改时间、头尾不变时快速指纹无法察觉。
+- 测试迁移：原先"引擎与旧实现逐值一致"的断言改为与合成素材真值比较、与不中断执行
+  比较，或改由数值基线锁定；新增 8 个基线用例（diff+destripe+smooth、median 区间、
+  光流补偿与累积、块均值网格时间线、采样 X-T、点频谱、区域二维频谱），这些期望值
+  在阶段 0 提交的代码上采集。`max_median_bytes` 只保护已删除的 Python 函数，相应测试
+  改为验证引擎的内存预算拒绝。`docs/api.md` 改为 request_builders + generate 用法。
+- 验证：全量 **431 passed、0 skipped，112 秒**（基线 429，新增快速指纹与 Bundle
+  完整哈希两项测试）；`capture_golden.py --check` 38/38 一致；CodeGraph 已同步，
+  `np.fft`/Farneback/仿射估计只出现在 `operators/frequency.py` 与
+  `operators/optical_flow.py`。
+- 未执行：Linux/macOS 运行。
+
+## 历史状态：2026-10-14 2.0 重构阶段 0（定位、规则与基线）
 
 本节优先于下方历史检查点。2.0 的定位、边界和路线图见 `docs/positioning.md`。
 

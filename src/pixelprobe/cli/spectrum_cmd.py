@@ -20,9 +20,9 @@ from pixelprobe.output import json_writer
 from pixelprobe.output.console import out_console, print_kv, progress_bar
 from pixelprobe.output.image_writer import save_png
 from pixelprobe.utils.coordinates import parse_point, parse_rect
-from pixelprobe.compat.legacy_requests import (
-    legacy_spatial_spectrum_request,
-    legacy_temporal_spectrum_request,
+from pixelprobe.request_builders import (
+    spatial_spectrum_request,
+    temporal_spectrum_request,
 )
 
 
@@ -59,7 +59,7 @@ def spectrum(
     with cli_guard("spectrum", ctx):
         rect_tuple = parse_rect(rect) if rect else None
         point_tuple = parse_point(point) if point else None
-        request = legacy_temporal_spectrum_request(
+        request = temporal_spectrum_request(
             media,
             source=source,
             rect=rect_tuple,
@@ -140,7 +140,7 @@ def spectrum2d(
     ctx = CliContext(json_mode, quiet, verbose, no_progress)
     with cli_guard("spectrum2d", ctx):
         rect_tuple = parse_rect(rect) if rect else None
-        request = legacy_spatial_spectrum_request(
+        request = spatial_spectrum_request(
             media, frame=frame, time=time, rect=rect_tuple,
         )
         generated = pixelprobe.generate(request)

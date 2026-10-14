@@ -17,7 +17,7 @@ from conftest import (
     run_json,
     run_json_error,
 )
-from pixelprobe.core import extract_timelines
+from conftest import engine_timeline as extract_timelines
 from pixelprobe.models.errors import InvalidRangeError
 
 

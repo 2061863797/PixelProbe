@@ -21,8 +21,8 @@ from pixelprobe.cli import (
     cli_guard,
 )
 from pixelprobe.models.spacetime import SpacetimeMetadata
-from pixelprobe.compat.legacy_requests import (
-    legacy_spacetime_request,
+from pixelprobe.request_builders import (
+    spacetime_request,
 )
 from pixelprobe.output import json_writer
 from pixelprobe.output.console import out_console, print_kv, progress_bar
@@ -48,7 +48,7 @@ def _run_slice(
         ensure_scale(scale_space, "--scale-x" if slice_type == "xt" else "--scale-y")
         ensure_scale(scale_t, "--scale-t")
         desc = "生成 X–T 切片" if slice_type == "xt" else "生成 Y–T 切片"
-        request = legacy_spacetime_request(
+        request = spacetime_request(
             media,
             slice_type,
             fixed,

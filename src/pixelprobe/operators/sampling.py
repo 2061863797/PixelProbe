@@ -2,27 +2,23 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Literal
 
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from pixelprobe.core.frame_selector import FrameRange, resolve_range
-from pixelprobe.core.video_reader import VideoReader
+from pixelprobe.core.frame_selector import FrameRange
 from pixelprobe.domain.accuracy import AccuracyInfo, AccuracyLevel
 from pixelprobe.domain.axes import AxisKind, AxisMapping, AxisSpec, ChannelSpec
 from pixelprobe.domain.coordinates import CoordinateSpace, CoordinateSpaceKind
 from pixelprobe.domain.references import ProvenanceRef
 from pixelprobe.domain.tensor import ArrayHandle, MemoryArrayHandle, TensorField
-from pixelprobe.models.errors import DecodeError, InvalidRangeError
+from pixelprobe.models.errors import InvalidRangeError
 from pixelprobe.operators.base import OperatorSpec
 from pixelprobe.operators.common import memory_array_ref
-from pixelprobe.utils.coordinates import validate_point, validate_rect
 
-ProgressCallback = Callable[[int, int], None]
 SamplingKind = Literal["xt", "yt", "points_t", "path_t", "roi_t"]
 ReductionName = Literal["mean", "min", "max", "median", "std", "rms", "percentile"]
 
@@ -104,14 +100,6 @@ class SamplingPlan:
             reduction=self.reduction,
             percentile=self.percentile,
         )
-
-
-@dataclass(slots=True, frozen=True)
-class SamplingOutput:
-    tensor: TensorField
-    plan: SamplingPlan
-    frames: tuple[int, ...]
-    times: tuple[float, ...]
 
 
 def resample_polyline(
@@ -391,123 +379,3 @@ def _build_tensor(
     )
 
 
-def execute_sampling(
-    reader: VideoReader,
-    plan: SamplingPlan,
-    progress: ProgressCallback | None = None,
-) -> SamplingOutput:
-    rows: list[np.ndarray] = []
-    frames: list[int] = []
-    times: list[float] = []
-    for packet in reader.iter_frame_packets(
-        plan.frame_range.start,
-        plan.frame_range.end,
-        plan.frame_range.sample_every,
-    ):
-        rows.append(_sample_frame(packet.data, plan))
-        frames.append(packet.presentation_index)
-        times.append(packet.timeline_time_seconds)
-        if progress is not None:
-            progress(len(rows), plan.frame_range.count)
-    if not rows:
-        raise DecodeError("指定范围内没有解码出任何帧")
-    array = np.stack(rows, axis=0)
-    return SamplingOutput(
-        tensor=_build_tensor(array, plan, tuple(frames), tuple(times)),
-        plan=plan,
-        frames=tuple(frames),
-        times=tuple(times),
-    )
-
-
-def _run(
-    path: Path,
-    builder: Callable[[int, int, FrameRange], SamplingPlan],
-    *,
-    start_frame: int | None = None,
-    end_frame: int | None = None,
-    start: float | None = None,
-    end: float | None = None,
-    sample_every: int = 1,
-    progress: ProgressCallback | None = None,
-) -> SamplingOutput:
-    with VideoReader() as reader:
-        reader.open(Path(path))
-        info = reader.get_info()
-        frame_range = resolve_range(
-            reader, start_frame, end_frame, start, end, sample_every,
-        )
-        plan = builder(info.width, info.height, frame_range)
-        return execute_sampling(reader, plan, progress)
-
-
-def sample_xt(path: Path, y: int, **range_options: object) -> SamplingOutput:
-    def builder(width: int, height: int, frame_range: FrameRange) -> SamplingPlan:
-        validate_point(0, y, width, height)
-        return SamplingPlan("xt", frame_range, width, height, fixed_coordinate=y)
-    return _run(path, builder, **range_options)  # type: ignore[arg-type]
-
-
-def sample_yt(path: Path, x: int, **range_options: object) -> SamplingOutput:
-    def builder(width: int, height: int, frame_range: FrameRange) -> SamplingPlan:
-        validate_point(x, 0, width, height)
-        return SamplingPlan("yt", frame_range, width, height, fixed_coordinate=x)
-    return _run(path, builder, **range_options)  # type: ignore[arg-type]
-
-
-def sample_points_t(
-    path: Path,
-    points: Sequence[tuple[int, int]],
-    *,
-    block_size: int | None = None,
-    **range_options: object,
-) -> SamplingOutput:
-    def builder(width: int, height: int, frame_range: FrameRange) -> SamplingPlan:
-        for x, y in points:
-            validate_point(x, y, width, height)
-        return SamplingPlan(
-            "points_t", frame_range, width, height,
-            points=tuple((float(x), float(y)) for x, y in points),
-            block_size=block_size,
-        )
-    return _run(path, builder, **range_options)  # type: ignore[arg-type]
-
-
-def sample_path_t(
-    path: Path,
-    points: Sequence[tuple[float, float]],
-    *,
-    sample_count: int,
-    interpolation: Literal["nearest", "bilinear"] = "bilinear",
-    boundary: Literal["error", "clip"] = "error",
-    **range_options: object,
-) -> SamplingOutput:
-    sampled = resample_polyline(points, sample_count)
-
-    def builder(width: int, height: int, frame_range: FrameRange) -> SamplingPlan:
-        return SamplingPlan(
-            "path_t", frame_range, width, height,
-            points=sampled,
-            interpolation=interpolation,
-            boundary=boundary,
-        )
-    return _run(path, builder, **range_options)  # type: ignore[arg-type]
-
-
-def sample_roi_t(
-    path: Path,
-    rect: tuple[int, int, int, int],
-    *,
-    reduction: ReductionName = "mean",
-    percentile: float | None = None,
-    **range_options: object,
-) -> SamplingOutput:
-    def builder(width: int, height: int, frame_range: FrameRange) -> SamplingPlan:
-        validate_rect(*rect, width, height)
-        return SamplingPlan(
-            "roi_t", frame_range, width, height,
-            rect=rect,
-            reduction=reduction,
-            percentile=percentile,
-        )
-    return _run(path, builder, **range_options)  # type: ignore[arg-type]

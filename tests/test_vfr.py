@@ -9,7 +9,8 @@ import numpy as np
 import pytest
 
 from conftest import VFR_FRAME_COUNT, run_json, vfr_frame
-from pixelprobe.core import extract_timelines, get_media_info
+from conftest import engine_timeline as extract_timelines
+from pixelprobe.core import get_media_info
 from pixelprobe.core.frame_selector import resolve_range
 from pixelprobe.core.video_reader import VideoReader
 

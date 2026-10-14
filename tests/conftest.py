@@ -16,6 +16,15 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
+# 测试会话使用独立的媒体索引目录（子进程 CLI 继承该环境变量），不读写本机真实索引
+import atexit  # noqa: E402
+import shutil  # noqa: E402
+import tempfile  # noqa: E402
+
+_TEST_INDEX_DIR = tempfile.mkdtemp(prefix="pixelprobe-test-index-")
+os.environ["PIXELPROBE_INDEX_DIR"] = _TEST_INDEX_DIR
+atexit.register(shutil.rmtree, _TEST_INDEX_DIR, ignore_errors=True)
+
 from generate_test_image import generate_test_image, make_image_array  # noqa: E402
 from generate_test_video import (  # noqa: E402
     BLINK_FRAME_COUNT,

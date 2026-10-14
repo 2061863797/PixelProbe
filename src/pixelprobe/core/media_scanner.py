@@ -52,6 +52,7 @@ class ScanResult:
     anomalies_truncated: bool
     effective_sample_every: int
     frames_analyzed: int
+    computed_from: str = "decode"
 
 
 def _plan_targets(frame_range: FrameRange, count: int) -> list[int]:
@@ -74,8 +75,13 @@ def scan_media(
     event_threshold: float | None = None,
     tile_max_dim: int = 320,
     progress: ProgressCallback | None = None,
+    index=None,
 ) -> ScanResult:
-    """对未知视频做一遍概览扫描（信息 + 网格图 + 变化曲线 + 事件 + 异常帧）。"""
+    """对未知视频做一遍概览扫描（信息 + 网格图 + 变化曲线 + 事件 + 异常帧）。
+
+    提供媒体索引且实际采样间隔为 1 时，变化曲线和亮度异常直接由索引给出（逐值相同），
+    网格图只按帧号解码其中的少量帧；其他情况照常单遍解码。
+    """
     with VideoReader() as reader:
         reader.open(Path(path))
         info = reader.get_info()
@@ -86,6 +92,17 @@ def scan_media(
         frame_range = resolve_range(reader, sample_every=sample_every)
         total = frame_range.count
         targets = set(_plan_targets(frame_range, sheet_count))
+
+        if index is not None:
+            indexed = _scan_from_index(
+                reader, index, info, frame_range, targets,
+                sheet_count=sheet_count, sample_every=sample_every,
+                event_threshold=event_threshold, tile_max_dim=tile_max_dim,
+            )
+            if indexed is not None:
+                if progress is not None:
+                    progress(total, total)
+                return indexed
 
         records: list[ChangeRecord] = []
         anomalies: list[dict] = []
@@ -149,6 +166,27 @@ def scan_media(
         if done == 0:
             raise DecodeError("指定范围内没有解码出任何帧")
 
+    return _finish_scan(
+        info, records, anomalies, truncated, tiles, tile_frames, tile_times,
+        event_threshold=event_threshold, tile_max_dim=tile_max_dim,
+        sample_every=sample_every, frames_analyzed=done,
+    )
+
+
+def _finish_scan(
+    info: MediaInfo,
+    records: list[ChangeRecord],
+    anomalies: list[dict],
+    truncated: bool,
+    tiles: list[np.ndarray],
+    tile_frames: list[int],
+    tile_times: list[float],
+    *,
+    event_threshold: float | None,
+    tile_max_dim: int,
+    sample_every: int,
+    frames_analyzed: int,
+) -> ScanResult:
     events, threshold_used = segment_events(records, threshold=event_threshold)
     # 孤立尖峰事件补充标记为闪帧候选
     for event in events:
@@ -176,5 +214,44 @@ def scan_media(
         anomalies=anomalies,
         anomalies_truncated=truncated,
         effective_sample_every=sample_every,
-        frames_analyzed=done,
+        frames_analyzed=frames_analyzed,
     )
+
+
+def _scan_from_index(
+    reader: VideoReader,
+    index,
+    info: MediaInfo,
+    frame_range: FrameRange,
+    targets: set[int],
+    *,
+    sheet_count: int,
+    sample_every: int,
+    event_threshold: float | None,
+    tile_max_dim: int,
+) -> ScanResult | None:
+    from pixelprobe.index.queries import brightness_anomalies, full_frame_changes, rows_for
+
+    selected = rows_for(index, frame_range)
+    if selected is None:
+        return None
+    records = full_frame_changes(index, frame_range) or []
+    anomalies, truncated = brightness_anomalies(
+        index, selected.rows, black_max=_BLACK_MAX, white_min=_WHITE_MIN,
+        flat_std=_FLAT_STD, limit=_MAX_ANOMALIES,
+    )
+    tiles: list[np.ndarray] = []
+    tile_frames: list[int] = []
+    tile_times: list[float] = []
+    for frame in sorted(targets):
+        timestamp, arr = reader.get_frame_by_index(frame)
+        tiles.append(fit_within(arr, tile_max_dim, tile_max_dim))
+        tile_frames.append(frame)
+        tile_times.append(timestamp)
+    result = _finish_scan(
+        info, records, anomalies, truncated, tiles, tile_frames, tile_times,
+        event_threshold=event_threshold, tile_max_dim=tile_max_dim,
+        sample_every=sample_every, frames_analyzed=len(selected.rows),
+    )
+    result.computed_from = "index"
+    return result

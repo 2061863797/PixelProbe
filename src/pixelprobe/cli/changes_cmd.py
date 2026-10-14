@@ -11,13 +11,16 @@ from pixelprobe import core
 from pixelprobe.address import check, grid_of, points_of, range_options, rect_of
 from pixelprobe.cli import (
     AT_OPT,
+    INDEX_DIR_OPT,
     JSON_OPT,
+    NO_INDEX_OPT,
     NO_PROGRESS_OPT,
     QUIET_OPT,
     REF_FILE_OPT,
     VERBOSE_OPT,
     CliContext,
     cli_guard,
+    find_index,
     media_size,
     read_address,
 )
@@ -43,6 +46,8 @@ def changes(
     csv: Optional[Path] = typer.Option(
         None, "--csv", help="导出全部变化记录到 CSV"
     ),
+    no_index: bool = NO_INDEX_OPT,
+    index_dir: Optional[Path] = INDEX_DIR_OPT,
     json_mode: bool = JSON_OPT,
     quiet: bool = QUIET_OPT,
     verbose: bool = VERBOSE_OPT,
@@ -71,6 +76,11 @@ def changes(
         grid = grid_of(address)
         grid_tuple = (grid.x, grid.y, grid.width, grid.height) if grid else None
         step = grid.step if grid else None
+        full_frame = point_tuple is None and rect_tuple is None and grid_tuple is None
+        index = (
+            find_index(media, no_index=no_index, index_dir=index_dir)
+            if full_frame and (address.step or 1) == 1 else None
+        )
 
         with progress_bar("变化检测", 1, ctx.progress_disabled) as update:
             result = core.detect_changes(
@@ -81,6 +91,7 @@ def changes(
                 step=step,
                 **range_options(address),
                 progress=update,
+                index=index,
             )
         top_records = core.top_changes(result.records, top)
         events, threshold_used = core.segment_events(
@@ -134,6 +145,7 @@ def changes(
             "event_threshold_used": threshold_used,
             "csv_path": csv_path,
             "curve_image_path": curve_path,
+            "computed_from": result.computed_from,
         }
         if ctx.json_mode:
             json_writer.print_success("changes", data)

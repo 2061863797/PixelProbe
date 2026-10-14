@@ -17,6 +17,7 @@ from pixelprobe.cli import (
     flow_cmd,
     generate_cmd,
     frame_cmd,
+    index_cmd,
     info_cmd,
     pixel_cmd,
     reduce_cmd,
@@ -66,6 +67,7 @@ app.command("flow")(flow_cmd.flow)
 app.command("generate")(generate_cmd.generate)
 app.command("validate")(validate_cmd.validate)
 app.add_typer(cache_cmd.app, name="cache")
+app.add_typer(index_cmd.app, name="index")
 
 
 def _version_callback(value: bool) -> None:

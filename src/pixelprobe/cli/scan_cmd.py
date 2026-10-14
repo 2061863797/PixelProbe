@@ -11,13 +11,16 @@ from pixelprobe import core
 from pixelprobe.address import check
 from pixelprobe.cli import (
     AT_OPT,
+    INDEX_DIR_OPT,
     JSON_OPT,
+    NO_INDEX_OPT,
     NO_PROGRESS_OPT,
     QUIET_OPT,
     REF_FILE_OPT,
     VERBOSE_OPT,
     CliContext,
     cli_guard,
+    find_index,
     read_address,
 )
 from pixelprobe.output import json_writer
@@ -41,6 +44,8 @@ def scan(
     curve_output: Optional[Path] = typer.Option(
         None, "--curve-output", help="变化曲线图 PNG 输出路径"
     ),
+    no_index: bool = NO_INDEX_OPT,
+    index_dir: Optional[Path] = INDEX_DIR_OPT,
     json_mode: bool = JSON_OPT,
     quiet: bool = QUIET_OPT,
     verbose: bool = VERBOSE_OPT,
@@ -61,6 +66,7 @@ def scan(
                 sample_every=address.step,
                 event_threshold=threshold,
                 progress=update,
+                index=find_index(media, no_index=no_index, index_dir=index_dir),
             )
         if sheet_output is not None:
             save_png(result.sheet.image, sheet_output)
@@ -88,6 +94,7 @@ def scan(
             "anomalies_truncated": result.anomalies_truncated,
             "sheet_output_path": str(sheet_output) if sheet_output else None,
             "curve_output_path": curve_saved,
+            "computed_from": result.computed_from,
         }
         if ctx.json_mode:
             json_writer.print_success("scan", data)

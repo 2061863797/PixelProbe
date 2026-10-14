@@ -54,8 +54,17 @@ VOLATILE_KEYS = {
 }
 
 
+# 基线采集之后新增、且不是计算结果的说明字段（例如结果来自索引还是解码）。
+# 只允许在这里登记"新增字段"；改变已有字段的值必须重新说明原因。
+ADDED_FIELDS = {"computed_from"}
+
+
 def _volatile(key: str) -> bool:
-    return key in VOLATILE_KEYS or key.endswith(("_path", "_output_path", "_dir"))
+    return (
+        key in VOLATILE_KEYS
+        or key in ADDED_FIELDS
+        or key.endswith(("_path", "_output_path", "_dir"))
+    )
 
 
 def build_assets(root: Path) -> dict[str, Path]:
@@ -160,7 +169,11 @@ def _file_digest(path: Path) -> str:
 
 def run_case(case: dict[str, Any], assets: dict[str, Path], out_dir: Path) -> dict[str, Any]:
     args, outputs = _expand(case["args"], assets, out_dir)
-    env = dict(os.environ, PYTHONIOENCODING="utf-8")
+    # 隔离到空的临时索引目录：基线始终对照"直接解码"的结果，不受本机已有索引影响
+    env = dict(
+        os.environ, PYTHONIOENCODING="utf-8",
+        PIXELPROBE_INDEX_DIR=str(out_dir / "index"),
+    )
     proc = subprocess.run(
         [sys.executable, "-m", "pixelprobe", *args, "--json"],
         capture_output=True, text=True, encoding="utf-8", env=env, cwd=out_dir,

@@ -33,6 +33,23 @@ AT_OPT = typer.Option(
 REF_FILE_OPT = typer.Option(
     None, "--ref-file", help="引用表 JSON，供 --at 中的 @名称 使用",
 )
+NO_INDEX_OPT = typer.Option(
+    False, "--no-index", help="不使用已建立的媒体索引，直接解码",
+)
+INDEX_DIR_OPT = typer.Option(
+    None, "--index-dir", help="媒体索引目录（缺省读环境变量 PIXELPROBE_INDEX_DIR 或本机数据目录）",
+)
+
+
+def find_index(media: Path, *, no_index: bool, index_dir: Path | None):
+    """取与媒体当前内容匹配的索引；未建立、已过期或被禁用时返回 None。"""
+    if no_index:
+        return None
+    from pixelprobe.core.media_reader import detect_media_type
+    from pixelprobe.index import IndexStore
+    if detect_media_type(Path(media)) != "video":
+        return None
+    return IndexStore(index_dir).lookup(media)
 
 
 def load_refs(ref_file: Path | None) -> dict[str, str]:

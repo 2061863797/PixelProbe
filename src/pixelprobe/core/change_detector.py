@@ -65,6 +65,7 @@ class ChangesResult:
     frames_analyzed: int
     width: int
     height: int
+    computed_from: Literal["decode", "index"] = "decode"
 
 
 def top_changes(records: list[ChangeRecord], top: int) -> list[ChangeRecord]:
@@ -86,8 +87,13 @@ def detect_changes(
     end: float | None = None,
     sample_every: int = 1,
     progress: ProgressCallback | None = None,
+    index=None,
 ) -> ChangesResult:
-    """计算相邻（采样）帧之间的变化量。视频只解码一遍。"""
+    """计算相邻（采样）帧之间的变化量。视频只解码一遍。
+
+    提供媒体索引（pixelprobe.index.MediaIndex）且为整帧模式、逐帧采样时，
+    直接由索引的逐帧差异给出逐值相同的结果；其他情况照常解码。
+    """
     chosen = [m for m, v in
               (("point", point), ("rect", rect), ("grid", grid)) if v is not None]
     if len(chosen) > 1:
@@ -121,6 +127,22 @@ def detect_changes(
             reader, start_frame, end_frame, start, end, sample_every
         )
         total = frame_range.count
+
+        if index is not None and mode == "full":
+            from pixelprobe.index.queries import full_frame_changes
+            indexed = full_frame_changes(index, frame_range)
+            if indexed is not None:
+                if progress is not None:
+                    progress(total, total)
+                return ChangesResult(
+                    mode=mode,
+                    records=indexed,
+                    frame_range=frame_range,
+                    frames_analyzed=len(indexed) + 1,
+                    width=width,
+                    height=height,
+                    computed_from="index",
+                )
 
         records: list[ChangeRecord] = []
         prev_values: np.ndarray | None = None

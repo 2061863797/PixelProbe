@@ -8,36 +8,30 @@ from typing import Optional
 import typer
 
 from pixelprobe import core
+from pixelprobe.address import check, grid_of, points_of, range_options, rect_of
 from pixelprobe.cli import (
+    AT_OPT,
     JSON_OPT,
     NO_PROGRESS_OPT,
     QUIET_OPT,
+    REF_FILE_OPT,
     VERBOSE_OPT,
     CliContext,
     cli_guard,
+    media_size,
+    read_address,
 )
-from pixelprobe.models.errors import InvalidRangeError
+from pixelprobe.models.errors import AddressError, InvalidRangeError
 from pixelprobe.output import csv_writer, json_writer
 from pixelprobe.output.console import out_console, print_table, progress_bar
 from pixelprobe.output.image_writer import save_png
 from pixelprobe.output.plot import render_curve
-from pixelprobe.utils.coordinates import parse_point, parse_rect
 
 
 def changes(
     media: Path = typer.Argument(..., help="视频路径"),
-    point: Optional[str] = typer.Option(
-        None, "--point", help="单像素坐标 x,y"
-    ),
-    rect: Optional[str] = typer.Option(
-        None, "--rect", help="矩形区域 x,y,width,height"
-    ),
-    grid: Optional[str] = typer.Option(
-        None, "--grid", help="网格采样区域 x,y,width,height"
-    ),
-    step: Optional[int] = typer.Option(
-        None, "--step", help="网格采样步长（与 --grid 搭配）"
-    ),
+    at: Optional[str] = AT_OPT,
+    ref_file: Optional[Path] = REF_FILE_OPT,
     top: int = typer.Option(10, "--top", help="返回变化最大的前 N 帧"),
     threshold: Optional[float] = typer.Option(
         None, "--threshold",
@@ -46,15 +40,6 @@ def changes(
     curve_image: Optional[Path] = typer.Option(
         None, "--curve-image", help="导出完整变化曲线 PNG（事件区间描色）"
     ),
-    start_frame: Optional[int] = typer.Option(
-        None, "--start-frame", help="起始帧（含）"
-    ),
-    end_frame: Optional[int] = typer.Option(
-        None, "--end-frame", help="结束帧（含）"
-    ),
-    start: Optional[float] = typer.Option(None, "--start", help="起始时间（秒）"),
-    end: Optional[float] = typer.Option(None, "--end", help="结束时间（秒）"),
-    sample_every: int = typer.Option(1, "--sample-every", help="每隔 N 帧采样一次"),
     csv: Optional[Path] = typer.Option(
         None, "--csv", help="导出全部变化记录到 CSV"
     ),
@@ -65,15 +50,27 @@ def changes(
 ) -> None:
     """计算相邻帧变化量并按阈值分段为事件区间。
 
-    --point / --rect / --grid 最多指定一个，都不给时默认整帧。
+    --at 中 point(...) / rect(...) / cell(...) / grid(...) 最多一个，都不给时默认整帧；
+    可加时间范围与 step，例如 --at "t=1s..5s step=2 rect(400,200,200,150)"。
     """
     ctx = CliContext(json_mode, quiet, verbose, no_progress)
     with cli_guard("changes", ctx):
         if top < 1:
             raise InvalidRangeError(f"--top {top} 无效，必须 >= 1")
-        point_tuple = parse_point(point) if point else None
-        rect_tuple = parse_rect(rect) if rect else None
-        grid_tuple = parse_rect(grid) if grid else None
+        address = read_address(at, ref_file)
+        check(
+            address, command="changes", time_modes={"single", "range", "all"},
+            shapes={"point", "pid", "rect", "cell", "grid"}, step=True,
+        )
+        width, height = media_size(media, address)
+        points = points_of(address, width, height)
+        if len(points) > 1:
+            raise AddressError("changes 一次只能分析一个点；多个点请用 timeline 命令")
+        point_tuple = points[0] if points else None
+        rect_tuple = rect_of(address, width, height)
+        grid = grid_of(address)
+        grid_tuple = (grid.x, grid.y, grid.width, grid.height) if grid else None
+        step = grid.step if grid else None
 
         with progress_bar("变化检测", 1, ctx.progress_disabled) as update:
             result = core.detect_changes(
@@ -82,11 +79,7 @@ def changes(
                 rect=rect_tuple,
                 grid=grid_tuple,
                 step=step,
-                start_frame=start_frame,
-                end_frame=end_frame,
-                start=start,
-                end=end,
-                sample_every=sample_every,
+                **range_options(address),
                 progress=update,
             )
         top_records = core.top_changes(result.records, top)

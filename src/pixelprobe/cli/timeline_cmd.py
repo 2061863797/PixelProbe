@@ -13,13 +13,18 @@ import typer
 import numpy as np
 
 import pixelprobe
+from pixelprobe.address import check, grid_of, points_of, range_options
 from pixelprobe.cli import (
+    AT_OPT,
     JSON_OPT,
     NO_PROGRESS_OPT,
     QUIET_OPT,
+    REF_FILE_OPT,
     VERBOSE_OPT,
     CliContext,
     cli_guard,
+    media_size,
+    read_address,
 )
 from pixelprobe.models.timeline import TimelineMetadata
 from pixelprobe.models.pixel import PixelCoordinate
@@ -29,43 +34,17 @@ from pixelprobe.core.timeline_extractor import TimelineResult
 from pixelprobe.output import csv_writer, json_writer
 from pixelprobe.output.console import out_console, print_kv, progress_bar
 from pixelprobe.output.image_writer import save_png, scale_nearest
-from pixelprobe.utils.coordinates import parse_point, parse_rect
 from pixelprobe.utils.coordinates import pixel_id_from_xy
 from pixelprobe.utils.validation import ensure_scale
 
 
 def timeline(
     media: Path = typer.Argument(..., help="视频路径"),
-    point: Optional[list[str]] = typer.Option(
-        None, "--point", help="像素坐标 x,y（可重复指定多个）"
-    ),
-    pixel_id: Optional[list[int]] = typer.Option(
-        None, "--pixel-id", help="像素编号（可重复指定多个）"
-    ),
-    grid: Optional[str] = typer.Option(
-        None, "--grid", help="网格采样区域 x,y,width,height"
-    ),
-    step: Optional[int] = typer.Option(
-        None, "--step", help="网格采样步长（与 --grid 搭配）"
-    ),
+    at: Optional[str] = AT_OPT,
+    ref_file: Optional[Path] = REF_FILE_OPT,
     block_size: Optional[int] = typer.Option(
         None, "--block-size",
-        help="像素块边长 N：每个采样位置取 N×N 块的平均 RGB（与 --grid 搭配）",
-    ),
-    start_frame: Optional[int] = typer.Option(
-        None, "--start-frame", help="起始帧（含），与 --start/--end 不能混用"
-    ),
-    end_frame: Optional[int] = typer.Option(
-        None, "--end-frame", help="结束帧（含），与 --start/--end 不能混用"
-    ),
-    start: Optional[float] = typer.Option(
-        None, "--start", help="起始时间（秒），与帧范围不能混用"
-    ),
-    end: Optional[float] = typer.Option(
-        None, "--end", help="结束时间（秒），与帧范围不能混用"
-    ),
-    sample_every: int = typer.Option(
-        1, "--sample-every", help="每隔 N 帧采样一次"
+        help="像素块边长 N：每个采样位置取 N×N 块的平均 RGB（与 grid(...) 搭配）",
     ),
     sort: str = typer.Option(
         "selection", "--sort",
@@ -89,7 +68,7 @@ def timeline(
     verbose: bool = VERBOSE_OPT,
     no_progress: bool = NO_PROGRESS_OPT,
 ) -> None:
-    """提取一个或多个固定像素在视频中的颜色时间线，生成 [K,T,3] 矩阵。"""
+    """固定像素的颜色时间线 [K,T,3]：--at "t=1s..3s point(24,16) point(2,28)" 或 "grid(0,0,32,32 step=4)"。"""
     ctx = CliContext(json_mode, quiet, verbose, no_progress)
     with cli_guard("timeline", ctx):
         if sort not in ("selection", "pixel-id", "yx", "xy"):
@@ -101,20 +80,19 @@ def timeline(
                 f"--orientation {orientation} 无效，可选 horizontal|vertical"
             )
         ensure_scale(scale, "--scale")
-        points = [parse_point(p) for p in (point or [])]
-        grid_rect = parse_rect(grid) if grid else None
+        address = read_address(at, ref_file)
+        check(
+            address, command="timeline", time_modes={"single", "range", "all"},
+            shapes={"point", "pid", "grid"}, step=True,
+        )
+        grid = grid_of(address)
         request, ordered_points, width, height = timeline_request(
             media,
-            points=points or None,
-            pixel_ids=pixel_id or None,
-            grid=grid_rect,
-            step=step,
+            points=points_of(address, *media_size(media, address)) or None,
+            grid=(grid.x, grid.y, grid.width, grid.height) if grid else None,
+            step=grid.step if grid else None,
             block_size=block_size,
-            start_frame=start_frame,
-            end_frame=end_frame,
-            start=start,
-            end=end,
-            sample_every=sample_every,
+            **range_options(address),
             sort=sort,
         )
 

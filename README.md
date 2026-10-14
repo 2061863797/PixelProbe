@@ -57,30 +57,34 @@ python scripts/build_local_standalone.py --output build/local-pixelprobe
 
 ## 快速示例
 
+时间和位置统一用 `--at` 指定，例如 `"f=120 rect(400,200,200,150)"`、
+`"t=1s..3s step=2"`、`"cell(C4)"`。完整写法见[地址写法](docs/address.md)。
+
 ```bash
 # 查看媒体信息
 pixelprobe info input.mp4
 
 # 提取第 120 帧
-pixelprobe frame input.mp4 --frame 120 --output frame120.png
+pixelprobe frame input.mp4 --at "f=120" --output frame120.png
 
 # 提取 3.5 秒处的画面并裁剪
-pixelprobe frame input.mp4 --time 3.5 --crop 400,200,300,300 --output crop.png
+pixelprobe frame input.mp4 --at "t=3.5s rect(400,200,300,300)" --output crop.png
 
 # 查询两个像素
-pixelprobe pixel input.mp4 --frame 120 --point 520,340 --point 600,400
+pixelprobe pixel input.mp4 --at "f=120 point(520,340) point(600,400)"
 
 # 查询 PNG/BMP/GIF 等图片的原生通道值（含 Alpha、调色板索引或 16 位样本）
-pixelprobe pixel input.png --sample native --point 520,340 --json
+pixelprobe pixel input.png --sample native --at "point(520,340)" --json
 
-# 分析矩形区域
-pixelprobe region input.mp4 --frame 120 --rect 400,200,200,150
+# 分析矩形区域，或网格中的一格（默认 8 列 × 6 行）
+pixelprobe region input.mp4 --at "f=120 rect(400,200,200,150)"
+pixelprobe region input.mp4 --at "f=120 cell(C4)"
 
 # 导出像素颜色时间线
-pixelprobe timeline input.mp4 --point 520,340 --output timeline.png --csv timeline.csv
+pixelprobe timeline input.mp4 --at "point(520,340)" --output timeline.png --csv timeline.csv
 
-# 找出选区变化最大的 10 帧
-pixelprobe changes input.mp4 --rect 400,200,200,150 --top 10
+# 找出选区在 10～20 秒内变化最大的 10 帧
+pixelprobe changes input.mp4 --at "t=10s..20s rect(400,200,200,150)" --top 10
 
 # 一键生成概览网格、变化事件和异常帧
 pixelprobe scan input.mp4 --sheet-output overview.png
@@ -89,7 +93,7 @@ pixelprobe scan input.mp4 --sheet-output overview.png
 pixelprobe reduce input.mp4 --op std --output temporal-std.png
 
 # 比较两帧并定位变化区域
-pixelprobe compare input.mp4 --frame-a 100 --frame-b 101 --output diff.png
+pixelprobe compare input.mp4 --at "f=100,101" --output diff.png
 
 # 等距抽取 9 帧并拼接网格
 pixelprobe sheet input.mp4 --count 9 --output sheet.png
@@ -98,7 +102,7 @@ pixelprobe sheet input.mp4 --count 9 --output sheet.png
 pixelprobe spectrum input.mp4 --source luma
 
 # 稠密光流
-pixelprobe flow input.mp4 --frame-a 100 --frame-b 101 --flow-output flow.png
+pixelprobe flow input.mp4 --at "f=100,101" --flow-output flow.png
 ```
 
 ## 示例效果

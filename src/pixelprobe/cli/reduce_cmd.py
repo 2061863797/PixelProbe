@@ -8,18 +8,22 @@ from typing import Optional
 import typer
 
 import pixelprobe
+from pixelprobe.address import check, range_options, rect_of
 from pixelprobe.cli import (
+    AT_OPT,
     JSON_OPT,
     NO_PROGRESS_OPT,
     QUIET_OPT,
+    REF_FILE_OPT,
     VERBOSE_OPT,
     CliContext,
     cli_guard,
+    media_size,
+    read_address,
 )
 from pixelprobe.output import json_writer
 from pixelprobe.output.console import out_console, print_kv, progress_bar
 from pixelprobe.output.image_writer import save_png
-from pixelprobe.utils.coordinates import parse_rect
 from pixelprobe.request_builders import reduce_request
 
 
@@ -29,18 +33,8 @@ def reduce(
         "std", "--op",
         help="统计量：mean/median/min/max/std/diff（diff=相邻帧差均值）",
     ),
-    rect: Optional[str] = typer.Option(
-        None, "--rect", help="只统计子区域 x,y,width,height"
-    ),
-    start_frame: Optional[int] = typer.Option(
-        None, "--start-frame", help="起始帧（含）"
-    ),
-    end_frame: Optional[int] = typer.Option(
-        None, "--end-frame", help="结束帧（含）"
-    ),
-    start: Optional[float] = typer.Option(None, "--start", help="起始时间（秒）"),
-    end: Optional[float] = typer.Option(None, "--end", help="结束时间（秒）"),
-    sample_every: int = typer.Option(1, "--sample-every", help="每隔 N 帧采样一次"),
+    at: Optional[str] = AT_OPT,
+    ref_file: Optional[Path] = REF_FILE_OPT,
     p_low: float = typer.Option(
         1.0, "--p-low", help="对比度拉伸低百分位（0-100）"
     ),
@@ -61,19 +55,20 @@ def reduce(
     verbose: bool = VERBOSE_OPT,
     no_progress: bool = NO_PROGRESS_OPT,
 ) -> None:
-    """逐像素时间统计（噪声藏图、慢变水印、运动能量等场景用 --op std/diff）。"""
+    """逐像素时间统计（噪声藏图、慢变水印、运动能量用 --op std/diff）：--at "t=1s..5s step=2 rect(...)"。"""
     ctx = CliContext(json_mode, quiet, verbose, no_progress)
     with cli_guard("reduce", ctx):
-        rect_tuple = parse_rect(rect) if rect else None
+        address = read_address(at, ref_file)
+        check(
+            address, command="reduce", time_modes={"range", "all"},
+            shapes={"rect", "cell"}, step=True,
+        )
+        rect_tuple = rect_of(address, *media_size(media, address))
         request = reduce_request(
             media,
             operation=op,
             rect=rect_tuple,
-            start_frame=start_frame,
-            end_frame=end_frame,
-            start=start,
-            end=end,
-            sample_every=sample_every,
+            **range_options(address),
             p_low=p_low,
             p_high=p_high,
             destripe=destripe,

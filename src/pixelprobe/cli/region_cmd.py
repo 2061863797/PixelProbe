@@ -8,32 +8,29 @@ from typing import Optional
 import typer
 
 from pixelprobe import core
+from pixelprobe.address import check, rect_of, single_frame_options
 from pixelprobe.cli import (
+    AT_OPT,
     JSON_OPT,
     NO_PROGRESS_OPT,
     QUIET_OPT,
+    REF_FILE_OPT,
     VERBOSE_OPT,
     CliContext,
     cli_guard,
+    read_address,
 )
+from pixelprobe.models.errors import AddressError
 from pixelprobe.output import json_writer
 from pixelprobe.output.console import out_console, print_kv
 from pixelprobe.output.image_writer import save_png
-from pixelprobe.utils.coordinates import parse_rect
 from pixelprobe.utils.timecode import seconds_to_ms
 
 
 def region(
     media: Path = typer.Argument(..., help="图片或视频路径"),
-    rect: str = typer.Option(
-        ..., "--rect", help="矩形区域 x,y,width,height"
-    ),
-    frame_index: Optional[int] = typer.Option(
-        None, "--frame", help="视频帧号（从 0 开始），与 --time 二选一"
-    ),
-    time: Optional[float] = typer.Option(
-        None, "--time", help="视频时间（秒），与 --frame 二选一"
-    ),
+    at: Optional[str] = AT_OPT,
+    ref_file: Optional[Path] = REF_FILE_OPT,
     output_crop: Optional[Path] = typer.Option(
         None, "--output-crop", help="把区域裁剪图保存为 PNG"
     ),
@@ -42,13 +39,19 @@ def region(
     verbose: bool = VERBOSE_OPT,
     no_progress: bool = NO_PROGRESS_OPT,
 ) -> None:
-    """计算矩形区域的 RGB / HSV / 亮度统计信息。"""
+    """计算区域的 RGB / HSV / 亮度统计：--at "f=15 rect(4,4,10,10)" 或 "cell(C4)"。"""
     ctx = CliContext(json_mode, quiet, verbose, no_progress)
     with cli_guard("region", ctx):
-        rect_tuple = parse_rect(rect)
+        address = read_address(at, ref_file)
+        check(address, command="region", time_modes={"single"}, shapes={"rect", "cell"})
         arr, idx, t, media_info = core.load_frame(
-            media, frame=frame_index, time=time
+            media, **single_frame_options(address)
         )
+        rect_tuple = rect_of(address, media_info.width, media_info.height)
+        if rect_tuple is None:
+            raise AddressError(
+                '请在 --at 中指定区域，例如 --at "f=15 rect(4,4,10,10)" 或 "cell(C4)"'
+            )
         stats = core.analyze_region(arr, rect_tuple)
 
         crop_path: str | None = None
@@ -81,7 +84,7 @@ def region(
         print_kv(
             title,
             [
-                ("区域", rect),
+                ("区域", ",".join(map(str, rect_tuple))),
                 ("像素数量", stats.pixel_count),
                 ("平均 RGB", f"({stats.mean_rgb.r}, {stats.mean_rgb.g}, {stats.mean_rgb.b})"),
                 ("中位数 RGB", f"({stats.median_rgb.r}, {stats.median_rgb.g}, {stats.median_rgb.b})"),

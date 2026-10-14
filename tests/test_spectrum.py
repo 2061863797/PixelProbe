@@ -114,14 +114,14 @@ def test_temporal_spectrum_reports_nyquist(blink_video: Path) -> None:
 
 def test_cli_spectrum_and_2d(blink_video: Path, tmp_path: Path) -> None:
     data = run_json(
-        "spectrum", blink_video, "--rect", ",".join(map(str, BLINK_RECT)),
+        "spectrum", blink_video, "--at", f"rect({','.join(map(str, BLINK_RECT))})",
         "--json",
     )["data"]
     assert abs(data["dominant_freq_hz"] - 5.0) < 0.3
 
     out = tmp_path / "空间谱.png"
     data2 = run_json(
-        "spectrum2d", blink_video, "--frame", 0, "--output", out, "--json"
+        "spectrum2d", blink_video, "--at", "f=0", "--output", out, "--json"
     )["data"]
     assert data2["width"] == 32
     assert out.exists()

@@ -8,13 +8,17 @@ from typing import Optional
 import typer
 
 from pixelprobe import core
+from pixelprobe.address import check, range_options
 from pixelprobe.cli import (
+    AT_OPT,
     JSON_OPT,
     NO_PROGRESS_OPT,
     QUIET_OPT,
+    REF_FILE_OPT,
     VERBOSE_OPT,
     CliContext,
     cli_guard,
+    read_address,
 )
 from pixelprobe.output import json_writer
 from pixelprobe.output.console import out_console, print_kv, progress_bar
@@ -27,14 +31,8 @@ def sheet(
     cols: Optional[int] = typer.Option(
         None, "--cols", help="网格列数（缺省自动取近似方形）"
     ),
-    start_frame: Optional[int] = typer.Option(
-        None, "--start-frame", help="起始帧（含）"
-    ),
-    end_frame: Optional[int] = typer.Option(
-        None, "--end-frame", help="结束帧（含）"
-    ),
-    start: Optional[float] = typer.Option(None, "--start", help="起始时间（秒）"),
-    end: Optional[float] = typer.Option(None, "--end", help="结束时间（秒）"),
+    at: Optional[str] = AT_OPT,
+    ref_file: Optional[Path] = REF_FILE_OPT,
     tile_max_dim: int = typer.Option(
         320, "--tile-max-dim", help="单格最大边长（像素）"
     ),
@@ -49,18 +47,19 @@ def sheet(
     verbose: bool = VERBOSE_OPT,
     no_progress: bool = NO_PROGRESS_OPT,
 ) -> None:
-    """一张图概览整段视频：等距抽 N 帧拼网格，标注帧号和秒。"""
+    """一张图概览视频：在 --at 给出的时间段（默认全片）内等距抽 N 帧拼网格，标注帧号和秒。"""
     ctx = CliContext(json_mode, quiet, verbose, no_progress)
     with cli_guard("sheet", ctx):
+        address = read_address(at, ref_file)
+        check(address, command="sheet", time_modes={"range", "all"})
+        when = range_options(address)
+        when.pop("sample_every")
         with progress_bar("抽帧拼图", 1, ctx.progress_disabled) as update:
             result = core.sample_frames(
                 media,
                 count=count,
                 cols=cols,
-                start_frame=start_frame,
-                end_frame=end_frame,
-                start=start,
-                end=end,
+                **when,
                 tile_max_dim=tile_max_dim,
                 annotate=not no_annotate,
                 progress=update,

@@ -75,10 +75,10 @@ def test_timeline_on_vfr(vfr_video: Path) -> None:
 
 
 def test_cli_frame_on_vfr(vfr_video: Path) -> None:
-    data = run_json("frame", vfr_video, "--frame", 7, "--json")["data"]
+    data = run_json("frame", vfr_video, "--at", "f=7", "--json")["data"]
     assert data["frame"] == 7
     pix = run_json(
-        "pixel", vfr_video, "--frame", 7, "--point", "0,0", "--json"
+        "pixel", vfr_video, "--at", "f=7 point(0,0)", "--json"
     )["data"]["pixels"][0]["rgb"]
     assert (pix["r"], pix["g"], pix["b"]) == (84, 100, 171)
 

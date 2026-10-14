@@ -8,35 +8,30 @@ from typing import Optional
 import typer
 
 from pixelprobe import core
+from pixelprobe.address import check, points_of, single_frame_options
 from pixelprobe.cli import (
+    AT_OPT,
     JSON_OPT,
     NO_PROGRESS_OPT,
     QUIET_OPT,
+    REF_FILE_OPT,
     VERBOSE_OPT,
     CliContext,
     cli_guard,
+    read_address,
 )
-from pixelprobe.models.errors import InvalidRangeError
+from pixelprobe.models.errors import AddressError, InvalidRangeError
 from pixelprobe.output import json_writer
 from pixelprobe.output.console import out_console, print_table
-from pixelprobe.utils.coordinates import parse_point, xy_from_pixel_id
 from pixelprobe.utils.timecode import seconds_to_ms
+
+_NO_POINT = '请在 --at 中至少指定一个 point(x,y) 或 pid(n)，例如 --at "f=12 point(520,340)"'
 
 
 def pixel(
     media: Path = typer.Argument(..., help="图片或视频路径"),
-    point: Optional[list[str]] = typer.Option(
-        None, "--point", help="像素坐标 x,y（可重复指定多个）"
-    ),
-    pixel_id: Optional[list[int]] = typer.Option(
-        None, "--pixel-id", help="像素编号 y*width+x（可重复指定多个）"
-    ),
-    frame_index: Optional[int] = typer.Option(
-        None, "--frame", help="视频帧号（从 0 开始），与 --time 二选一"
-    ),
-    time: Optional[float] = typer.Option(
-        None, "--time", help="视频时间（秒），与 --frame 二选一"
-    ),
+    at: Optional[str] = AT_OPT,
+    ref_file: Optional[Path] = REF_FILE_OPT,
     sample: str = typer.Option(
         "display", "--sample",
         help="样本类型：display（历史 RGB8）或 native（图片原生样本）",
@@ -46,26 +41,24 @@ def pixel(
     verbose: bool = VERBOSE_OPT,
     no_progress: bool = NO_PROGRESS_OPT,
 ) -> None:
-    """查询像素；``--sample native`` 可读取图片原生通道、Alpha 与高位深值。"""
+    """查询像素：--at "f=12 point(520,340) pid(1000)"；``--sample native`` 读取图片原生通道。"""
     ctx = CliContext(json_mode, quiet, verbose, no_progress)
     with cli_guard("pixel", ctx):
         sample = sample.lower()
         if sample not in {"display", "native"}:
             raise InvalidRangeError("--sample 仅支持 display 或 native")
+        address = read_address(at, ref_file)
+        check(
+            address, command="pixel", time_modes={"single"}, shapes={"point", "pid"},
+        )
 
         if sample == "native":
-            if frame_index is not None or time is not None:
-                raise InvalidRangeError(
-                    "原生图片样本不支持 --frame / --time；这些参数仅对视频有效"
-                )
+            if address.time is not None:
+                raise AddressError("原生图片样本不接受时间（f=/t=）；时间只对视频有效")
             arr, native_metadata, media_info = core.load_native_image(media)
-            points = [parse_point(p) for p in (point or [])]
-            points += [
-                xy_from_pixel_id(pid, media_info.width, media_info.height)
-                for pid in (pixel_id or [])
-            ]
+            points = points_of(address, media_info.width, media_info.height)
             if not points:
-                raise InvalidRangeError("请至少指定一个 --point 或 --pixel-id")
+                raise AddressError(_NO_POINT)
             samples = core.inspect_native_pixels(
                 arr,
                 points,
@@ -115,17 +108,11 @@ def pixel(
             return
 
         arr, idx, t, media_info = core.load_frame(
-            media, frame=frame_index, time=time
+            media, **single_frame_options(address)
         )
-        points = [parse_point(p) for p in (point or [])]
-        points += [
-            xy_from_pixel_id(pid, media_info.width, media_info.height)
-            for pid in (pixel_id or [])
-        ]
+        points = points_of(address, media_info.width, media_info.height)
         if not points:
-            raise InvalidRangeError(
-                "请至少指定一个 --point 或 --pixel-id"
-            )
+            raise AddressError(_NO_POINT)
         samples = core.inspect_pixels(arr, points, frame=idx, time_seconds=t)
 
         data = {

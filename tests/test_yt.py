@@ -46,7 +46,7 @@ def test_yt_cli_metadata(test_video: Path, tmp_path: Path) -> None:
     gx, _ = GREEN_POS
     out = tmp_path / "yt.png"
     data = run_json(
-        "yt", test_video, "--x", gx, "--output", out, "--json"
+        "yt", test_video, "--at", f"col({gx})", "--output", out, "--json"
     )["data"]
     assert data["slice_type"] == "yt"
     assert data["space_axis"] == "original_y"
@@ -56,6 +56,6 @@ def test_yt_cli_metadata(test_video: Path, tmp_path: Path) -> None:
 
 
 def test_yt_x_out_of_range(test_video: Path) -> None:
-    code, data = run_json_error("yt", test_video, "--x", -1, "--json")
+    code, data = run_json_error("yt", test_video, "--at", "col(-1)", "--json")
     assert code == 5
     assert data["error"]["code"] == "COORDINATE_OUT_OF_RANGE"

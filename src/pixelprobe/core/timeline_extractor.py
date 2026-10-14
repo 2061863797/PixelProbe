@@ -55,11 +55,9 @@ def build_points(
     """把 CLI 的选点参数统一为坐标列表（选择顺序）。"""
     explicit = bool(points) or bool(pixel_ids)
     if explicit and grid is not None:
-        raise InvalidRangeError(
-            "--point/--pixel-id 与 --grid 不能同时使用"
-        )
+        raise InvalidRangeError("point(...)/pid(...) 与 grid(...) 不能同时使用")
     if grid is None and (step is not None or block_size is not None):
-        raise InvalidRangeError("--step / --block-size 必须与 --grid 搭配使用")
+        raise InvalidRangeError("grid 的 step 与 --block-size 必须与 grid(...) 搭配使用")
 
     result: list[tuple[int, int]] = []
     if explicit:
@@ -76,7 +74,7 @@ def build_points(
         result = grid_points(grid, spacing)
     if not result:
         raise InvalidRangeError(
-            "未指定任何采样点，请使用 --point / --pixel-id / --grid"
+            '未指定任何采样点，请在 --at 中写 point(x,y)、pid(n) 或 grid(x,y,w,h step=n)'
         )
     return result
 

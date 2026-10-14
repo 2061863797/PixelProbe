@@ -8,37 +8,28 @@ from typing import Optional
 import typer
 
 from pixelprobe import core
+from pixelprobe.address import check, pair_options, rect_of
 from pixelprobe.cli import (
+    AT_OPT,
     JSON_OPT,
     NO_PROGRESS_OPT,
     QUIET_OPT,
+    REF_FILE_OPT,
     VERBOSE_OPT,
     CliContext,
     cli_guard,
+    media_size,
+    read_address,
 )
 from pixelprobe.output import json_writer
 from pixelprobe.output.console import out_console, print_kv
 from pixelprobe.output.image_writer import save_png
-from pixelprobe.utils.coordinates import parse_rect
 
 
 def compare(
     media: Path = typer.Argument(..., help="视频路径"),
-    frame_a: Optional[int] = typer.Option(
-        None, "--frame-a", help="帧 A 帧号，与 --time-a 二选一"
-    ),
-    time_a: Optional[float] = typer.Option(
-        None, "--time-a", help="帧 A 时间（秒），与 --frame-a 二选一"
-    ),
-    frame_b: Optional[int] = typer.Option(
-        None, "--frame-b", help="帧 B 帧号，与 --time-b 二选一"
-    ),
-    time_b: Optional[float] = typer.Option(
-        None, "--time-b", help="帧 B 时间（秒），与 --frame-b 二选一"
-    ),
-    rect: Optional[str] = typer.Option(
-        None, "--rect", help="只比较子区域 x,y,width,height"
-    ),
+    at: Optional[str] = AT_OPT,
+    ref_file: Optional[Path] = REF_FILE_OPT,
     threshold: int = typer.Option(
         10, "--threshold", help="变化像素判定阈值（每像素三通道最大差，0-255）"
     ),
@@ -53,16 +44,15 @@ def compare(
     verbose: bool = VERBOSE_OPT,
     no_progress: bool = NO_PROGRESS_OPT,
 ) -> None:
-    """比较两帧：具体哪里变了、变了多少（bbox 为原始分辨率坐标）。"""
+    """比较两帧：--at "f=0,5"，可加 rect(...)/cell(...)；bbox 为原始分辨率坐标。"""
     ctx = CliContext(json_mode, quiet, verbose, no_progress)
     with cli_guard("compare", ctx):
-        rect_tuple = parse_rect(rect) if rect else None
+        address = read_address(at, ref_file)
+        check(address, command="compare", time_modes={"list"}, shapes={"rect", "cell"})
+        rect_tuple = rect_of(address, *media_size(media, address))
         result = core.compare_frames(
             media,
-            frame_a=frame_a,
-            time_a=time_a,
-            frame_b=frame_b,
-            time_b=time_b,
+            **pair_options(address),
             rect=rect_tuple,
             threshold=threshold,
             colormap=colormap,  # type: ignore[arg-type]

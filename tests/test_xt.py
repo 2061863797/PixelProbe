@@ -52,7 +52,7 @@ def test_xt_range_and_sampling(test_video: Path) -> None:
 def test_xt_cli_output_and_metadata(test_video: Path, tmp_path: Path) -> None:
     out = tmp_path / "xt.png"
     data = run_json(
-        "xt", test_video, "--y", RED_Y,
+        "xt", test_video, "--at", f"row({RED_Y})",
         "--scale-x", 2, "--scale-t", 3, "--output", out, "--json",
     )["data"]
     assert data["slice_type"] == "xt"
@@ -67,6 +67,6 @@ def test_xt_cli_output_and_metadata(test_video: Path, tmp_path: Path) -> None:
 
 
 def test_xt_y_out_of_range(test_video: Path) -> None:
-    code, data = run_json_error("xt", test_video, "--y", 32, "--json")
+    code, data = run_json_error("xt", test_video, "--at", "row(32)", "--json")
     assert code == 5
     assert data["error"]["code"] == "COORDINATE_OUT_OF_RANGE"

@@ -12,32 +12,29 @@ from typing import Optional
 import typer
 
 from pixelprobe import core
+from pixelprobe.address import check, rect_of, single_frame_options
 from pixelprobe.cli import (
+    AT_OPT,
     JSON_OPT,
     NO_PROGRESS_OPT,
     QUIET_OPT,
+    REF_FILE_OPT,
     VERBOSE_OPT,
     CliContext,
     cli_guard,
+    media_size,
+    read_address,
 )
 from pixelprobe.output import json_writer
 from pixelprobe.output.console import out_console, print_kv
 from pixelprobe.output.image_writer import fit_within, save_png
-from pixelprobe.utils.coordinates import parse_rect
 from pixelprobe.utils.timecode import seconds_to_ms
 
 
 def frame(
     media: Path = typer.Argument(..., help="视频（或图片）路径"),
-    frame_index: Optional[int] = typer.Option(
-        None, "--frame", help="帧号（从 0 开始），与 --time 二选一"
-    ),
-    time: Optional[float] = typer.Option(
-        None, "--time", help="时间（秒，允许小数），与 --frame 二选一"
-    ),
-    crop: Optional[str] = typer.Option(
-        None, "--crop", help="裁剪区域 x,y,width,height"
-    ),
+    at: Optional[str] = AT_OPT,
+    ref_file: Optional[Path] = REF_FILE_OPT,
     max_width: Optional[int] = typer.Option(
         None, "--max-width", help="预览图最大宽度（保持宽高比，仅影响导出）"
     ),
@@ -52,12 +49,14 @@ def frame(
     verbose: bool = VERBOSE_OPT,
     no_progress: bool = NO_PROGRESS_OPT,
 ) -> None:
-    """提取指定帧。按帧号（--frame）或时间（--time）定位，可选裁剪与导出 PNG。"""
+    """提取指定帧：--at "f=120" 或 "t=3.5s"，可加 rect(...)/cell(...) 裁剪；默认第 0 帧。"""
     ctx = CliContext(json_mode, quiet, verbose, no_progress)
     with cli_guard("frame", ctx):
-        crop_rect = parse_rect(crop) if crop else None
+        address = read_address(at, ref_file)
+        check(address, command="frame", time_modes={"single"}, shapes={"rect", "cell"})
+        crop_rect = rect_of(address, *media_size(media, address))
         arr, idx, t, media_info = core.get_frame(
-            media, frame=frame_index, time=time, crop=crop_rect
+            media, **single_frame_options(address), crop=crop_rect
         )
 
         output_width: int | None = None
@@ -103,7 +102,7 @@ def frame(
             ("画面尺寸", f"{data['width']}x{data['height']}"),
         ]
         if crop_rect:
-            rows.append(("裁剪", crop))
+            rows.append(("裁剪", ",".join(map(str, crop_rect))))
         if output:
             rows.append(("输出文件", str(output)))
             rows.append(("输出尺寸", f"{output_width}x{output_height}"))

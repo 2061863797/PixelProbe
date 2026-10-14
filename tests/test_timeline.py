@@ -102,7 +102,7 @@ def test_csv_output(test_video: Path, tmp_path: Path) -> None:
     gx, gy = GREEN_POS
     run_json(
         "timeline", test_video,
-        "--point", f"{gx},{gy}", "--point", "2,28",
+        "--at", f"point({gx},{gy}) point(2,28)",
         "--csv", out_csv, "--json",
     )
     with out_csv.open(encoding="utf-8-sig", newline="") as fh:
@@ -118,7 +118,7 @@ def test_csv_output(test_video: Path, tmp_path: Path) -> None:
 def test_png_scale_nearest(test_video: Path, tmp_path: Path) -> None:
     out_png = tmp_path / "tl.png"
     data = run_json(
-        "timeline", test_video, "--point", "24,16",
+        "timeline", test_video, "--at", "point(24,16)",
         "--scale", 4, "--output", out_png, "--json",
     )["data"]
     assert data["raw_width"] == FRAME_COUNT and data["raw_height"] == 1
@@ -136,7 +136,7 @@ def test_png_scale_nearest(test_video: Path, tmp_path: Path) -> None:
 def test_orientation_vertical(test_video: Path, tmp_path: Path) -> None:
     out_png = tmp_path / "竖排.png"
     data = run_json(
-        "timeline", test_video, "--point", "24,16", "--point", "2,28",
+        "timeline", test_video, "--at", "point(24,16) point(2,28)",
         "--orientation", "vertical", "--output", out_png, "--json",
     )["data"]
     assert data["raw_width"] == 2 and data["raw_height"] == FRAME_COUNT
@@ -150,7 +150,7 @@ def test_invalid_enum_option_is_reported_as_argument_error(
     test_video: Path, option: str, value: str,
 ) -> None:
     code, data = run_json_error(
-        "timeline", test_video, "--point", "0,0", option, value, "--json",
+        "timeline", test_video, "--at", "point(0,0)", option, value, "--json",
     )
 
     assert code == 2

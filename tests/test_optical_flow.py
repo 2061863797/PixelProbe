@@ -109,7 +109,7 @@ def test_dependency_missing_error(motion_video: Path, monkeypatch) -> None:
 def test_flow_cli_json_reports_threshold(motion_video: Path) -> None:
     """成功的 CLI 光流分析必须输出请求的阈值，而不是在组装结果时崩溃。"""
     completed = run_cli(
-        "flow", motion_video, "--frame-a", 0, "--frame-b", 1,
+        "flow", motion_video, "--at", "f=0,1",
         "--mag-threshold", 2.5, "--json",
     )
     assert completed.returncode == 0, completed.stderr

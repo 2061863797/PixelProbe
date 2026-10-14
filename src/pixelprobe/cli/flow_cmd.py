@@ -8,13 +8,17 @@ from typing import Optional
 import typer
 
 import pixelprobe
+from pixelprobe.address import check, pair_options, range_options
 from pixelprobe.cli import (
+    AT_OPT,
     JSON_OPT,
     NO_PROGRESS_OPT,
     QUIET_OPT,
+    REF_FILE_OPT,
     VERBOSE_OPT,
     CliContext,
     cli_guard,
+    read_address,
 )
 from pixelprobe.output import json_writer
 from pixelprobe.output.console import out_console, print_kv, progress_bar
@@ -24,30 +28,12 @@ from pixelprobe.request_builders import flow_request
 
 def flow(
     media: Path = typer.Argument(..., help="视频路径"),
-    frame_a: Optional[int] = typer.Option(
-        None, "--frame-a", help="帧 A 帧号，与 --time-a 二选一"
-    ),
-    time_a: Optional[float] = typer.Option(
-        None, "--time-a", help="帧 A 时间（秒）"
-    ),
-    frame_b: Optional[int] = typer.Option(
-        None, "--frame-b", help="帧 B 帧号，与 --time-b 二选一"
-    ),
-    time_b: Optional[float] = typer.Option(
-        None, "--time-b", help="帧 B 时间（秒）"
-    ),
+    at: Optional[str] = AT_OPT,
+    ref_file: Optional[Path] = REF_FILE_OPT,
     accumulate: bool = typer.Option(
-        False, "--accumulate", help="累积模式：对帧范围逐对光流相加"
+        False, "--accumulate",
+        help='累积模式：对 --at 给出的帧范围逐对光流相加，如 --at "f=0..30 step=2"',
     ),
-    start_frame: Optional[int] = typer.Option(
-        None, "--start-frame", help="起始帧（含，累积模式）"
-    ),
-    end_frame: Optional[int] = typer.Option(
-        None, "--end-frame", help="结束帧（含，累积模式）"
-    ),
-    start: Optional[float] = typer.Option(None, "--start", help="起始时间（秒）"),
-    end: Optional[float] = typer.Option(None, "--end", help="结束时间（秒）"),
-    sample_every: int = typer.Option(1, "--sample-every", help="每隔 N 帧采样一次"),
     compensate: bool = typer.Option(
         False, "--compensate", help="估计并扣除全局运动（区分镜头运动与物体运动）"
     ),
@@ -65,20 +51,20 @@ def flow(
     verbose: bool = VERBOSE_OPT,
     no_progress: bool = NO_PROGRESS_OPT,
 ) -> None:
-    """稠密光流：运动方向/幅度、全局运动估计与运动区域 bbox。"""
+    """稠密光流：--at "f=0,4" 比较两帧，或 --accumulate --at "f=0..30"；输出方向、幅度、全局运动与 bbox。"""
     ctx = CliContext(json_mode, quiet, verbose, no_progress)
     with cli_guard("flow", ctx):
+        address = read_address(at, ref_file)
+        if accumulate:
+            check(address, command="flow --accumulate",
+                  time_modes={"range", "all"}, step=True)
+            when = range_options(address)
+        else:
+            check(address, command="flow", time_modes={"list"})
+            when = pair_options(address)
         request = flow_request(
             media,
-            frame_a=frame_a,
-            time_a=time_a,
-            frame_b=frame_b,
-            time_b=time_b,
-            start_frame=start_frame,
-            end_frame=end_frame,
-            start=start,
-            end=end,
-            sample_every=sample_every,
+            **when,
             accumulate=accumulate,
             compensate_global=compensate,
             mag_threshold=mag_threshold,

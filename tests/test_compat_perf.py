@@ -25,7 +25,7 @@ def test_compat_h264_yuv420p_tolerance(compat_video: Path) -> None:
 
 def test_compat_pixel_cli(compat_video: Path) -> None:
     data = run_json(
-        "pixel", compat_video, "--frame", 9, "--point", "8,8", "--json"
+        "pixel", compat_video, "--at", "f=9 point(8,8)", "--json"
     )["data"]
     rgb = data["pixels"][0]["rgb"]
     assert abs(rgb["r"] - 200) <= 6

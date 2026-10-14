@@ -14,8 +14,7 @@ def test_image_corner_pixels(test_image: Path) -> None:
     # 四角：R=x*16, G=y*16, B=(x+y)*8
     data = run_json(
         "pixel", test_image,
-        "--point", "0,0", "--point", "15,0",
-        "--point", "0,15", "--point", "15,15",
+        "--at", "point(0,0) point(15,0) point(0,15) point(15,15)",
         "--json",
     )["data"]
     expected = {
@@ -35,7 +34,7 @@ def test_image_corner_pixels(test_image: Path) -> None:
 def test_pixel_out_of_range(test_image: Path) -> None:
     for point in ("-1,0", "16,0", "0,16"):
         code, data = run_json_error(
-            "pixel", test_image, "--point", point, "--json"
+            "pixel", test_image, "--at", f"point({point})", "--json"
         )
         assert code == 5
         assert data["error"]["code"] == "COORDINATE_OUT_OF_RANGE"
@@ -43,8 +42,8 @@ def test_pixel_out_of_range(test_image: Path) -> None:
 
 def test_pixel_id_equivalent_to_point(test_image: Path) -> None:
     pid = 5 * 16 + 3  # (x=3, y=5)
-    by_id = run_json("pixel", test_image, "--pixel-id", pid, "--json")["data"]
-    by_pt = run_json("pixel", test_image, "--point", "3,5", "--json")["data"]
+    by_id = run_json("pixel", test_image, "--at", f"pid({pid})", "--json")["data"]
+    by_pt = run_json("pixel", test_image, "--at", "point(3,5)", "--json")["data"]
     assert by_id["pixels"][0]["rgb"] == by_pt["pixels"][0]["rgb"]
     assert by_id["pixels"][0]["x"] == 3 and by_id["pixels"][0]["y"] == 5
 
@@ -53,10 +52,9 @@ def test_video_pixels_at_frame(test_video: Path) -> None:
     gx, gy = GREEN_POS
     cx, cy = COUNTER_POS
     data = run_json(
-        "pixel", test_video, "--frame", 12,
-        "--point", "12,8",            # 移动红点在第 12 帧位于 x=12
-        "--point", f"{gx},{gy}",      # 固定绿点
-        "--point", f"{cx},{cy}",      # 计数像素 (t*8, t*4, t*2)
+        "pixel", test_video,
+        # 移动红点在第 12 帧位于 x=12；固定绿点；计数像素 (t*8, t*4, t*2)
+        "--at", f"f=12 point(12,8) point({gx},{gy}) point({cx},{cy})",
         "--json",
     )["data"]
     assert data["frame"] == 12
@@ -71,7 +69,7 @@ def test_video_pixels_at_frame(test_video: Path) -> None:
 
 def test_video_pixel_by_time(test_video: Path) -> None:
     data = run_json(
-        "pixel", test_video, "--time", 0.5, "--point", "0,0", "--json"
+        "pixel", test_video, "--at", "t=0.5s point(0,0)", "--json"
     )["data"]
     # 0.5s = 第 15 帧闪白
     assert data["pixels"][0]["rgb"] == {"r": 255, "g": 255, "b": 255}
@@ -80,7 +78,7 @@ def test_video_pixel_by_time(test_video: Path) -> None:
 
 def test_hsv_and_luminance_fields(test_video: Path) -> None:
     data = run_json(
-        "pixel", test_video, "--frame", 3, "--point", "3,8", "--json"
+        "pixel", test_video, "--at", "f=3 point(3,8)", "--json"
     )["data"]
     sample = data["pixels"][0]
     # 纯红：H=0, S=100, V=100；亮度 = 0.2126*255
@@ -91,7 +89,8 @@ def test_hsv_and_luminance_fields(test_video: Path) -> None:
 def test_no_point_is_param_error(test_image: Path) -> None:
     code, data = run_json_error("pixel", test_image, "--json")
     assert code == 2
-    assert data["error"]["code"] == "INVALID_RANGE"
+    assert data["error"]["code"] == "INVALID_ADDRESS"
+    assert "point(x,y)" in data["error"]["message"]
 
 
 def test_native_pixel_preserves_rgba_samples(tmp_path: Path) -> None:
@@ -100,7 +99,7 @@ def test_native_pixel_preserves_rgba_samples(tmp_path: Path) -> None:
     Image.fromarray(source).save(path)
 
     data = run_json(
-        "pixel", path, "--point", "0,0", "--sample", "native", "--json",
+        "pixel", path, "--at", "point(0,0)", "--sample", "native", "--json",
     )["data"]
     assert data["sample_semantics"] == "stored_sample"
     assert data["native_image"] == {
@@ -126,7 +125,7 @@ def test_native_pixel_preserves_high_bit_samples(tmp_path: Path) -> None:
     Image.fromarray(np.array([[65535]], dtype=np.uint16)).save(path)
 
     data = run_json(
-        "pixel", path, "--point", "0,0", "--sample", "native", "--json",
+        "pixel", path, "--at", "point(0,0)", "--sample", "native", "--json",
     )["data"]
     assert data["sample_semantics"] == "stored_sample"
     assert data["native_image"]["mode"] == "I;16"
@@ -137,7 +136,7 @@ def test_native_pixel_preserves_high_bit_samples(tmp_path: Path) -> None:
 
 def test_native_pixel_rejects_video(test_video: Path) -> None:
     code, data = run_json_error(
-        "pixel", test_video, "--point", "0,0", "--sample", "native", "--json",
+        "pixel", test_video, "--at", "point(0,0)", "--sample", "native", "--json",
     )
     assert code == 2
     assert data["error"]["code"] == "INVALID_RANGE"

@@ -12,18 +12,21 @@ from typing import Literal, Optional
 import typer
 
 import pixelprobe
+from pixelprobe.address import check, col_of, range_options, row_of
 from pixelprobe.cli import (
+    AT_OPT,
     JSON_OPT,
     NO_PROGRESS_OPT,
     QUIET_OPT,
+    REF_FILE_OPT,
     VERBOSE_OPT,
     CliContext,
     cli_guard,
+    read_address,
 )
+from pixelprobe.models.errors import AddressError
 from pixelprobe.models.spacetime import SpacetimeMetadata
-from pixelprobe.request_builders import (
-    spacetime_request,
-)
+from pixelprobe.request_builders import spacetime_request
 from pixelprobe.output import json_writer
 from pixelprobe.output.console import out_console, print_kv, progress_bar
 from pixelprobe.output.image_writer import save_png, scale_nearest
@@ -33,12 +36,8 @@ from pixelprobe.utils.validation import ensure_scale
 def _run_slice(
     slice_type: Literal["xt", "yt"],
     media: Path,
-    fixed: int,
-    start_frame: Optional[int],
-    end_frame: Optional[int],
-    start: Optional[float],
-    end: Optional[float],
-    sample_every: int,
+    at: Optional[str],
+    ref_file: Optional[Path],
     scale_space: int,
     scale_t: int,
     output: Optional[Path],
@@ -48,16 +47,19 @@ def _run_slice(
         ensure_scale(scale_space, "--scale-x" if slice_type == "xt" else "--scale-y")
         ensure_scale(scale_t, "--scale-t")
         desc = "生成 X–T 切片" if slice_type == "xt" else "生成 Y–T 切片"
-        request = spacetime_request(
-            media,
-            slice_type,
-            fixed,
-            start_frame=start_frame,
-            end_frame=end_frame,
-            start=start,
-            end=end,
-            sample_every=sample_every,
+        address = read_address(at, ref_file)
+        line_shape = "row" if slice_type == "xt" else "col"
+        check(
+            address, command=slice_type, time_modes={"single", "range", "all"},
+            shapes={line_shape}, step=True,
         )
+        fixed = row_of(address) if slice_type == "xt" else col_of(address)
+        if fixed is None:
+            example = "row(120)" if slice_type == "xt" else "col(40)"
+            raise AddressError(
+                f'{slice_type} 需要扫描线位置，例如 --at "t=1s..3s {example}"'
+            )
+        request = spacetime_request(media, slice_type, fixed, **range_options(address))
         selection = request.selection
         with progress_bar(desc, 1, ctx.progress_disabled) as update:
             generated = pixelprobe.generate(request)
@@ -118,16 +120,8 @@ def _run_slice(
 
 def xt(
     media: Path = typer.Argument(..., help="视频路径"),
-    y: int = typer.Option(..., "--y", help="水平扫描线的 y 坐标"),
-    start_frame: Optional[int] = typer.Option(
-        None, "--start-frame", help="起始帧（含）"
-    ),
-    end_frame: Optional[int] = typer.Option(
-        None, "--end-frame", help="结束帧（含）"
-    ),
-    start: Optional[float] = typer.Option(None, "--start", help="起始时间（秒）"),
-    end: Optional[float] = typer.Option(None, "--end", help="结束时间（秒）"),
-    sample_every: int = typer.Option(1, "--sample-every", help="每隔 N 帧采样一次"),
+    at: Optional[str] = AT_OPT,
+    ref_file: Optional[Path] = REF_FILE_OPT,
     scale_x: int = typer.Option(1, "--scale-x", help="空间轴最近邻放大倍数"),
     scale_t: int = typer.Option(1, "--scale-t", help="时间轴最近邻放大倍数"),
     output: Optional[Path] = typer.Option(None, "--output", help="输出 PNG 路径"),
@@ -136,24 +130,15 @@ def xt(
     verbose: bool = VERBOSE_OPT,
     no_progress: bool = NO_PROGRESS_OPT,
 ) -> None:
-    """生成固定水平扫描线的 X–T 时空切片（横轴=原视频 x，纵轴=时间）。"""
+    """X–T 时空切片（横轴=原视频 x，纵轴=时间）：--at "row(120)"，可加时间范围与 step。"""
     ctx = CliContext(json_mode, quiet, verbose, no_progress)
-    _run_slice("xt", media, y, start_frame, end_frame, start, end,
-               sample_every, scale_x, scale_t, output, ctx)
+    _run_slice("xt", media, at, ref_file, scale_x, scale_t, output, ctx)
 
 
 def yt(
     media: Path = typer.Argument(..., help="视频路径"),
-    x: int = typer.Option(..., "--x", help="垂直扫描线的 x 坐标"),
-    start_frame: Optional[int] = typer.Option(
-        None, "--start-frame", help="起始帧（含）"
-    ),
-    end_frame: Optional[int] = typer.Option(
-        None, "--end-frame", help="结束帧（含）"
-    ),
-    start: Optional[float] = typer.Option(None, "--start", help="起始时间（秒）"),
-    end: Optional[float] = typer.Option(None, "--end", help="结束时间（秒）"),
-    sample_every: int = typer.Option(1, "--sample-every", help="每隔 N 帧采样一次"),
+    at: Optional[str] = AT_OPT,
+    ref_file: Optional[Path] = REF_FILE_OPT,
     scale_y: int = typer.Option(1, "--scale-y", help="空间轴最近邻放大倍数"),
     scale_t: int = typer.Option(1, "--scale-t", help="时间轴最近邻放大倍数"),
     output: Optional[Path] = typer.Option(None, "--output", help="输出 PNG 路径"),
@@ -162,7 +147,6 @@ def yt(
     verbose: bool = VERBOSE_OPT,
     no_progress: bool = NO_PROGRESS_OPT,
 ) -> None:
-    """生成固定垂直扫描线的 Y–T 时空切片（横轴=原视频 y，纵轴=时间）。"""
+    """Y–T 时空切片（横轴=原视频 y，纵轴=时间）：--at "col(40)"，可加时间范围与 step。"""
     ctx = CliContext(json_mode, quiet, verbose, no_progress)
-    _run_slice("yt", media, x, start_frame, end_frame, start, end,
-               sample_every, scale_y, scale_t, output, ctx)
+    _run_slice("yt", media, at, ref_file, scale_y, scale_t, output, ctx)

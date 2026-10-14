@@ -44,30 +44,35 @@ See the [installation guide](https://github.com/2061863797/PixelProbe/blob/main/
 
 ## Quick Examples
 
+Time and position are given with a single `--at` option, for example
+`"f=120 rect(400,200,200,150)"`, `"t=1s..3s step=2"`, or `"cell(C4)"`.
+See the [address syntax](docs/address.md) for the full grammar.
+
 ```bash
 # Show media information
 pixelprobe info input.mp4
 
 # Extract frame 120
-pixelprobe frame input.mp4 --frame 120 --output frame120.png
+pixelprobe frame input.mp4 --at "f=120" --output frame120.png
 
 # Extract and crop the frame at 3.5 seconds
-pixelprobe frame input.mp4 --time 3.5 --crop 400,200,300,300 --output crop.png
+pixelprobe frame input.mp4 --at "t=3.5s rect(400,200,300,300)" --output crop.png
 
 # Inspect two pixels
-pixelprobe pixel input.mp4 --frame 120 --point 520,340 --point 600,400
+pixelprobe pixel input.mp4 --at "f=120 point(520,340) point(600,400)"
 
 # Read native image samples, including alpha, palette indexes, or 16-bit values
-pixelprobe pixel input.png --sample native --point 520,340 --json
+pixelprobe pixel input.png --sample native --at "point(520,340)" --json
 
-# Analyze a rectangular region
-pixelprobe region input.mp4 --frame 120 --rect 400,200,200,150
+# Analyze a rectangular region, or one cell of an 8-column x 6-row grid
+pixelprobe region input.mp4 --at "f=120 rect(400,200,200,150)"
+pixelprobe region input.mp4 --at "f=120 cell(C4)"
 
 # Export a pixel-color timeline
-pixelprobe timeline input.mp4 --point 520,340 --output timeline.png --csv timeline.csv
+pixelprobe timeline input.mp4 --at "point(520,340)" --output timeline.png --csv timeline.csv
 
-# Find the 10 strongest changes in a region
-pixelprobe changes input.mp4 --rect 400,200,200,150 --top 10
+# Find the 10 strongest changes in a region between 10 s and 20 s
+pixelprobe changes input.mp4 --at "t=10s..20s rect(400,200,200,150)" --top 10
 
 # Generate a representative-frame sheet, change events, and anomalous-frame findings
 pixelprobe scan input.mp4 --sheet-output overview.png
@@ -76,7 +81,7 @@ pixelprobe scan input.mp4 --sheet-output overview.png
 pixelprobe reduce input.mp4 --op std --output temporal-std.png
 
 # Compare two frames and locate the changed region
-pixelprobe compare input.mp4 --frame-a 100 --frame-b 101 --output diff.png
+pixelprobe compare input.mp4 --at "f=100,101" --output diff.png
 
 # Sample 9 evenly spaced frames into a contact sheet
 pixelprobe sheet input.mp4 --count 9 --output sheet.png
@@ -85,7 +90,7 @@ pixelprobe sheet input.mp4 --count 9 --output sheet.png
 pixelprobe spectrum input.mp4 --source luma
 
 # Calculate dense optical flow
-pixelprobe flow input.mp4 --frame-a 100 --frame-b 101 --flow-output flow.png
+pixelprobe flow input.mp4 --at "f=100,101" --flow-output flow.png
 ```
 
 ## Example Result

@@ -27,9 +27,9 @@ min_changed_ratio=0。没有候选不代表范围外、采样间隙、Alpha、�
 ## 用法
 
 ```powershell
-pixelprobe workflow "视频.mkv" --mode first_change --end-frame 899 --output "首次变化.bundle" --json
-pixelprobe workflow "新版.mkv" --mode compare_media --reference "旧版.mkv" --end-frame 299 --output "版本比较.bundle" --json
-pixelprobe workflow "视频.mkv" --mode quality_overview --end-frame 1799 --sample-every 10 --output "质量概览.bundle" --json
+pixelprobe workflow "视频.mkv" --mode first_change --at "f=..899" --output "首次变化.bundle" --json
+pixelprobe workflow "新版.mkv" --mode compare_media --reference "旧版.mkv" --at "f=..299" --output "版本比较.bundle" --json
+pixelprobe workflow "视频.mkv" --mode quality_overview --at "f=..1799 step=10" --output "质量概览.bundle" --json
 ```
 
 ```python

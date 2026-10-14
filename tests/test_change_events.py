@@ -119,9 +119,13 @@ def test_cli_curve_image_export(test_video: Path, tmp_path: Path) -> None:
         assert image.size == (768, 256)
 
 
-def test_cli_step_still_requires_grid(test_video: Path) -> None:
-    code, data = run_json_error(
-        "changes", test_video, "--step", 2, "--json"
+def test_cli_step_means_time_sampling_and_grid_step_is_separate(test_video: Path) -> None:
+    # 地址中的 step= 是时间采样间隔；网格间距写在 grid(... step=n) 内，两者不会混淆
+    data = run_json("changes", test_video, "--at", "step=2", "--json")["data"]
+    assert data["sample_every"] == 2
+    assert data["mode"] == "full"
+    code, error = run_json_error(
+        "changes", test_video, "--at", "grid(0,0,32,32 step=0)", "--json"
     )
     assert code == 2
-    assert data["error"]["code"] == "INVALID_RANGE"
+    assert error["error"]["code"] == "INVALID_ADDRESS"

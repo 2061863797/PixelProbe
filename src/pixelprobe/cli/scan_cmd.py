@@ -8,13 +8,17 @@ from typing import Optional
 import typer
 
 from pixelprobe import core
+from pixelprobe.address import check
 from pixelprobe.cli import (
+    AT_OPT,
     JSON_OPT,
     NO_PROGRESS_OPT,
     QUIET_OPT,
+    REF_FILE_OPT,
     VERBOSE_OPT,
     CliContext,
     cli_guard,
+    read_address,
 )
 from pixelprobe.output import json_writer
 from pixelprobe.output.console import out_console, print_kv, progress_bar
@@ -25,10 +29,8 @@ from pixelprobe.output.plot import render_curve
 def scan(
     media: Path = typer.Argument(..., help="视频路径"),
     sheet_count: int = typer.Option(9, "--sheet-count", help="概览网格抽帧数"),
-    sample_every: Optional[int] = typer.Option(
-        None, "--sample-every",
-        help="每隔 N 帧采样一次（缺省自动：全片约 1800 帧封顶）",
-    ),
+    at: Optional[str] = AT_OPT,
+    ref_file: Optional[Path] = REF_FILE_OPT,
     threshold: Optional[float] = typer.Option(
         None, "--threshold",
         help="事件分段阈值（缺省自动取剔除最大记录后的 mean + 3*std）",
@@ -44,14 +46,19 @@ def scan(
     verbose: bool = VERBOSE_OPT,
     no_progress: bool = NO_PROGRESS_OPT,
 ) -> None:
-    """未知视频的第一步：单遍解码产出概览网格、变化事件与异常帧。"""
+    """未知视频的第一步：单遍解码产出概览网格、变化事件与异常帧。
+
+    扫描全片；--at "step=N" 可指定每隔 N 帧采样，缺省自动（全片约 1800 帧封顶）。
+    """
     ctx = CliContext(json_mode, quiet, verbose, no_progress)
     with cli_guard("scan", ctx):
+        address = read_address(at, ref_file)
+        check(address, command="scan", step=True)
         with progress_bar("媒体扫描", 1, ctx.progress_disabled) as update:
             result = core.scan_media(
                 media,
                 sheet_count=sheet_count,
-                sample_every=sample_every,
+                sample_every=address.step,
                 event_threshold=threshold,
                 progress=update,
             )

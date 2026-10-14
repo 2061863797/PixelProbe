@@ -14,7 +14,7 @@ from pixelprobe.core import analyze_region
 def test_region_stats_small_rect(test_image: Path) -> None:
     # 左上 2×2：像素 (0,0)=(0,0,0) (1,0)=(16,0,8) (0,1)=(0,16,8) (1,1)=(16,16,16)
     stats = run_json(
-        "region", test_image, "--rect", "0,0,2,2", "--json"
+        "region", test_image, "--at", "rect(0,0,2,2)", "--json"
     )["data"]["statistics"]
     assert stats["pixel_count"] == 4
     assert stats["mean_rgb"] == {"r": 8.0, "g": 8.0, "b": 8.0}
@@ -42,7 +42,7 @@ def test_region_full_image_matches_numpy(test_image: Path) -> None:
 
 def test_region_video_flash_frame(test_video: Path) -> None:
     stats = run_json(
-        "region", test_video, "--frame", 15, "--rect", "4,4,10,10", "--json"
+        "region", test_video, "--at", "f=15 rect(4,4,10,10)", "--json"
     )["data"]["statistics"]
     assert stats["mean_rgb"] == {"r": 255.0, "g": 255.0, "b": 255.0}
     assert stats["std_rgb"] == {"r": 0.0, "g": 0.0, "b": 0.0}
@@ -51,7 +51,7 @@ def test_region_video_flash_frame(test_video: Path) -> None:
 
 def test_region_out_of_bounds(test_image: Path) -> None:
     code, data = run_json_error(
-        "region", test_image, "--rect", "10,10,10,10", "--json"
+        "region", test_image, "--at", "rect(10,10,10,10)", "--json"
     )
     assert code == 5
     assert data["error"]["code"] == "COORDINATE_OUT_OF_RANGE"
@@ -60,8 +60,8 @@ def test_region_out_of_bounds(test_image: Path) -> None:
 def test_region_output_crop(test_video: Path, tmp_path: Path) -> None:
     out = tmp_path / "区域.png"
     data = run_json(
-        "region", test_video, "--frame", 0,
-        "--rect", "0,8,4,1", "--output-crop", out, "--json",
+        "region", test_video, "--at", "f=0 rect(0,8,4,1)",
+        "--output-crop", out, "--json",
     )["data"]
     assert data["crop_path"] == str(out)
     arr = np.asarray(Image.open(out).convert("RGB"), dtype=np.uint8)

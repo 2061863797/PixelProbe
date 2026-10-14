@@ -7,8 +7,6 @@ from typing import Optional
 
 import typer
 
-from pixelprobe import core
-from pixelprobe.address import check, points_of, single_frame_options
 from pixelprobe.cli import (
     AT_OPT,
     JSON_OPT,
@@ -18,14 +16,11 @@ from pixelprobe.cli import (
     VERBOSE_OPT,
     CliContext,
     cli_guard,
-    read_address,
+    run_capability,
 )
-from pixelprobe.models.errors import AddressError, InvalidRangeError
+from pixelprobe.models.errors import InvalidRangeError
 from pixelprobe.output import json_writer
 from pixelprobe.output.console import out_console, print_table
-from pixelprobe.utils.timecode import seconds_to_ms
-
-_NO_POINT = '请在 --at 中至少指定一个 point(x,y) 或 pid(n)，例如 --at "f=12 point(520,340)"'
 
 
 def pixel(
@@ -47,51 +42,14 @@ def pixel(
         sample = sample.lower()
         if sample not in {"display", "native"}:
             raise InvalidRangeError("--sample 仅支持 display 或 native")
-        address = read_address(at, ref_file)
-        check(
-            address, command="pixel", time_modes={"single"}, shapes={"point", "pid"},
-        )
-
+        data = run_capability("pixel", media, at, ref_file, {"sample": sample}).data
+        if ctx.json_mode:
+            json_writer.print_success("pixel", data)
+            return
         if sample == "native":
-            if address.time is not None:
-                raise AddressError("原生图片样本不接受时间（f=/t=）；时间只对视频有效")
-            arr, native_metadata, media_info = core.load_native_image(media)
-            points = points_of(address, media_info.width, media_info.height)
-            if not points:
-                raise AddressError(_NO_POINT)
-            samples = core.inspect_native_pixels(
-                arr,
-                points,
-                bands=native_metadata.bands,
-                sample_semantics=native_metadata.sample_semantics,
-            )
-            data = {
-                "path": media_info.path,
-                "media_type": media_info.media_type,
-                "width": media_info.width,
-                "height": media_info.height,
-                "sample_semantics": native_metadata.sample_semantics,
-                "native_image": {
-                    "mode": native_metadata.mode,
-                    "source_format": native_metadata.source_format,
-                    "dtype": native_metadata.dtype,
-                    "shape": list(native_metadata.shape),
-                    "bands": list(native_metadata.bands),
-                    "bits_per_sample": native_metadata.bits_per_sample,
-                    "has_alpha": native_metadata.has_alpha,
-                    "alpha_representation": native_metadata.alpha_representation,
-                },
-                "pixels": samples,
-            }
-            if ctx.json_mode:
-                json_writer.print_success("pixel", data)
-                return
             if ctx.quiet:
-                for item in samples:
-                    out_console.print(
-                        f"({item['x']},{item['y']}) {item['values']}",
-                        highlight=False,
-                    )
+                for item in data["pixels"]:
+                    out_console.print(f"({item['x']},{item['y']}) {item['values']}", highlight=False)
                 return
             print_table(
                 "原生图片像素查询",
@@ -102,47 +60,24 @@ def pixel(
                         ",".join(item["channels"]), item["values"],
                         item["dtype"], item["sample_semantics"],
                     ]
-                    for item in samples
+                    for item in data["pixels"]
                 ],
             )
             return
-
-        arr, idx, t, media_info = core.load_frame(
-            media, **single_frame_options(address)
-        )
-        points = points_of(address, media_info.width, media_info.height)
-        if not points:
-            raise AddressError(_NO_POINT)
-        samples = core.inspect_pixels(arr, points, frame=idx, time_seconds=t)
-
-        data = {
-            "path": media_info.path,
-            "media_type": media_info.media_type,
-            "width": media_info.width,
-            "height": media_info.height,
-            "frame": idx,
-            "time_seconds": t,
-            "time_ms": seconds_to_ms(t) if t is not None else None,
-            "pixels": [s.model_dump() for s in samples],
-        }
-        if ctx.json_mode:
-            json_writer.print_success("pixel", data)
-            return
         if ctx.quiet:
-            for s in samples:
-                out_console.print(
-                    f"({s.x},{s.y}) {s.hex}", highlight=False
-                )
+            for item in data["pixels"]:
+                out_console.print(f"({item['x']},{item['y']}) {item['hex']}", highlight=False)
             return
         title = "像素查询"
-        if idx is not None:
-            title += f"（帧 {idx}）"
+        if data["frame"] is not None:
+            title += f"（帧 {data['frame']}）"
         print_table(
             title,
             ["pixel_id", "x", "y", "R", "G", "B", "HEX", "H", "S", "V", "亮度"],
             [
-                [s.pixel_id, s.x, s.y, s.rgb.r, s.rgb.g, s.rgb.b, s.hex,
-                 s.hsv.h, s.hsv.s, s.hsv.v, s.luminance]
-                for s in samples
+                [item["pixel_id"], item["x"], item["y"],
+                 item["rgb"]["r"], item["rgb"]["g"], item["rgb"]["b"], item["hex"],
+                 item["hsv"]["h"], item["hsv"]["s"], item["hsv"]["v"], item["luminance"]]
+                for item in data["pixels"]
             ],
         )

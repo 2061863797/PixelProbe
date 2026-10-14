@@ -7,8 +7,6 @@ from typing import Optional
 
 import typer
 
-from pixelprobe import core
-from pixelprobe.address import check, range_options
 from pixelprobe.cli import (
     AT_OPT,
     JSON_OPT,
@@ -18,7 +16,8 @@ from pixelprobe.cli import (
     VERBOSE_OPT,
     CliContext,
     cli_guard,
-    read_address,
+    run_capability,
+    with_refs,
 )
 from pixelprobe.output import json_writer
 from pixelprobe.output.console import out_console, print_kv, progress_bar
@@ -50,48 +49,31 @@ def sheet(
     """一张图概览视频：在 --at 给出的时间段（默认全片）内等距抽 N 帧拼网格，标注帧号和秒。"""
     ctx = CliContext(json_mode, quiet, verbose, no_progress)
     with cli_guard("sheet", ctx):
-        address = read_address(at, ref_file)
-        check(address, command="sheet", time_modes={"range", "all"})
-        when = range_options(address)
-        when.pop("sample_every")
         with progress_bar("抽帧拼图", 1, ctx.progress_disabled) as update:
-            result = core.sample_frames(
-                media,
-                count=count,
-                cols=cols,
-                **when,
-                tile_max_dim=tile_max_dim,
-                annotate=not no_annotate,
+            outcome = run_capability(
+                "sheet", media, at, ref_file,
+                {"count": count, "cols": cols, "tile_max_dim": tile_max_dim,
+                 "annotate": not no_annotate},
                 progress=update,
             )
+        data = dict(outcome.data)
         if output is not None:
-            save_png(result.image, output)
-
-        data = {
-            "frames": result.frames,
-            "times": result.times,
-            "cols": result.cols,
-            "rows": result.rows,
-            "tile_width": result.tile_width,
-            "tile_height": result.tile_height,
-            "sheet_width": int(result.image.shape[1]),
-            "sheet_height": int(result.image.shape[0]),
-            "output_path": str(output) if output else None,
-        }
+            save_png(outcome.images["sheet"](), output)
+        data["output_path"] = str(output) if output else None
+        with_refs(data, outcome)
         if ctx.json_mode:
             json_writer.print_success("sheet", data)
             return
         if ctx.quiet:
             out_console.print(
-                str(output) if output else " ".join(map(str, result.frames)),
+                str(output) if output else " ".join(map(str, data["frames"])),
                 highlight=False,
             )
             return
         rows: list[tuple[str, object]] = [
-            ("抽取帧", ", ".join(map(str, result.frames))),
-            ("网格", f"{result.cols} 列 × {result.rows} 行"),
-            ("整图尺寸",
-             f"{data['sheet_width']}x{data['sheet_height']}"),
+            ("抽取帧", ", ".join(map(str, data["frames"]))),
+            ("网格", f"{data['cols']} 列 × {data['rows']} 行"),
+            ("整图尺寸", f"{data['sheet_width']}x{data['sheet_height']}"),
         ]
         if output:
             rows.append(("输出文件", str(output)))

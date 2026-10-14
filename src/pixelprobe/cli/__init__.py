@@ -41,6 +41,26 @@ INDEX_DIR_OPT = typer.Option(
 )
 
 
+def run_capability(
+    name: str,
+    media: Path,
+    at: str | None,
+    ref_file: Path | None,
+    options: dict | None = None,
+    **context,
+):
+    """命令行调用能力登记表中的同一执行函数（MCP 也调用它）。"""
+    from pixelprobe.capabilities import capability
+    return capability(name).invoke(media, read_address(at, ref_file), options or {}, **context)
+
+
+def with_refs(data: dict, outcome) -> dict:
+    """把结果编号附在 JSON 输出中，便于用 --ref-file 直接引用这次的输出文件。"""
+    if outcome.refs:
+        data["refs"] = dict(outcome.refs)
+    return data
+
+
 def find_index(media: Path, *, no_index: bool, index_dir: Path | None):
     """取与媒体当前内容匹配的索引；未建立、已过期或被禁用时返回 None。"""
     if no_index:

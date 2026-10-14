@@ -7,14 +7,6 @@ from typing import Optional
 
 import typer
 
-import pixelprobe
-from pixelprobe.address import (
-    check,
-    points_of,
-    range_options,
-    rect_of,
-    single_frame_options,
-)
 from pixelprobe.cli import (
     AT_OPT,
     JSON_OPT,
@@ -24,17 +16,11 @@ from pixelprobe.cli import (
     VERBOSE_OPT,
     CliContext,
     cli_guard,
-    media_size,
-    read_address,
+    run_capability,
 )
-from pixelprobe.models.errors import AddressError
 from pixelprobe.output import json_writer
 from pixelprobe.output.console import out_console, print_kv, progress_bar
 from pixelprobe.output.image_writer import save_png
-from pixelprobe.request_builders import (
-    spatial_spectrum_request,
-    temporal_spectrum_request,
-)
 
 
 def spectrum(
@@ -55,44 +41,14 @@ def spectrum(
     """周期闪烁/周期变化的主频：--at "t=0s..10s rect(...)" 或 "point(x,y)"；默认整帧全片。"""
     ctx = CliContext(json_mode, quiet, verbose, no_progress)
     with cli_guard("spectrum", ctx):
-        address = read_address(at, ref_file)
-        check(
-            address, command="spectrum", time_modes={"range", "all"},
-            shapes={"point", "pid", "rect", "cell"}, step=True,
-        )
-        width, height = media_size(media, address)
-        points = points_of(address, width, height)
-        if len(points) > 1:
-            raise AddressError("spectrum 一次只能分析一个点")
-        request = temporal_spectrum_request(
-            media,
-            source=source,
-            rect=rect_of(address, width, height),
-            point=points[0] if points else None,
-            **range_options(address),
-        )
         with progress_bar("频谱分析", 1, ctx.progress_disabled) as update:
-            generated = pixelprobe.generate(request)
-            update(1, 1)
-        data_tensor, preview_tensor = generated.request_tensors[0]
-        attributes = data_tensor.attributes
-        spectrum_image = preview_tensor.data.materialize()
+            outcome = run_capability(
+                "spectrum", media, at, ref_file, {"source": source}, progress=update,
+            )
+        data = dict(outcome.data)
         if output is not None:
-            save_png(spectrum_image, output)
-
-        data = {
-            "source": source,
-            "samples": attributes["samples"],
-            "effective_fps": attributes["effective_fps"],
-            "nyquist_hz": attributes["nyquist_hz"],
-            "dominant_freq_hz": attributes["dominant_freq_hz"],
-            "period_seconds": attributes["period_seconds"],
-            "period_frames": attributes["period_frames"],
-            "peak_ratio": attributes["peak_ratio"],
-            "top_peaks": attributes["top_peaks"],
-            "vfr_warning": attributes["vfr_warning"],
-            "output_path": str(output) if output else None,
-        }
+            save_png(outcome.images["spectrum"](), output)
+        data["output_path"] = str(output) if output else None
         if ctx.json_mode:
             json_writer.print_success("spectrum", data)
             return
@@ -133,29 +89,11 @@ def spectrum2d(
     """条纹/摩尔纹/周期纹理：单帧灰度二维 FFT，--at "f=15 rect(0,0,256,256)"；默认第 0 帧整幅。"""
     ctx = CliContext(json_mode, quiet, verbose, no_progress)
     with cli_guard("spectrum2d", ctx):
-        address = read_address(at, ref_file)
-        check(address, command="spectrum2d", time_modes={"single"}, shapes={"rect", "cell"})
-        request = spatial_spectrum_request(
-            media, **single_frame_options(address),
-            rect=rect_of(address, *media_size(media, address)),
-        )
-        generated = pixelprobe.generate(request)
-        data_tensor, preview_tensor = generated.request_tensors[0]
-        attributes = data_tensor.attributes
-        spectrum_image = preview_tensor.data.materialize()
+        outcome = run_capability("spectrum2d", media, at, ref_file)
+        data = dict(outcome.data)
         if output is not None:
-            save_png(spectrum_image, output)
-
-        image_semantics = bool(request.feature.config["report_image_semantics"])
-
-        data = {
-            "frame": None if image_semantics else attributes["frame"],
-            "time_seconds": None if image_semantics else attributes["time_seconds"],
-            "width": attributes["width"],
-            "height": attributes["height"],
-            "peaks": attributes["peaks"],
-            "output_path": str(output) if output else None,
-        }
+            save_png(outcome.images["spectrum"](), output)
+        data["output_path"] = str(output) if output else None
         if ctx.json_mode:
             json_writer.print_success("spectrum2d", data)
             return

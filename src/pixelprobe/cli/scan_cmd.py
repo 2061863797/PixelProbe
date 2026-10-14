@@ -7,8 +7,6 @@ from typing import Optional
 
 import typer
 
-from pixelprobe import core
-from pixelprobe.address import check
 from pixelprobe.cli import (
     AT_OPT,
     INDEX_DIR_OPT,
@@ -21,12 +19,12 @@ from pixelprobe.cli import (
     CliContext,
     cli_guard,
     find_index,
-    read_address,
+    run_capability,
+    with_refs,
 )
 from pixelprobe.output import json_writer
 from pixelprobe.output.console import out_console, print_kv, progress_bar
 from pixelprobe.output.image_writer import save_png
-from pixelprobe.output.plot import render_curve
 
 
 def scan(
@@ -57,63 +55,46 @@ def scan(
     """
     ctx = CliContext(json_mode, quiet, verbose, no_progress)
     with cli_guard("scan", ctx):
-        address = read_address(at, ref_file)
-        check(address, command="scan", step=True)
         with progress_bar("媒体扫描", 1, ctx.progress_disabled) as update:
-            result = core.scan_media(
-                media,
-                sheet_count=sheet_count,
-                sample_every=address.step,
-                event_threshold=threshold,
+            outcome = run_capability(
+                "scan", media, at, ref_file,
+                {"sheet_count": sheet_count, "threshold": threshold},
                 progress=update,
                 index=find_index(media, no_index=no_index, index_dir=index_dir),
             )
+        data = dict(outcome.data)
         if sheet_output is not None:
-            save_png(result.sheet.image, sheet_output)
+            save_png(outcome.images["sheet"](), sheet_output)
         curve_saved: str | None = None
         if curve_output is not None:
-            if result.records:
-                curve = render_curve(
-                    [r.normalized_score for r in result.records], y_min=0.0
-                )
-                save_png(curve, curve_output)
+            if "curve" in outcome.images:
+                save_png(outcome.images["curve"](), curve_output)
                 curve_saved = str(curve_output)
             elif not ctx.json_mode and not ctx.quiet:
-                out_console.print(
-                    "帧数不足两帧，未生成变化曲线", highlight=False
-                )
-
-        data = {
-            "info": result.info.model_dump(),
-            "effective_sample_every": result.effective_sample_every,
-            "frames_analyzed": result.frames_analyzed,
-            "sheet_frames": result.sheet.frames,
-            "events": [e.to_dict() for e in result.events],
-            "event_threshold_used": result.event_threshold,
-            "anomalies": result.anomalies,
-            "anomalies_truncated": result.anomalies_truncated,
-            "sheet_output_path": str(sheet_output) if sheet_output else None,
-            "curve_output_path": curve_saved,
-            "computed_from": result.computed_from,
-        }
+                out_console.print("帧数不足两帧，未生成变化曲线", highlight=False)
+        data.update(
+            sheet_output_path=str(sheet_output) if sheet_output else None,
+            curve_output_path=curve_saved,
+        )
+        with_refs(data, outcome)
         if ctx.json_mode:
             json_writer.print_success("scan", data)
             return
         if ctx.quiet:
             out_console.print(
-                f"{len(result.events)} events {len(result.anomalies)} anomalies",
+                f"{len(data['events'])} events {len(data['anomalies'])} anomalies",
                 highlight=False,
             )
             return
-        info = result.info
+        info = data["info"]
         rows: list[tuple[str, object]] = [
-            ("媒体", f"{info.width}x{info.height} {info.codec}"),
+            ("媒体", f"{info['width']}x{info['height']} {info['codec']}"),
             ("分析帧数",
-             f"{result.frames_analyzed}（每 {result.effective_sample_every} 帧）"),
-            ("事件数", len(result.events)),
+             f"{data['frames_analyzed']}（每 {data['effective_sample_every']} 帧）"),
+            ("事件数", len(data["events"])),
             ("异常帧",
-             f"{len(result.anomalies)}"
-             f"{'（已截断）' if result.anomalies_truncated else ''}"),
+             f"{len(data['anomalies'])}"
+             f"{'（已截断）' if data['anomalies_truncated'] else ''}"),
         ]
         if sheet_output:
             rows.append(("网格图", str(sheet_output)))

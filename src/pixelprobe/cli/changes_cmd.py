@@ -7,8 +7,6 @@ from typing import Optional
 
 import typer
 
-from pixelprobe import core
-from pixelprobe.address import check, grid_of, points_of, range_options, rect_of
 from pixelprobe.cli import (
     AT_OPT,
     INDEX_DIR_OPT,
@@ -21,14 +19,12 @@ from pixelprobe.cli import (
     CliContext,
     cli_guard,
     find_index,
-    media_size,
-    read_address,
+    run_capability,
+    with_refs,
 )
-from pixelprobe.models.errors import AddressError, InvalidRangeError
 from pixelprobe.output import csv_writer, json_writer
 from pixelprobe.output.console import out_console, print_table, progress_bar
 from pixelprobe.output.image_writer import save_png
-from pixelprobe.output.plot import render_curve
 
 
 def changes(
@@ -60,123 +56,54 @@ def changes(
     """
     ctx = CliContext(json_mode, quiet, verbose, no_progress)
     with cli_guard("changes", ctx):
-        if top < 1:
-            raise InvalidRangeError(f"--top {top} 无效，必须 >= 1")
-        address = read_address(at, ref_file)
-        check(
-            address, command="changes", time_modes={"single", "range", "all"},
-            shapes={"point", "pid", "rect", "cell", "grid"}, step=True,
-        )
-        width, height = media_size(media, address)
-        points = points_of(address, width, height)
-        if len(points) > 1:
-            raise AddressError("changes 一次只能分析一个点；多个点请用 timeline 命令")
-        point_tuple = points[0] if points else None
-        rect_tuple = rect_of(address, width, height)
-        grid = grid_of(address)
-        grid_tuple = (grid.x, grid.y, grid.width, grid.height) if grid else None
-        step = grid.step if grid else None
-        full_frame = point_tuple is None and rect_tuple is None and grid_tuple is None
-        index = (
-            find_index(media, no_index=no_index, index_dir=index_dir)
-            if full_frame and (address.step or 1) == 1 else None
-        )
-
         with progress_bar("变化检测", 1, ctx.progress_disabled) as update:
-            result = core.detect_changes(
-                media,
-                point=point_tuple,
-                rect=rect_tuple,
-                grid=grid_tuple,
-                step=step,
-                **range_options(address),
+            outcome = run_capability(
+                "changes", media, at, ref_file, {"top": top, "threshold": threshold},
                 progress=update,
-                index=index,
+                index=find_index(media, no_index=no_index, index_dir=index_dir),
             )
-        top_records = core.top_changes(result.records, top)
-        events, threshold_used = core.segment_events(
-            result.records, threshold=threshold
-        )
-
+        data = dict(outcome.data)
         csv_path: str | None = None
         if csv is not None:
-            csv_writer.write_changes_csv(csv, result.records)
+            csv_writer.write_changes_csv(csv, outcome.artifacts["records"])
             csv_path = str(csv)
-
         curve_path: str | None = None
         if curve_image is not None:
-            frame_of = {r.frame: i for i, r in enumerate(result.records)}
-            prev_of = {r.previous_frame: i for i, r in enumerate(result.records)}
-            spans = [
-                (prev_of[e.start_frame], frame_of[e.end_frame])
-                for e in events
-                if e.start_frame in prev_of and e.end_frame in frame_of
-            ]
-            curve = render_curve(
-                [r.normalized_score for r in result.records],
-                spans=spans, y_min=0.0,
-            )
-            save_png(curve, curve_image)
+            save_png(outcome.images["curve"](), curve_image)
             curve_path = str(curve_image)
-
-        data = {
-            "mode": result.mode,
-            "point": (
-                {"x": point_tuple[0], "y": point_tuple[1]}
-                if point_tuple else None
-            ),
-            "rect": (
-                {"x": rect_tuple[0], "y": rect_tuple[1],
-                 "width": rect_tuple[2], "height": rect_tuple[3]}
-                if rect_tuple else None
-            ),
-            "grid": (
-                {"x": grid_tuple[0], "y": grid_tuple[1],
-                 "width": grid_tuple[2], "height": grid_tuple[3],
-                 "step": step if step is not None else 1}
-                if grid_tuple else None
-            ),
-            "start_frame": result.frame_range.start,
-            "end_frame": result.frame_range.end,
-            "sample_every": result.frame_range.sample_every,
-            "frames_analyzed": result.frames_analyzed,
-            "top": [r.to_dict() for r in top_records],
-            "events": [e.to_dict() for e in events],
-            "event_threshold_used": threshold_used,
-            "csv_path": csv_path,
-            "curve_image_path": curve_path,
-            "computed_from": result.computed_from,
-        }
+        data.update(csv_path=csv_path, curve_image_path=curve_path)
+        with_refs(data, outcome)
         if ctx.json_mode:
             json_writer.print_success("changes", data)
             return
+        top_records = data["top"]
         if ctx.quiet:
             for r in top_records:
-                out_console.print(f"{r.frame} {r.score}", highlight=False)
+                out_console.print(f"{r['frame']} {r['score']}", highlight=False)
             return
         print_table(
-            f"变化最大的 {len(top_records)} 帧（{result.mode} 模式）",
+            f"变化最大的 {len(top_records)} 帧（{data['mode']} 模式）",
             ["帧号", "前一帧", "时间(秒)", "得分", "归一化得分"],
             [
-                [r.frame, r.previous_frame, r.time_seconds,
-                 r.score, r.normalized_score]
+                [r["frame"], r["previous_frame"], r["time_seconds"],
+                 r["score"], r["normalized_score"]]
                 for r in top_records
             ],
         )
+        events = data["events"]
+        threshold_used = data["event_threshold_used"]
         if events:
             print_table(
                 f"事件区间（阈值 {threshold_used}）",
-                ["起始帧", "结束帧", "起始(秒)", "结束(秒)", "峰值帧", "峰值得分"],
+                ["编号", "起始帧", "结束帧", "起始(秒)", "结束(秒)", "峰值帧", "峰值得分"],
                 [
-                    [e.start_frame, e.end_frame, e.start_time, e.end_time,
-                     e.peak_frame, e.peak_score]
-                    for e in events
+                    [f"@event{n}", e["start_frame"], e["end_frame"], e["start_time"],
+                     e["end_time"], e["peak_frame"], e["peak_score"]]
+                    for n, e in enumerate(events, start=1)
                 ],
             )
         else:
-            out_console.print(
-                f"未检出事件区间（阈值 {threshold_used}）", highlight=False
-            )
+            out_console.print(f"未检出事件区间（阈值 {threshold_used}）", highlight=False)
         if csv_path:
             out_console.print(f"全部记录已导出：{csv_path}", highlight=False)
         if curve_path:

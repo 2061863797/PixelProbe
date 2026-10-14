@@ -7,8 +7,6 @@ from typing import Optional
 
 import typer
 
-import pixelprobe
-from pixelprobe.address import check, range_options, rect_of
 from pixelprobe.cli import (
     AT_OPT,
     JSON_OPT,
@@ -18,13 +16,11 @@ from pixelprobe.cli import (
     VERBOSE_OPT,
     CliContext,
     cli_guard,
-    media_size,
-    read_address,
+    run_capability,
 )
 from pixelprobe.output import json_writer
 from pixelprobe.output.console import out_console, print_kv, progress_bar
 from pixelprobe.output.image_writer import save_png
-from pixelprobe.request_builders import reduce_request
 
 
 def reduce(
@@ -58,69 +54,26 @@ def reduce(
     """逐像素时间统计（噪声藏图、慢变水印、运动能量用 --op std/diff）：--at "t=1s..5s step=2 rect(...)"。"""
     ctx = CliContext(json_mode, quiet, verbose, no_progress)
     with cli_guard("reduce", ctx):
-        address = read_address(at, ref_file)
-        check(
-            address, command="reduce", time_modes={"range", "all"},
-            shapes={"rect", "cell"}, step=True,
-        )
-        rect_tuple = rect_of(address, *media_size(media, address))
-        request = reduce_request(
-            media,
-            operation=op,
-            rect=rect_tuple,
-            **range_options(address),
-            p_low=p_low,
-            p_high=p_high,
-            destripe=destripe,
-            smooth=smooth,
-        )
         with progress_bar("时间域合成", 1, ctx.progress_disabled) as update:
-            generated = pixelprobe.generate(request)
-            update(1, 1)
-        data_tensor, preview_tensor = generated.request_tensors[0]
-        statistic = data_tensor.data.materialize()
-        image = preview_tensor.data.materialize()
-        frames = tuple(data_tensor.attributes["presentation_indices"])
-        preview_attributes = preview_tensor.attributes
+            outcome = run_capability(
+                "reduce", media, at, ref_file,
+                {"op": op, "p_low": p_low, "p_high": p_high,
+                 "destripe": destripe, "smooth": smooth},
+                progress=update,
+            )
+        data = dict(outcome.data)
         if output is not None:
-            save_png(image, output)
-
-        data = {
-            "op": op,
-            "rect": (
-                {"x": rect_tuple[0], "y": rect_tuple[1],
-                 "width": rect_tuple[2], "height": rect_tuple[3]}
-                if rect_tuple else None
-            ),
-            "start_frame": frames[0],
-            "end_frame": frames[-1],
-            "sample_every": request.selection.sample_every,
-            "frames_analyzed": len(frames),
-            "stat_min": [round(float(value), 4) for value in statistic.min(axis=(0, 1))],
-            "stat_max": [round(float(value), 4) for value in statistic.max(axis=(0, 1))],
-            "stat_mean": [round(float(value), 4) for value in statistic.mean(axis=(0, 1))],
-            "stretch_low_value": preview_attributes["stretch_low_value"],
-            "stretch_high_value": preview_attributes["stretch_high_value"],
-            "stretch_domain": preview_attributes["stretch_domain"],
-            "p_low": p_low,
-            "p_high": p_high,
-            "destripe": destripe,
-            "smooth": smooth,
-            "image_width": int(image.shape[1]),
-            "image_height": int(image.shape[0]),
-            "output_path": str(output) if output else None,
-        }
+            save_png(outcome.images["reduce"](), output)
+        data["output_path"] = str(output) if output else None
         if ctx.json_mode:
             json_writer.print_success("reduce", data)
             return
         if ctx.quiet:
-            out_console.print(
-                str(output) if output else f"op={op}", highlight=False
-            )
+            out_console.print(str(output) if output else f"op={op}", highlight=False)
             return
         rows: list[tuple[str, object]] = [
             ("统计量", op),
-            ("分析帧数", len(frames)),
+            ("分析帧数", data["frames_analyzed"]),
             ("原始统计范围",
              f"{min(data['stat_min'])} ~ {max(data['stat_max'])}"),
             ("拉伸端点",

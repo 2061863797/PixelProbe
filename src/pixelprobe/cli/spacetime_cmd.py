@@ -11,8 +11,6 @@ from typing import Literal, Optional
 
 import typer
 
-import pixelprobe
-from pixelprobe.address import check, col_of, range_options, row_of
 from pixelprobe.cli import (
     AT_OPT,
     JSON_OPT,
@@ -22,11 +20,9 @@ from pixelprobe.cli import (
     VERBOSE_OPT,
     CliContext,
     cli_guard,
-    read_address,
+    run_capability,
 )
-from pixelprobe.models.errors import AddressError
 from pixelprobe.models.spacetime import SpacetimeMetadata
-from pixelprobe.request_builders import spacetime_request
 from pixelprobe.output import json_writer
 from pixelprobe.output.console import out_console, print_kv, progress_bar
 from pixelprobe.output.image_writer import save_png, scale_nearest
@@ -47,44 +43,23 @@ def _run_slice(
         ensure_scale(scale_space, "--scale-x" if slice_type == "xt" else "--scale-y")
         ensure_scale(scale_t, "--scale-t")
         desc = "生成 X–T 切片" if slice_type == "xt" else "生成 Y–T 切片"
-        address = read_address(at, ref_file)
-        line_shape = "row" if slice_type == "xt" else "col"
-        check(
-            address, command=slice_type, time_modes={"single", "range", "all"},
-            shapes={line_shape}, step=True,
-        )
-        fixed = row_of(address) if slice_type == "xt" else col_of(address)
-        if fixed is None:
-            example = "row(120)" if slice_type == "xt" else "col(40)"
-            raise AddressError(
-                f'{slice_type} 需要扫描线位置，例如 --at "t=1s..3s {example}"'
-            )
-        request = spacetime_request(media, slice_type, fixed, **range_options(address))
-        selection = request.selection
         with progress_bar(desc, 1, ctx.progress_disabled) as update:
-            generated = pixelprobe.generate(request)
-            update(1, 1)
-
-        tensor = generated.request_tensors[0][0]
-        array = tensor.data.materialize()
-        frames = list(tensor.attributes["presentation_indices"])
-        times = list(tensor.attributes["timeline_timestamps_seconds"])
-
+            outcome = run_capability(slice_type, media, at, ref_file, progress=update)
+        core_data = outcome.data
         # 规范 Tensor 形状 [T, 空间, 3]：纵轴=时间，横轴=空间。
-        img = scale_nearest(array, scale_space, scale_t)
+        img = scale_nearest(outcome.images["slice"](), scale_space, scale_t)
         output_path: str | None = None
         if output is not None:
             save_png(img, output)
             output_path = str(output)
-
         metadata = SpacetimeMetadata(
             slice_type=slice_type,
-            fixed_coordinate=fixed,
-            start_frame=frames[0],
-            end_frame=frames[-1],
-            frame_count=len(frames),
-            sample_every=selection.sample_every,
-            space_axis="original_x" if slice_type == "xt" else "original_y",
+            fixed_coordinate=core_data["fixed_coordinate"],
+            start_frame=core_data["start_frame"],
+            end_frame=core_data["end_frame"],
+            frame_count=core_data["frame_count"],
+            sample_every=core_data["sample_every"],
+            space_axis=core_data["space_axis"],
             time_axis="vertical",
             width=int(img.shape[1]),
             height=int(img.shape[0]),
@@ -93,23 +68,22 @@ def _run_slice(
             output_path=output_path,
         )
         data = metadata.model_dump()
-        data["frames"] = frames
-        data["times"] = times
+        data["frames"] = core_data["frames"]
+        data["times"] = core_data["times"]
         if ctx.json_mode:
             json_writer.print_success(slice_type, data)
             return
         if ctx.quiet:
-            out_console.print(output_path or f"{img.shape[1]}x{img.shape[0]}",
-                              highlight=False)
+            out_console.print(output_path or f"{img.shape[1]}x{img.shape[0]}", highlight=False)
             return
         fixed_name = "y" if slice_type == "xt" else "x"
         print_kv(
             "X–T 切片" if slice_type == "xt" else "Y–T 切片",
             [
-                (f"扫描线 {fixed_name}", fixed),
-                ("帧范围", f"{frames[0]}～{frames[-1]}"
-                          f"（每 {selection.sample_every} 帧采样）"),
-                ("帧数", len(frames)),
+                (f"扫描线 {fixed_name}", metadata.fixed_coordinate),
+                ("帧范围", f"{metadata.start_frame}～{metadata.end_frame}"
+                          f"（每 {metadata.sample_every} 帧采样）"),
+                ("帧数", metadata.frame_count),
                 ("空间轴", metadata.space_axis),
                 ("时间轴", "vertical（从上到下时间递增）"),
                 ("输出尺寸", f"{metadata.width}x{metadata.height}"),

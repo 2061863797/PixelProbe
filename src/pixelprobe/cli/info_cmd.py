@@ -6,7 +6,6 @@ from pathlib import Path
 
 import typer
 
-from pixelprobe import core
 from pixelprobe.cli import (
     JSON_OPT,
     NO_PROGRESS_OPT,
@@ -14,7 +13,9 @@ from pixelprobe.cli import (
     VERBOSE_OPT,
     CliContext,
     cli_guard,
+    run_capability,
 )
+from pixelprobe.models.media_info import MediaInfo
 from pixelprobe.output import json_writer
 from pixelprobe.output.console import out_console, print_kv
 
@@ -29,10 +30,11 @@ def info(
     """读取图片或视频的基本信息（尺寸、帧率、总帧数、编码等）。"""
     ctx = CliContext(json_mode, quiet, verbose, no_progress)
     with cli_guard("info", ctx):
-        media_info = core.get_media_info(media)
+        data = run_capability("info", media, None, None).data
         if ctx.json_mode:
-            json_writer.print_success("info", media_info.model_dump())
+            json_writer.print_success("info", data)
             return
+        media_info = MediaInfo.model_validate(data)
         if ctx.quiet:
             out_console.print(
                 f"{media_info.media_type} {media_info.width}x{media_info.height}",

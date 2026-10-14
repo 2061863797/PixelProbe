@@ -56,7 +56,7 @@ VOLATILE_KEYS = {
 
 # 基线采集之后新增、且不是计算结果的说明字段（例如结果来自索引还是解码）。
 # 只允许在这里登记"新增字段"；改变已有字段的值必须重新说明原因。
-ADDED_FIELDS = {"computed_from"}
+ADDED_FIELDS = {"computed_from", "refs"}
 
 
 def _volatile(key: str) -> bool:

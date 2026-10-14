@@ -1,20 +1,17 @@
-"""组合分析 CLI。"""
+"""组合分析 CLI：三种流程分别对应能力 first_change、compare_media、quality_overview。"""
 from pathlib import Path
 from typing import Optional
 
 import typer
 
-from pixelprobe.address import check
 from pixelprobe.cli import (
     AT_OPT, REF_FILE_OPT, CliContext, JSON_OPT, QUIET_OPT, VERBOSE_OPT, NO_PROGRESS_OPT,
-    cli_guard, read_address,
+    cli_guard, run_capability,
 )
-from pixelprobe.models.errors import AddressError
 from pixelprobe.output import json_writer
 from pixelprobe.output.console import print_kv, out_console
 
-DEFAULT_START_FRAME = 0
-DEFAULT_END_FRAME = 1799
+MODES = ("first_change", "compare_media", "quality_overview")
 
 
 def workflow(
@@ -30,29 +27,23 @@ def workflow(
     verbose: bool = VERBOSE_OPT, no_progress: bool = NO_PROGRESS_OPT,
 ) -> None:
     """运行有界组合分析：--at "f=0..1799 step=2"（只接受帧号，缺省 0～1799 帧）；采样与未检查范围保存在报告中。"""
-    from pixelprobe.workflows import WorkflowOptions, run_workflow
     ctx = CliContext(json_mode, quiet, verbose, no_progress)
     with cli_guard("workflow", ctx):
-        address = read_address(at, ref_file)
-        check(address, command="workflow", time_modes={"range", "all"}, step=True)
-        start_frame, end_frame = DEFAULT_START_FRAME, DEFAULT_END_FRAME
-        if address.time is not None and address.time.mode == "range":
-            if address.time.kind != "frame":
-                raise AddressError("workflow 只接受帧号范围，例如 f=0..1799")
-            first, last = address.time.values
-            start_frame = DEFAULT_START_FRAME if first is None else int(first)
-            end_frame = DEFAULT_END_FRAME if last is None else int(last)
-        options = WorkflowOptions(workflow=mode, start_frame=start_frame, end_frame=end_frame,
-                                  sample_every=address.step or 1, threshold=threshold,
-                                  min_changed_ratio=min_changed_ratio)
-        result = run_workflow(media, reference_path=reference, options=options,
-                              output_path=output or media.with_name(f"{media.stem}.{mode}.bundle"))
+        if mode not in MODES:
+            raise typer.BadParameter(f"--mode {mode} 无效，可选 {' / '.join(MODES)}")
+        outcome = run_capability(
+            mode, media, at, ref_file,
+            {"threshold": threshold, "min_changed_ratio": min_changed_ratio},
+            reference=reference,
+            output_path=output or media.with_name(f"{media.stem}.{mode}.bundle"),
+        )
+        bundle = outcome.artifacts["bundle"]
         if ctx.json_mode:
-            json_writer.print_success("workflow", result.report)
+            json_writer.print_success("workflow", outcome.data)
         elif ctx.quiet:
-            out_console.print(str(result.bundle.root), highlight=False)
+            out_console.print(str(bundle.root), highlight=False)
         else:
-            print_kv("组合分析", [("流程", mode), ("记录数", result.report["records"]),
-                                  ("结束原因", result.report["stop_reason"]),
-                                  ("结果包", result.bundle.root),
+            print_kv("组合分析", [("流程", mode), ("记录数", outcome.data["records"]),
+                                  ("结束原因", outcome.data["stop_reason"]),
+                                  ("结果包", bundle.root),
                                   ("覆盖范围", "仅报告中的帧范围与采样点")])

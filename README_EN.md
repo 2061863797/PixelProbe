@@ -77,6 +77,9 @@ pixelprobe changes input.mp4 --at "t=10s..20s rect(400,200,200,150)" --top 10
 # Generate a representative-frame sheet, change events, and anomalous-frame findings
 pixelprobe scan input.mp4 --sheet-output overview.png
 
+# Index a long video once; full-frame change detection then reads the index with identical results
+pixelprobe index build input.mp4
+
 # Create a temporal standard-deviation image
 pixelprobe reduce input.mp4 --op std --output temporal-std.png
 

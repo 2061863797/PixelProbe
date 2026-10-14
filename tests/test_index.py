@@ -161,6 +161,37 @@ def test_cli_index_lifecycle_and_transparent_use(video_copy: Path, tmp_path: Pat
     assert run_json("index", "show", video_copy, *common)["data"]["status"] == "missing"
 
 
+def test_session_cache_reuses_index_and_drops_it_when_media_changes(
+    video_copy: Path, store: IndexStore,
+) -> None:
+    from pixelprobe.session import SessionCache
+    store.save(video_copy, build_index(video_copy))
+    sessions = SessionCache(store.root)
+    first = sessions.index_for(video_copy)
+    assert first is not None
+    assert sessions.index_for(video_copy) is first  # 同一内容复用已加载的索引
+    with video_copy.open("ab") as handle:
+        handle.write(b"\0")
+    assert sessions.index_for(video_copy) is None
+
+
+def test_mcp_worker_uses_index_with_identical_records(video_copy: Path, tmp_path: Path) -> None:
+    """常驻工作进程中的 MCP 变化检测读取同一索引目录，结果与解码逐值相同。"""
+    from pixelprobe_mcp.config import ServerConfig
+    from pixelprobe_mcp.worker import run_operation_sync, shutdown_worker_pools
+    config = ServerConfig((tmp_path,), tmp_path / "out")
+    payload = {"media_path": str(video_copy), "limit": 100}
+    try:
+        decoded = run_operation_sync(config, "find_changes", payload, timeout_seconds=60)
+        IndexStore().save(video_copy, build_index(video_copy))  # 测试会话的临时索引目录
+        indexed = run_operation_sync(config, "find_changes", payload, timeout_seconds=60)
+    finally:
+        shutdown_worker_pools()
+    assert decoded.data["computed_from"] == "decode"
+    assert indexed.data["computed_from"] == "index"
+    assert indexed.data["records"] == decoded.data["records"]
+
+
 def test_cli_index_build_rejects_images(test_image: Path, tmp_path: Path) -> None:
     code, data = run_json_error(
         "index", "build", test_image, "--index-dir", tmp_path / "i", "--json",

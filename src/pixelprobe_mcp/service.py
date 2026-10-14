@@ -27,6 +27,7 @@ from pixelprobe.evidence import analyze_evidence
 from pixelprobe.engine.request import OutputRequest, RepresentationRequest
 from pixelprobe.models.media_info import MediaInfo
 from pixelprobe.operators.base import ResourcePolicy
+from pixelprobe.session import media_sessions
 from pixelprobe.version import __version__
 from pixelprobe_mcp.config import FileIdentity, ServerConfig
 from pixelprobe_mcp.models import (
@@ -584,7 +585,7 @@ class PixelProbeService:
         pagination = None
         if params.detail == "standard" and info.media_type == "video":
             self._ensure_standard_budget(info)
-            scan = core.scan_media(path)
+            scan = core.scan_media(path, index=media_sessions().index_for(path))
             combined = [
                 {"category": "event", **event.to_dict()} for event in scan.events
             ] + [
@@ -596,6 +597,7 @@ class PixelProbeService:
                 "scan": {
                     "effective_sample_every": scan.effective_sample_every,
                     "frames_analyzed": scan.frames_analyzed,
+                    "computed_from": scan.computed_from,
                     "representative_frames": [
                         {"frame": frame, "time_seconds": timestamp}
                         for frame, timestamp in zip(scan.sheet.frames, scan.sheet.times)
@@ -779,6 +781,7 @@ class PixelProbeService:
             start_frame=params.start_frame, end_frame=params.end_frame,
             start=params.start_seconds, end=params.end_seconds,
             sample_every=params.sample_every,
+            index=media_sessions().index_for(path),
         )
         records = result.records
         if params.sort == "score":
@@ -806,6 +809,7 @@ class PixelProbeService:
                 },
                 "sort": params.sort,
                 "records": [record.to_dict() for record in page_records],
+                "computed_from": result.computed_from,
             },
             warnings=["变化分数只表示像素差异，不能单独证明对象移动或事件发生"],
             next_actions=actions,

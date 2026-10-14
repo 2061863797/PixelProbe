@@ -89,6 +89,9 @@ pixelprobe changes input.mp4 --at "t=10s..20s rect(400,200,200,150)" --top 10
 # 一键生成概览网格、变化事件和异常帧
 pixelprobe scan input.mp4 --sheet-output overview.png
 
+# 为长视频建立索引：之后整帧变化检测直接查表，结果与解码相同
+pixelprobe index build input.mp4
+
 # 时间域标准差合成
 pixelprobe reduce input.mp4 --op std --output temporal-std.png
 

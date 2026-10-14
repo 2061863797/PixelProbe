@@ -19,7 +19,7 @@ from pixelprobe.operators.base import ResourcePolicy
 from pixelprobe.utils.resource_budget import ResourceBudget, budget_scope
 from pixelprobe_mcp.config import ServerConfig
 from pixelprobe_mcp.resource_plan import media_plan, plan_operation
-from pixelprobe_mcp.worker import run_operation_sync, WorkerError
+from pixelprobe_mcp.worker import run_operation_sync, shutdown_worker_pools, WorkerError
 
 MIB = 1024 * 1024
 
@@ -198,13 +198,16 @@ def test_real_worker_memory_limit_reaps_then_next_request_succeeds(tmp_path):
     Image.new("RGB", (16, 16), (7, 8, 9)).save(source)
     config = ServerConfig((tmp_path,), tmp_path / "out")
     payload = {"media_path": str(source), "points": [{"x": 0, "y": 0}]}
+    shutdown_worker_pools()
     before = {p.pid for p in multiprocessing.active_children()}
     with pytest.raises(WorkerError, match="MCP_RESOURCE_LIMIT"):
         run_operation_sync(config, "read_pixels", payload, timeout_seconds=10,
                            memory_limit_bytes=1)
+    # 超出内存预算的工作进程必须被回收，不能复用
     assert {p.pid for p in multiprocessing.active_children()} == before
     result = run_operation_sync(config, "read_pixels", payload, timeout_seconds=10)
     assert result.data["pixels"][0]["rgb"] == {"r": 7, "g": 8, "b": 9}
+    shutdown_worker_pools()
     assert {p.pid for p in multiprocessing.active_children()} == before
 
 

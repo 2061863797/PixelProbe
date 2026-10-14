@@ -1,5 +1,24 @@
 # 优化实施检查点
 
+## 当前状态：2026-10-14 2.0 重构阶段 0（定位、规则与基线）
+
+本节优先于下方历史检查点。2.0 的定位、边界和路线图见 `docs/positioning.md`。
+
+- 新增 `docs/positioning.md`：定位为"补齐 AI 看图看视频的短板"，覆盖开发者录屏、
+  长视频辅助、质量异常、取证四类场景；CLI 与 MCP 能力对等；2.0 直接切换新接口。
+- `AGENTS.md` 的兼容条款改为以 2.0 新接口为准（Bundle 0.1 读取仍兼容），新增能力对等
+  与数值基线规则；编辑工具说明改为通用写法。本地蓝图已归档到 `docs/design/archive/`
+  （仍不入库）。
+- 新增 `scripts/capture_golden.py` 与 `tests/golden/cli_golden.json`：30 个 CLI 用例
+  覆盖 info/frame/pixel/region/timeline/xt/yt/changes/reduce/compare/sheet/scan/
+  spectrum/spectrum2d/flow/workflow/evidence，记录归一化 JSON 数值与输出文件像素摘要。
+  测试视频容器带随机 UID，源文件哈希字段不参与比对。连续两次 `--check` 全部一致。
+  基线未纳入 pytest：示意图含字体渲染，跨平台像素可能不同，只在本机重构前后比对。
+- 重构前全量基线（`.venv-test`，Python 3.14.3，含 Zarr/OpenCV/MCP/C2PA）：
+  **429 passed、0 skipped，106 秒**。系统 Python 未安装 Zarr，会有 4 个 Zarr 用例失败，
+  后续统一用 `.venv-test` 运行。
+- 未执行：CodeGraph 同步（本阶段未改源码）、Linux/macOS 运行。
+
 ## 当前状态：2026-09-20 正式发行改为 Python 包与本地打包脚本
 
 本节优先于下方历史检查点。正式发行不再包含冻结程序；Linux/macOS 的本地

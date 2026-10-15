@@ -180,16 +180,17 @@ def test_mcp_worker_uses_index_with_identical_records(video_copy: Path, tmp_path
     from pixelprobe_mcp.config import ServerConfig
     from pixelprobe_mcp.worker import run_operation_sync, shutdown_worker_pools
     config = ServerConfig((tmp_path,), tmp_path / "out")
-    payload = {"media_path": str(video_copy), "limit": 100}
+    payload = {"capability": "changes", "media_path": str(video_copy), "limit": 100, "images": False}
     try:
-        decoded = run_operation_sync(config, "find_changes", payload, timeout_seconds=60)
+        decoded, _ = run_operation_sync(config, "capability", payload, timeout_seconds=60)
         IndexStore().save(video_copy, build_index(video_copy))  # 测试会话的临时索引目录
-        indexed = run_operation_sync(config, "find_changes", payload, timeout_seconds=60)
+        indexed, _ = run_operation_sync(config, "capability", payload, timeout_seconds=60)
     finally:
         shutdown_worker_pools()
     assert decoded.data["computed_from"] == "decode"
     assert indexed.data["computed_from"] == "index"
-    assert indexed.data["records"] == decoded.data["records"]
+    for key in ("top", "events", "frames_analyzed", "event_threshold_used"):
+        assert indexed.data[key] == decoded.data[key]
 
 
 def test_cli_index_build_rejects_images(test_image: Path, tmp_path: Path) -> None:

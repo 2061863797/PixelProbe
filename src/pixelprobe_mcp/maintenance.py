@@ -13,6 +13,11 @@ from pixelprobe_mcp.config import _is_reparse_point
 _ID = re.compile(r"[0-9a-f]{32}")
 _TERMINAL = {"succeeded", "failed", "cancelled", "timeout", "interrupted"}
 _LIMIT = 10000
+# 1.x 任务记录的操作名；升级后旧记录与其 checkpoint 仍需能按期清理
+_LEGACY_OPERATIONS = {
+    "inspect_media", "get_frame", "read_pixels", "analyze_region", "find_changes",
+    "generate_representation", "evidence", "workflow",
+}
 
 
 def _plain(path: Path) -> bool:
@@ -69,7 +74,7 @@ def maintain(manager, *, dry_run: bool = True) -> dict:
                 raise ValueError("记录无效")
             status = record.get("status")
             from pixelprobe_mcp.worker import OPERATIONS
-            if record.get("operation") not in OPERATIONS:
+            if record.get("operation") not in OPERATIONS.keys() | _LEGACY_OPERATIONS:
                 raise ValueError("记录操作未知")
             if status in {"queued", "running"}:
                 report["blocked"] = True
@@ -136,11 +141,12 @@ def maintain(manager, *, dry_run: bool = True) -> dict:
     for job_id in expired:
         if records[job_id].get("checkpoint_id") in unresolved:
             continue
-        candidates = [root / f"{job_id}{suffix}" for suffix in
-                      (".json", ".request.json", ".result.json", ".png")]
+        from pixelprobe_mcp.jobs import job_files
+        candidates = job_files(root, job_id)
         # 仅处理已知任务的原子写入残留，不按宽泛通配符删除用户文件。
         candidates.extend(path for path in root.glob(f"{job_id}*.tmp-*")
-                          if re.fullmatch(job_id + r"(?:\.result|\.request)?\.tmp-[0-9a-f]{32}", path.name))
+                          if re.fullmatch(job_id + r"(?:\.result|\.request|\.\d{1,3})?\.tmp-[0-9a-f]{32}",
+                                          path.name))
         try:
             existing = [(path, path.stat().st_size) for path in candidates
                         if path.exists() or path.is_symlink()]

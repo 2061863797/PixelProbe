@@ -55,8 +55,8 @@ def test_mcp_arguments_are_applied_before_server_import(tmp_path, monkeypatch):
 @pytest.mark.anyio
 async def test_capabilities_remain_available_while_media_slot_busy():
     import pixelprobe_mcp.server as server
-    result = await server.pixelprobe_get_capabilities()
-    assert result.data["server"] == "pixelprobe_mcp"
+    result = await server.pixelprobe_system("capabilities")
+    assert result.structuredContent["data"]["server"] == "pixelprobe_mcp"
 
 
 @pytest.fixture

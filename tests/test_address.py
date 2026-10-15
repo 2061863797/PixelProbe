@@ -181,7 +181,7 @@ def test_check_explains_what_the_command_accepts() -> None:
     address = parse_address("f=0..5 point(1,1)")
     with pytest.raises(AddressError) as excinfo:
         check(address, command="frame", time_modes={"single"}, shapes={"rect"})
-    assert "frame 命令" in excinfo.value.message and "单帧" in excinfo.value.message
+    assert "frame 的地址" in excinfo.value.message and "单帧" in excinfo.value.message
     with pytest.raises(AddressError, match="不能同时指定点和区域"):
         check(
             parse_address("point(1,1) rect(0,0,2,2)"), command="x",

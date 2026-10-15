@@ -29,10 +29,10 @@ def test_fifo_queue_is_bounded_and_runs_in_submission_order(tmp_path, monkeypatc
         return {"order": payload["order"]}
     monkeypatch.setattr(jobs, "run_operation_sync", execute)
     manager = JobManager(_config(tmp_path))
-    first = manager.submit("read_pixels", {"order": 1}, timeout_seconds=5, persistent=False)
-    second = manager.submit("read_pixels", {"order": 2}, timeout_seconds=5, persistent=False)
+    first = manager.submit("capability", {"order": 1}, timeout_seconds=5, persistent=False)
+    second = manager.submit("capability", {"order": 2}, timeout_seconds=5, persistent=False)
     with pytest.raises(QueueFullError, match="MCP_QUEUE_FULL"):
-        manager.submit("read_pixels", {"order": 3}, timeout_seconds=5, persistent=False)
+        manager.submit("capability", {"order": 3}, timeout_seconds=5, persistent=False)
     release.set()
     assert first.future is not None and first.future.result(3) == {"order": 1}
     assert second.future is not None and second.future.result(3) == {"order": 2}
@@ -45,11 +45,11 @@ def test_persistent_result_and_restart_recovery(tmp_path, monkeypatch):
         jobs, "run_operation_sync", lambda *_args, **_kwargs: {"success": True, "data": {"x": 1}},
     )
     manager = JobManager(_config(tmp_path))
-    job = manager.submit("read_pixels", {}, timeout_seconds=5, persistent=True)
+    job = manager.submit("capability", {}, timeout_seconds=5, persistent=True)
     assert job.future is not None
     job.future.result(3)
-    result, image = manager.result(job.job_id)
-    assert result["data"] == {"x": 1} and image is None
+    result, images = manager.result(job.job_id)
+    assert result["data"] == {"x": 1} and images == []
     record = tmp_path / "artifacts" / ".jobs" / f"{job.job_id}.json"
     value = json.loads(record.read_text(encoding="utf-8"))
     value["status"] = "running"
@@ -69,7 +69,7 @@ def test_cancel_running_job_is_idempotent(tmp_path, monkeypatch):
         raise jobs.WorkerError("MCP_CANCELLED：任务已取消")
     monkeypatch.setattr(jobs, "run_operation_sync", execute)
     manager = JobManager(_config(tmp_path))
-    job = manager.submit("read_pixels", {}, timeout_seconds=5, persistent=True)
+    job = manager.submit("capability", {}, timeout_seconds=5, persistent=True)
     deadline = time.time() + 2
     while job.status != "running" and time.time() < deadline:
         time.sleep(0.01)
@@ -102,10 +102,10 @@ def test_resource_budget_fifo_and_release(tmp_path, monkeypatch, resource):
         return payload
     monkeypatch.setattr(jobs, "run_operation_sync", execute)
     try:
-        first = manager.submit("read_pixels", {"order": 1, "cost": 6}, timeout_seconds=5, persistent=False)
+        first = manager.submit("capability", {"order": 1, "cost": 6}, timeout_seconds=5, persistent=False)
         assert entered.wait(2)
-        second = manager.submit("read_pixels", {"order": 2, "cost": 6}, timeout_seconds=5, persistent=False)
-        third = manager.submit("read_pixels", {"order": 3, "cost": 1}, timeout_seconds=5, persistent=False)
+        second = manager.submit("capability", {"order": 2, "cost": 6}, timeout_seconds=5, persistent=False)
+        third = manager.submit("capability", {"order": 3, "cost": 1}, timeout_seconds=5, persistent=False)
         with manager._lock:
             assert second.status == third.status == "queued"
             assert manager.allocated_memory_bytes == manager.allocated_temporary_bytes == 6
@@ -135,9 +135,9 @@ def test_resource_wait_finishes_without_starting_worker(tmp_path, monkeypatch, f
                                 total_memory_bytes=64 * 1024 * 1024,
                                 queue_timeout_seconds=0.2))
     try:
-        first = manager.submit("read_pixels", {}, timeout_seconds=5, persistent=False)
+        first = manager.submit("capability", {}, timeout_seconds=5, persistent=False)
         assert entered.wait(2)
-        second = manager.submit("read_pixels", {}, timeout_seconds=5, persistent=False)
+        second = manager.submit("capability", {}, timeout_seconds=5, persistent=False)
         # Future 已启动但媒体进程仍未启动的等待路径。
         deadline = time.monotonic() + 1
         while not second.future.running() and time.monotonic() < deadline:
@@ -164,7 +164,7 @@ def test_resource_rejection_has_no_side_effects(tmp_path):
     manager = JobManager(replace(_config(tmp_path), total_memory_bytes=1))
     try:
         with pytest.raises(ResourceBudgetExceededError, match="MCP_RESOURCE_LIMIT"):
-            manager.submit("read_pixels", {}, timeout_seconds=5, persistent=True)
+            manager.submit("capability", {}, timeout_seconds=5, persistent=True)
         assert manager._jobs == {}
         assert manager._outstanding == manager.allocated_memory_bytes == 0
         assert not (tmp_path / "artifacts").exists()
@@ -190,7 +190,7 @@ def test_resources_released_on_worker_or_state_failure(tmp_path, monkeypatch, fa
         original(job)
     monkeypatch.setattr(manager, "_persist", persist)
     try:
-        job = manager.submit("read_pixels", {}, timeout_seconds=5, persistent=False)
+        job = manager.submit("capability", {}, timeout_seconds=5, persistent=False)
         job.future.result(3)
         assert job.status == ("timeout" if failure == "timeout" else "failed")
         assert not job.resource_reserved and not job.result_ready
@@ -208,10 +208,9 @@ async def test_resource_limit_is_tool_error_for_both_interfaces(tmp_path, monkey
     monkeypatch.setattr(server, "SERVICE", PixelProbeService(manager.config))
     monkeypatch.setattr(server, "_JOB_MANAGER", manager)
     try:
-        with pytest.raises(ToolError, match="MCP_RESOURCE_LIMIT"):
-            await server.pixelprobe_inspect_media(media_path=str(tmp_path / "input.png"))
-        with pytest.raises(ToolError, match="MCP_RESOURCE_LIMIT"):
-            await server.pixelprobe_submit_job("inspect_media", {"media_path": str(tmp_path / "input.png")})
+        for wait in (True, False):
+            with pytest.raises(ToolError, match="MCP_RESOURCE_LIMIT"):
+                await server.pixelprobe_overview(media_path=str(tmp_path / "input.png"), wait=wait)
     finally:
         manager.shutdown(wait=True)
 
@@ -222,7 +221,7 @@ def test_submission_disk_failure_does_not_consume_capacity(tmp_path, monkeypatch
         raise OSError("磁盘已满")
     monkeypatch.setattr(manager, "_persist", fail)
     with pytest.raises(OSError):
-        manager.submit("read_pixels", {}, timeout_seconds=5, persistent=True)
+        manager.submit("capability", {}, timeout_seconds=5, persistent=True)
     assert manager._outstanding == 0
     assert manager._jobs == {}
     manager.shutdown(wait=True)
@@ -238,7 +237,7 @@ def test_final_state_failure_releases_slot_and_hides_result(tmp_path, monkeypatc
             raise OSError("磁盘已满")
         original(job)
     monkeypatch.setattr(manager, "_persist", fail_final)
-    job = manager.submit("read_pixels", {}, timeout_seconds=5, persistent=True)
+    job = manager.submit("capability", {}, timeout_seconds=5, persistent=True)
     job.future.result(3)
     assert manager._outstanding == 0
     assert job.status == "failed" and not job.result_ready
@@ -256,9 +255,9 @@ def test_shutdown_finalizes_queued_jobs_once(tmp_path, monkeypatch):
         return {"ok": True}
     monkeypatch.setattr(jobs, "run_operation_sync", execute)
     manager = JobManager(_config(tmp_path))
-    first = manager.submit("read_pixels", {}, timeout_seconds=5, persistent=True)
+    first = manager.submit("capability", {}, timeout_seconds=5, persistent=True)
     assert entered.wait(2)
-    second = manager.submit("read_pixels", {}, timeout_seconds=5, persistent=True)
+    second = manager.submit("capability", {}, timeout_seconds=5, persistent=True)
     manager.shutdown(wait=True)
     assert first.status == second.status == "cancelled"
     assert not first.result_ready and not second.result_ready
@@ -266,7 +265,7 @@ def test_shutdown_finalizes_queued_jobs_once(tmp_path, monkeypatch):
     manager.cancel(second.job_id)
     assert manager._outstanding == 0
     with pytest.raises(RuntimeError, match="已关闭"):
-        manager.submit("read_pixels", {}, timeout_seconds=5, persistent=False)
+        manager.submit("capability", {}, timeout_seconds=5, persistent=False)
 
 
 def test_queue_timeout_finishes_while_worker_remains_busy(tmp_path, monkeypatch):
@@ -281,9 +280,9 @@ def test_queue_timeout_finishes_while_worker_remains_busy(tmp_path, monkeypatch)
     monkeypatch.setattr(jobs, "run_operation_sync", execute)
     manager = JobManager(replace(_config(tmp_path), queue_timeout_seconds=0.2))
     try:
-        first = manager.submit("read_pixels", {}, timeout_seconds=5, persistent=True)
+        first = manager.submit("capability", {}, timeout_seconds=5, persistent=True)
         assert entered.wait(2)
-        queued = manager.submit("read_pixels", {}, timeout_seconds=5, persistent=True)
+        queued = manager.submit("capability", {}, timeout_seconds=5, persistent=True)
         deadline = time.monotonic() + 2
         while queued.status == "queued" and time.monotonic() < deadline:
             time.sleep(0.01)
@@ -294,7 +293,7 @@ def test_queue_timeout_finishes_while_worker_remains_busy(tmp_path, monkeypatch)
         assert not first.future.done()
         assert len(calls) == 1
         assert manager.cancel(queued.job_id)["status"] == "timeout"
-        replacement = manager.submit("read_pixels", {}, timeout_seconds=5, persistent=False)
+        replacement = manager.submit("capability", {}, timeout_seconds=5, persistent=False)
         release.set()
         first.future.result(3)
         replacement.future.result(3)
@@ -307,13 +306,15 @@ def test_queue_timeout_finishes_while_worker_remains_busy(tmp_path, monkeypatch)
 @pytest.mark.parametrize("damage", ["missing", "modified"])
 def test_image_result_requires_committed_image(tmp_path, monkeypatch, damage):
     import pixelprobe_mcp.jobs as jobs
-    monkeypatch.setattr(jobs, "run_operation_sync", lambda *args, **kwargs: ({"ok": True}, b"png"))
+    images = [("frame", b"png-0"), ("curve", b"png-1")]
+    monkeypatch.setattr(jobs, "run_operation_sync", lambda *args, **kwargs: ({"ok": True}, images))
     manager = JobManager(_config(tmp_path))
     try:
-        job = manager.submit("get_frame", {}, timeout_seconds=5, persistent=True)
+        job = manager.submit("capability", {}, timeout_seconds=5, persistent=True)
         job.future.result(3)
-        assert manager.result(job.job_id) == ({"ok": True}, b"png")
-        image = tmp_path / "artifacts" / ".jobs" / f"{job.job_id}.png"
+        assert manager.result(job.job_id) == ({"ok": True}, images)
+        # 多张图片按序号分别提交并各自校验；任何一张缺失或被改动都不可领取
+        image = tmp_path / "artifacts" / ".jobs" / f"{job.job_id}.1.png"
         if damage == "missing":
             image.unlink()
         else:
@@ -352,16 +353,20 @@ async def test_mcp_submit_poll_and_get_result(tmp_path, monkeypatch):
     Image.new("RGB", (1, 1), (7, 8, 9)).save(source)
     monkeypatch.setattr(server, "SERVICE", PixelProbeService(_config(tmp_path)))
     monkeypatch.setattr(server, "_JOB_MANAGER", None)
-    submitted = await server.pixelprobe_submit_job(
-        "read_pixels", {"media_path": str(source), "points": [{"x": 0, "y": 0}]},
+    submitted = await server.pixelprobe_measure(
+        media_path=str(source), what="pixel", at="point(0,0)", wait=False,
     )
-    job_id = submitted.data["job_id"]
-    deadline = time.time() + 5
+    job_id = submitted.structuredContent["data"]["job_id"]
+    assert submitted.structuredContent["data"]["capability"] == "pixel"
+    deadline = time.time() + 30
     while time.time() < deadline:
-        status = await server.pixelprobe_get_job(job_id)
-        if status.data["status"] not in {"queued", "running"}:
+        status = (await server.pixelprobe_job("get", job_id)).structuredContent["data"]
+        if status["status"] not in {"queued", "running"}:
             break
         await __import__("anyio").sleep(0.02)
-    assert status.data["status"] == "succeeded"
-    result = await server.pixelprobe_get_job_result(job_id)
+    assert status["status"] == "succeeded"
+    result = await server.pixelprobe_job("result", job_id)
     assert result.structuredContent["data"]["pixels"][0]["rgb"] == {"r": 7, "g": 8, "b": 9}
+    with pytest.raises(Exception, match="MCP_JOB_NOT_FOUND"):
+        await server.pixelprobe_job("get", "0" * 32)
+    server._job_manager().shutdown(wait=True)

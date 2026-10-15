@@ -83,10 +83,10 @@ MCP_RESOURCE_LIMIT，先发送协作取消，2 秒后仍未退出则终止并确
 | PIXELPROBE_MCP_WORKERS | 媒体工作进程并行数 |
 
 提高总预算不会取消各工具原有的帧数、载荷或算法上限。
-pixelprobe_get_capabilities 返回当前总预算、监控方式和工具上限；
+`pixelprobe_system action=capabilities` 返回当前总预算和工具上限；
 pixelprobe doctor --json 额外检查 psutil 是否可用。
 
-pixelprobe_get_job 增加两个兼容字段：
+`pixelprobe_job action=get` 返回两个资源字段：
 
 - resource_plan：完整尺寸、选中帧估计、扫描范围、预扫描说明、内存及空间准入预算；
 - resource_usage：工作进程观测内存峰值、受管文件峰值及保留字节数，

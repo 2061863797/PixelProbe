@@ -115,9 +115,10 @@ def test_real_c2pa_spawn_worker(signed_asset, tmp_path):
     from pixelprobe_mcp.config import ServerConfig
     from pixelprobe_mcp.worker import run_operation_sync
     target, _, root_pem = signed_asset
-    response = run_operation_sync(
-        ServerConfig((tmp_path,), tmp_path / "artifacts"), "evidence",
-        {"media_path": str(target), "c2pa_trust_anchors_pem": root_pem},
+    response, _ = run_operation_sync(
+        ServerConfig((tmp_path,), tmp_path / "artifacts"), "capability",
+        {"capability": "evidence", "media_path": str(target),
+         "options": {"c2pa_trust_anchors_pem": root_pem}},
         timeout_seconds=30,
     )
     assert response.data["c2pa"]["verification_state"] == "trusted"

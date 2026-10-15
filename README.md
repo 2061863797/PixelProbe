@@ -203,18 +203,21 @@ macOS/Linux 可用冒号在 `PIXELPROBE_MCP_ROOTS` 中配置多个允许目录�
 这些目录之外的路径。正式 Bundle 默认写入第一个允许目录下的
 `.pixelprobe-mcp/artifacts/`；也可用 `PIXELPROBE_MCP_ARTIFACT_ROOT` 指定其中的其他目录。
 
-接入后，Agent 应先调用 `pixelprobe_inspect_media`，再调用
-`pixelprobe_get_frame` 使用自身视觉查看原始画面，最后按需用精确像素、区域、变化和
-Artifact 工具核实。MCP 还提供 `pixelprobe_analyze_media` Prompt 和
+MCP 共 10 个工具，覆盖命令行的全部功能（对照表见 [MCP 工具与后台任务](docs/mcp-jobs.md)）。
+推荐顺序是先粗后细：`pixelprobe_overview` 了解全貌 → `pixelprobe_find` 定位时刻 →
+`pixelprobe_look` 带刻度查看 → `pixelprobe_measure` 读取精确数值。位置统一写在 `at`
+参数里，与命令行 `--at` 写法相同；返回的 `event1`、`seg3` 等编号可在下一次调用中写成
+`at="@event1"`。MCP 还提供 `pixelprobe_analyze_media` Prompt 和
 `pixelprobe://guidance` Resource，用于注入“视觉为主、确定性数据为辅助”的分析原则。
 
 检查图片时，响应会分别说明存储样本通道、确定性分析使用的 RGB 通道和视觉 PNG
 通道，并提供调色板使用量、完整 Alpha 统计及规则高频纹理候选。纹理候选附带检测范围、
 周期和相关性证据，只用于提醒 Agent 复核，不会被描述为已经确认的压缩、损坏或伪造。
 
-`pixelprobe_get_frame` 不会缩放画面。原始 PNG 超过客户端载荷限制时会明确失败并建议
-裁剪或分区查看，不会静默返回缩略图。生成表示是唯一写操作，只能写入受控 Artifact
-目录且不覆盖已有结果；其余工具均为只读操作。
+返回给 Agent 的图片四周标有原始坐标刻度，可选叠加 8×6 网格（`grid=true`，格子名可直接
+写成 `cell(C4)`），并按 `max_side` 缩放；缩放比例写在返回数据里。预览只用于定位，精确数值
+请用 `pixelprobe_measure` 读取。写结果包的操作（证据、组合流程、表示生成）只能写入受控
+Artifact 目录且不覆盖已有结果。
 
 ### 更新 MCP
 
@@ -231,7 +234,7 @@ python -m pip install -e ".[mcp]"
 python -m pip install --upgrade --force-reinstall "pixelprobe[mcp] @ git+https://github.com/2061863797/PixelProbe.git@<发布标签或提交哈希>"
 ```
 
-然后重启支持 MCP 的 Agent/桌面客户端，再调用 `pixelprobe_get_capabilities` 确认
+然后重启支持 MCP 的 Agent/桌面客户端，再调用 `pixelprobe_system`（action=capabilities）确认
 `pixelprobe_version`。
 
 ## 命令一览

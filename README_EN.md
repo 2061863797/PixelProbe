@@ -172,11 +172,11 @@ Add the local server to an MCP-compatible agent:
 
 The client starts `pixelprobe-mcp` automatically; do not run it manually in a regular terminal. Separate multiple allowed directories in `PIXELPROBE_MCP_ROOTS` with a semicolon on Windows or a colon on macOS and Linux. The server rejects paths outside those roots. Formal Bundles are written by default to `.pixelprobe-mcp/artifacts/` under the first allowed root. `PIXELPROBE_MCP_ARTIFACT_ROOT` can select another directory within an allowed root.
 
-After connecting, the agent should call `pixelprobe_inspect_media` first, then use `pixelprobe_get_frame` to inspect the original frame with its own vision, and finally call precise pixel, region, change, or Artifact tools as needed. MCP also exposes the `pixelprobe_analyze_media` Prompt and the `pixelprobe://guidance` Resource, which reinforce the principle that visual understanding is primary and deterministic data is supporting evidence.
+MCP provides 10 tools that together cover every CLI feature (see the mapping in [MCP tools and jobs](docs/mcp-jobs.md)). Work coarse to fine: `pixelprobe_overview` for the big picture → `pixelprobe_find` to locate moments → `pixelprobe_look` to view annotated images → `pixelprobe_measure` for exact values. Locations go in the `at` parameter using the same syntax as the CLI `--at`; returned names such as `event1` or `seg3` can be reused in a later call as `at="@event1"`. MCP also exposes the `pixelprobe_analyze_media` Prompt and the `pixelprobe://guidance` Resource, which reinforce the principle that visual understanding is primary and deterministic data is supporting evidence.
 
 For images, the response separately describes stored sample channels, the RGB channels used for deterministic analysis, and the visual PNG channels. It also reports palette usage, complete alpha statistics, and candidates for regular high-frequency textures. A texture candidate includes the analyzed coverage, period, and correlation evidence. It is only a prompt for agent review and is never presented as confirmed compression, corruption, or manipulation.
 
-`pixelprobe_get_frame` does not resize the image. If the original PNG exceeds the client's payload limit, the call fails explicitly and recommends cropping or tiled inspection; it never silently returns a thumbnail. Representation generation is the only write operation. It can write only to the controlled Artifact directory and never overwrites an existing result. All other tools are read-only.
+Images returned to the agent carry original-coordinate rulers, can overlay an 8×6 grid (`grid=true`; cell names can be used directly as `cell(C4)`), and are scaled to `max_side`; the scale factors are included in the response. Previews are for locating things only — read exact values with `pixelprobe_measure`. Operations that write Bundles (evidence, workflows, representation generation) write only to the controlled Artifact directory and never overwrite an existing result.
 
 ### Updating MCP
 
@@ -193,7 +193,7 @@ For a direct GitHub installation, replace `<release-tag-or-commit-hash>` with th
 python -m pip install --upgrade --force-reinstall "pixelprobe[mcp] @ git+https://github.com/2061863797/PixelProbe.git@<release-tag-or-commit-hash>"
 ```
 
-Then restart the MCP-compatible agent or desktop client and call `pixelprobe_get_capabilities` to confirm `pixelprobe_version`.
+Then restart the MCP-compatible agent or desktop client and call `pixelprobe_system` (action=capabilities) to confirm `pixelprobe_version`.
 
 ## Command Reference
 

@@ -56,32 +56,32 @@ def check(
         mode = address.time.mode
         if mode not in allowed_modes:
             if not allowed_modes:
-                raise AddressError(f"{command} 命令的 --at 不接受时间（收到 {address.time}）")
+                raise AddressError(f"{command} 的地址不接受时间（收到 {address.time}）")
             options = "、".join(_TIME_MODE_TEXT[item] for item in sorted(allowed_modes))
             raise AddressError(
-                f"{command} 命令的 --at 时间应为：{options}；收到 {address.time}",
+                f"{command} 的地址时间应为：{options}；收到 {address.time}",
             )
         if mode == "list" and len(address.time.values) != 2:
-            raise AddressError(f"{command} 命令需要恰好两帧，收到 {address.time}")
+            raise AddressError(f"{command} 需要恰好两帧，收到 {address.time}")
     if address.step is not None and not step:
-        raise AddressError(f"{command} 命令的 --at 不接受 step=")
+        raise AddressError(f"{command} 的地址不接受 step=")
     regions = 0
     for shape in address.shapes:
         name = shape_name(shape)
         if name not in allowed_shapes:
             if not allowed_shapes:
-                raise AddressError(f"{command} 命令的 --at 不接受空间位置（收到 {shape}）")
+                raise AddressError(f"{command} 的地址不接受空间位置（收到 {shape}）")
             options = "、".join(_SHAPE_TEXT[item] for item in sorted(allowed_shapes))
             raise AddressError(
-                f"{command} 命令的 --at 不支持 {shape}；可用：{options}",
+                f"{command} 的地址不支持 {shape}；可用：{options}",
             )
         if name not in {"point", "pid"}:
             regions += 1
     if regions > max_regions:
-        raise AddressError(f"{command} 命令的 --at 最多只能有 {max_regions} 个区域")
+        raise AddressError(f"{command} 的地址最多只能有 {max_regions} 个区域")
     point_like = any(shape_name(shape) in {"point", "pid"} for shape in address.shapes)
     if point_like and regions:
-        raise AddressError(f"{command} 命令的 --at 不能同时指定点和区域")
+        raise AddressError(f"{command} 的地址不能同时指定点和区域")
 
 
 def range_options(address: Address) -> dict[str, object]:

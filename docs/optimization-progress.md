@@ -1,8 +1,38 @@
 # 优化实施检查点
 
-## 当前状态：2026-10-14 2.0 重构阶段 3（媒体索引、会话与常驻工作进程）
+## 当前状态：2026-10-15 2.0 重构阶段 4（能力登记表、MCP 精简为 10 个工具）
 
-本节优先于下方历史检查点。分两次提交：索引与命令行接入（543ff5e），会话与常驻进程（本次）。
+本节优先于下方历史检查点。分两次提交：能力登记表与命令行改造（a6383d6），MCP 改造（本次）。
+
+- 新增 `pixelprobe.capabilities`：27 项能力各登记一次（名称、地址规则、参数模型、执行函数、
+  命令行入口、MCP 工具与选择值）。命令行命令改为薄包装；MCP 的 `capability` 操作在工作进程中
+  调用同一函数，只额外负责路径白名单、资源边界、受控输出位置、图片编码和分页。
+- MCP 由 17 个工具换成 10 个（overview / look / measure / find / compare / evidence / bundle /
+  index / job / system），不保留旧名。删除 `resume_job` 与 MCP checkpoint；1.x 留下的任务记录
+  与 checkpoint 仍可由 `system action=storage` 按期清理。对照表见 `docs/mcp-jobs.md`。
+- 新增 `pixelprobe.output.annotate`：图片四周画原始坐标刻度（切片时间轴标帧号）、可选 8×6
+  网格（与地址 `cell(...)` 同一定义），按 `max_side` 与载荷上限缩放，比例写入 `data.images`。
+- 结果编号：`find`、`overview(scan)`、已建索引时的 `overview(meta)` 返回 `refs`，服务器按媒体
+  记住，下一次可直接写 `@event1`。
+- 改造中发现并修复的问题：
+  - 改写时漏掉的三项保护已补回：Prompt 中把用户输入包成"不可信 JSON"（防提示注入）、
+    `generate` 源解码帧上限 1800、证据结果只返回 EXIF 字段名（防止响应超限）；
+  - 资源计划在图片上把组合流程当成单帧读取、预留 0 字节临时空间，导致图片的质量概览失败；
+  - MCP 自身的参数错误原先统一显示为"操作失败"，现在返回具体原因（不回显路径和能力名）；
+  - 透明或调色板图片在显示 RGB8 下读取时给出警告，提示改用 `options.sample=native`。
+- 新增对等测试 `tests/test_capability_parity.py`：每项能力都有可用的命令行命令和 MCP 入口，
+  逐个按登记的选择值调用 MCP 工具确认落到同名能力；12 个抽样（图片/视频的 info、pixel、region、
+  changes、scan、timeline、spectrum、spectrum2d、flow）命令行与 MCP 数值逐项相同。
+- 重写 MCP 相关测试（server、worker、jobs、maintenance、资源、组合流程、发行、证据、C2PA、
+  索引），删除 `test_mcp_resume.py`（7 项）。评估题集改用新工具说法并新增 2 题（@编号、网格）。
+- 验证：全量 **507 passed、0 failed、0 skipped**；数值基线 38/38 一致；真实 stdio 子进程
+  逐个调用 10 个工具全部成功（含 @event1 引用、cell 网格、索引、wait=false 后台任务）。
+- 未执行：在 Claude Code 中以 MCP 客户端实际连接本次代码（需要重启客户端加载新版本）；
+  Linux/macOS 运行。
+
+## 历史状态：2026-10-14 2.0 重构阶段 3（媒体索引、会话与常驻工作进程）
+
+分两次提交：索引与命令行接入（543ff5e），会话与常驻进程（b3857d5）。
 
 - 新增 `pixelprobe.index`：一次顺序解码生成 L0 元数据、L1 每帧体检表、L2 变化/平稳分段、
   L3 缩略立方体（长边 64、默认总量 ≤128 MB，超出按 thumb_stride 隔帧保留）。按快速指纹

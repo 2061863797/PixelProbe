@@ -20,8 +20,6 @@ from dataclasses import dataclass, field
 import psutil
 from multiprocessing.connection import Connection
 
-import anyio
-
 from pixelprobe_mcp.config import ServerConfig
 
 MAX_TASKS_PER_WORKER = 200
@@ -29,17 +27,11 @@ IDLE_TIMEOUT_SECONDS = 300.0
 GRACE_SECONDS = 2.0
 
 
-READ_OPERATIONS = {
-    "inspect_media": "InspectInput", "get_frame": "FrameInput",
-    "read_pixels": "PixelInput", "analyze_region": "RegionInput",
-    "find_changes": "ChangesInput", "list_artifacts": "BundleListInput",
-    "read_artifact": "ArtifactReadInput",
-}
+# 工作进程只执行这三类固定操作；能力名在 CapabilityInput 中并由能力登记表校验
 OPERATIONS = {
-    **READ_OPERATIONS,
-    "generate_representation": "GenerateInput",
-    "evidence": "EvidenceInput",
-    "workflow": "WorkflowInput",
+    "capability": "CapabilityInput",
+    "list_artifacts": "BundleListInput",
+    "read_artifact": "ArtifactReadInput",
 }
 
 
@@ -51,16 +43,11 @@ def execute_operation(config: ServerConfig, operation: str, payload: dict, cance
     from pixelprobe_mcp import models
     from pixelprobe_mcp.service import PixelProbeService
     model = getattr(models, OPERATIONS[operation])
-    options = {}
-    if operation == "generate_representation":
-        payload = dict(payload)
-        options["checkpoint_id"] = payload.pop("_checkpoint_id", None)
-        options["resume"] = payload.pop("_resume", False)
     if cancellation is not None:
         cancellation.raise_if_cancelled()
-    result = getattr(PixelProbeService(config, cancellation=cancellation, **options), operation)(
-        model.model_validate(payload),
-    )
+    service = PixelProbeService(config, cancellation=cancellation)
+    method = service.run_capability if operation == "capability" else getattr(service, operation)
+    result = method(model.model_validate(payload))
     if cancellation is not None:
         cancellation.raise_if_cancelled()
     return result
@@ -92,7 +79,7 @@ def _run_task(connection: Connection, config: ServerConfig, operation: str, payl
     from pixelprobe.domain.errors import DomainError
     from pixelprobe.models.errors import PixelProbeError
     from pixelprobe_mcp.config import MediaChangedError, PathAccessError
-    from pixelprobe_mcp.service import McpResourceLimitError, validation_message
+    from pixelprobe_mcp.service import McpInputError, McpResourceLimitError, validation_message
     from pixelprobe.utils.resource_budget import ResourceBudget, budget_scope
     from pixelprobe_mcp.resource_plan import plan_operation, CONTROL_BYTES
     tempfile.tempdir = scratch
@@ -134,6 +121,8 @@ def _run_task(connection: Connection, config: ServerConfig, operation: str, payl
         message = "MEDIA_CHANGED_DURING_ANALYSIS：输入发生变化，结果已丢弃"
     except McpResourceLimitError as exc:
         message = f"MCP_RESOURCE_LIMIT：{exc}"
+    except McpInputError as exc:
+        message = f"参数无效：{exc}"
     except MemoryError:
         message = "MCP_RESOURCE_LIMIT：工作进程内存分配失败"
     except (ValueError, OSError, KeyError, RuntimeError):
@@ -360,22 +349,3 @@ def shutdown_worker_pools() -> None:
 
 
 atexit.register(shutdown_worker_pools)
-
-
-async def run_operation(
-    config: ServerConfig, operation: str, payload: dict, *, timeout_seconds: float,
-    cancel_event: threading.Event | None = None,
-):
-    return await anyio.to_thread.run_sync(
-        lambda: run_operation_sync(
-            config, operation, payload, timeout_seconds=timeout_seconds,
-            cancel_event=cancel_event,
-        ), abandon_on_cancel=True,
-    )
-
-
-async def run_read(config: ServerConfig, operation: str, payload: dict):
-    """兼容既有调用；时限由外层取消域控制。"""
-    return await run_operation(
-        config, operation, payload, timeout_seconds=24 * 60 * 60,
-    )

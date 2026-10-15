@@ -146,6 +146,9 @@ def _generate(call: Invocation) -> Outcome:
             "schema_version": result.bundle.manifest.schema_version,
             "plan_id": result.plan.plan_id,
             "decode_passes": result.decode_passes,
+            "source_frames_decoded": getattr(result, "source_frames_decoded", None),
+            "frames_converted": getattr(result, "frames_converted", None),
+            "frames_stored": getattr(result, "frames_stored", None),
             "artifact_count": len(result.bundle.manifest.artifacts),
             "cache_hits": result.cache_hits,
             "cache_writes": result.cache_writes,
@@ -221,8 +224,12 @@ def _index_build(call: Invocation) -> Outcome:
     if existing is not None:
         index, status = existing, "existing"
     else:
+        from pixelprobe.index.builder import DEFAULT_THUMB_BUDGET_BYTES
         cancel = call.cancellation.raise_if_cancelled if call.cancellation is not None else None
-        built = build_index(call.media, progress=call.progress, cancel_check=cancel)
+        built = build_index(
+            call.media, progress=call.progress, cancel_check=cancel,
+            thumb_budget_bytes=call.settings.get("thumb_budget", DEFAULT_THUMB_BUDGET_BYTES),
+        )
         index, status = store.save(call.media, built), "built"
     return Outcome(
         data={"status": status, **index.summary(), "index_dir": str(store.root)},

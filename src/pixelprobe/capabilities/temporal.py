@@ -96,10 +96,10 @@ class TimelineOptions(BaseModel):
     )
 
 
-def _timeline(call: Invocation) -> Outcome:
+def _timeline_request(call: Invocation):
     options: TimelineOptions = call.options  # type: ignore[assignment]
     grid = grid_of(call.address)
-    request, ordered, width, height = timeline_request(
+    return timeline_request(
         call.media,
         points=points_of(call.address, *_size(call)) or None,
         grid=(grid.x, grid.y, grid.width, grid.height) if grid else None,
@@ -108,6 +108,11 @@ def _timeline(call: Invocation) -> Outcome:
         **range_options(call.address),
         sort=options.sort,
     )
+
+
+def _timeline(call: Invocation) -> Outcome:
+    options: TimelineOptions = call.options  # type: ignore[assignment]
+    request, ordered, width, height = _timeline_request(call)
     tensor = pixelprobe.generate(request).request_tensors[0][0]
     _progress(call)
     matrix = timeline_matrix(tensor)
@@ -151,13 +156,17 @@ def _timeline(call: Invocation) -> Outcome:
 
 # ---------------- xt / yt ----------------
 
+def _slice_request(call: Invocation, kind: str):
+    fixed = row_of(call.address) if kind == "xt" else col_of(call.address)
+    if fixed is None:
+        example = "row(120)" if kind == "xt" else "col(40)"
+        raise AddressError(f'{kind} 需要扫描线位置，例如 "t=1s..3s {example}"')
+    return spacetime_request(call.media, kind, fixed, **range_options(call.address)), fixed
+
+
 def _slice(kind: str):
     def run(call: Invocation) -> Outcome:
-        fixed = row_of(call.address) if kind == "xt" else col_of(call.address)
-        if fixed is None:
-            example = "row(120)" if kind == "xt" else "col(40)"
-            raise AddressError(f'{kind} 需要扫描线位置，例如 "t=1s..3s {example}"')
-        request = spacetime_request(call.media, kind, fixed, **range_options(call.address))
+        request, fixed = _slice_request(call, kind)
         tensor = pixelprobe.generate(request).request_tensors[0][0]
         _progress(call)
         array = tensor.data.materialize()
@@ -257,14 +266,19 @@ class ReduceOptions(BaseModel):
     smooth: int = Field(default=0, description="N×N 邻域均值平滑（>=2 生效，只影响预览）")
 
 
-def _reduce(call: Invocation) -> Outcome:
+def _reduce_request(call: Invocation):
     options: ReduceOptions = call.options  # type: ignore[assignment]
     rect = rect_of(call.address, *_size(call))
-    request = reduce_request(
+    return reduce_request(
         call.media, operation=options.op, rect=rect, **range_options(call.address),
         p_low=options.p_low, p_high=options.p_high,
         destripe=options.destripe, smooth=options.smooth,
-    )
+    ), rect
+
+
+def _reduce(call: Invocation) -> Outcome:
+    options: ReduceOptions = call.options  # type: ignore[assignment]
+    request, rect = _reduce_request(call)
     data_tensor, preview_tensor = pixelprobe.generate(request).request_tensors[0]
     _progress(call)
     statistic = data_tensor.data.materialize()
@@ -414,18 +428,23 @@ class SpectrumOptions(BaseModel):
     source: str = Field(default="luma", description="分析序列：luma（亮度）/ change（相邻帧变化量）")
 
 
-def _spectrum(call: Invocation) -> Outcome:
+def _spectrum_request(call: Invocation):
     options: SpectrumOptions = call.options  # type: ignore[assignment]
     width, height = _size(call)
     points = points_of(call.address, width, height)
     if len(points) > 1:
         raise AddressError("spectrum 一次只能分析一个点")
-    request = temporal_spectrum_request(
+    return temporal_spectrum_request(
         call.media, source=options.source,
         rect=rect_of(call.address, width, height),
         point=points[0] if points else None,
         **range_options(call.address),
     )
+
+
+def _spectrum(call: Invocation) -> Outcome:
+    options: SpectrumOptions = call.options  # type: ignore[assignment]
+    request = _spectrum_request(call)
     data_tensor, preview_tensor = pixelprobe.generate(request).request_tensors[0]
     _progress(call)
     attributes = data_tensor.attributes
@@ -447,11 +466,15 @@ def _spectrum(call: Invocation) -> Outcome:
     )
 
 
-def _spectrum2d(call: Invocation) -> Outcome:
-    request = spatial_spectrum_request(
+def _spectrum2d_request(call: Invocation):
+    return spatial_spectrum_request(
         call.media, **single_frame_options(call.address),
         rect=rect_of(call.address, *_size(call)),
     )
+
+
+def _spectrum2d(call: Invocation) -> Outcome:
+    request = _spectrum2d_request(call)
     data_tensor, preview_tensor = pixelprobe.generate(request).request_tensors[0]
     attributes = data_tensor.attributes
     image = preview_tensor.data.materialize()
@@ -477,7 +500,7 @@ class FlowOptions(BaseModel):
     mag_threshold: float = Field(default=1.0, description="运动区域判定的位移阈值（像素）")
 
 
-def _flow(call: Invocation) -> Outcome:
+def _flow_request(call: Invocation):
     options: FlowOptions = call.options  # type: ignore[assignment]
     if options.accumulate:
         if call.address.time is not None and call.address.time.mode == "list":
@@ -487,10 +510,15 @@ def _flow(call: Invocation) -> Outcome:
         if call.address.step is not None:
             raise AddressError("两帧光流不接受 step=；累积模式请加 accumulate")
         when = pair_options(call.address)
-    request = flow_request(
+    return flow_request(
         call.media, **when, accumulate=options.accumulate,
         compensate_global=options.compensate, mag_threshold=options.mag_threshold,
     )
+
+
+def _flow(call: Invocation) -> Outcome:
+    options: FlowOptions = call.options  # type: ignore[assignment]
+    request = _flow_request(call)
     tensors = pixelprobe.generate(request).request_tensors[0]
     _progress(call)
     flow_preview, magnitude_preview = tensors[-2:]
@@ -580,3 +608,21 @@ FLOW = register(Capability(
     address=AddressRule(frozenset({"list", "range", "all"}), step=True),
     options=FlowOptions, image_names=("flow", "magnitude"),
 ))
+
+
+# 走引擎的能力：执行与资源预估共用同一个请求构造函数，保证预估的就是实际执行的请求
+_ENGINE_REQUESTS = {
+    "timeline": lambda call: _timeline_request(call)[0],
+    "xt": lambda call: _slice_request(call, "xt")[0],
+    "yt": lambda call: _slice_request(call, "yt")[0],
+    "reduce": lambda call: _reduce_request(call)[0],
+    "spectrum": _spectrum_request,
+    "spectrum2d": _spectrum2d_request,
+    "flow": _flow_request,
+}
+
+
+def engine_request(name: str, call: Invocation):
+    """返回该能力将交给引擎执行的 RepresentationRequest；不走引擎的能力返回 None。"""
+    builder = _ENGINE_REQUESTS.get(name)
+    return builder(call) if builder is not None else None

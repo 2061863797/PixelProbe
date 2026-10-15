@@ -39,7 +39,7 @@ app = typer.Typer(
     help=(
         "PixelProbe：本地图片与视频像素分析 CLI 工具。\n\n"
         "坐标原点在左上角（x 向右，y 向下）；帧号从 0 开始；"
-        "帧范围为闭区间（--start-frame 10 --end-frame 20 共 11 帧）；"
+        "位置统一用 --at 指定，帧范围为闭区间（--at \"f=10..20\" 共 11 帧），写法见 docs/address.md；"
         "时间单位为秒。使用 pixelprobe --mcp --help 查看 MCP 服务启动参数。"
     ),
     add_completion=False,

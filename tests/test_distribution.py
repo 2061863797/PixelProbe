@@ -59,7 +59,8 @@ async def test_distribution_forced_timeout_reaps_suspended_worker(tmp_path):
     cmd = command()
     params = StdioServerParameters(command=cmd[0], args=[*cmd[1:], "--mcp"], env=environment(tmp_path))
     suspended = []
-    payload = {"media_path": str(source), "points": [{"x": 0, "y": 0}]}
+    payload = {"media_path": str(source), "what": "pixel", "at": "point(0,0)",
+               "options": {"sample": "native"}}
     try:
         with anyio.fail_after(50):
             async with stdio_client(params) as (reader, writer):
@@ -70,7 +71,7 @@ async def test_distribution_forced_timeout_reaps_suspended_worker(tmp_path):
                     replies = []
 
                     async def read():
-                        replies.append(await session.call_tool("pixelprobe_read_pixels", payload))
+                        replies.append(await session.call_tool("pixelprobe_measure", payload))
 
                     async with anyio.create_task_group() as group:
                         group.start_soon(read)
@@ -89,8 +90,8 @@ async def test_distribution_forced_timeout_reaps_suspended_worker(tmp_path):
                     assert "MCP_TIMEOUT" in str(replies[0].content)
                     # 断言前不恢复或杀死进程；必须由产品完成回收。
                     assert all(not p.is_running() for p in suspended)
-                    recovered = await call(session, "pixelprobe_read_pixels", payload)
-                    assert recovered["pixels"][0]["stored_sample"] == [11, 22, 33]
+                    recovered = await call(session, "pixelprobe_measure", payload)
+                    assert recovered["pixels"][0]["values"] == [11, 22, 33]
     finally:
         # 仅清理本测试已确认并挂起的子进程，异常时也不留下挂起 worker。
         for child in suspended:
@@ -162,22 +163,23 @@ async def test_distribution_mcp_flow_zarr_and_signed_evidence(tmp_path, signed_a
         async with stdio_client(params) as (reader, writer):
             async with ClientSession(reader, writer) as session:
                 await session.initialize()
-                generated = await call(session, "pixelprobe_generate_representation", {
-                    "media_path": str(video), "request": request("feature_t"), "output_name": "flow.bundle",
+                generated = await call(session, "pixelprobe_bundle", {
+                    "action": "generate", "media_path": str(video),
+                    "requests": [request("feature_t")], "output_name": "flow.bundle",
                 })
                 bundle = BundleReader().open(Path(generated["bundle_path"]), verify="full")
                 artifact_id = next(item.artifact_id for item in bundle.manifest.artifacts
                                    if item.kind == "data" and item.storage.shape == (32, 32, 2))
                 assert bundle.artifact(artifact_id).storage.format == "zarr"
-                values = await call(session, "pixelprobe_read_artifact", {
-                    "bundle_path": generated["bundle_path"], "artifact_id": artifact_id,
+                values = await call(session, "pixelprobe_bundle", {
+                    "action": "read", "bundle_path": generated["bundle_path"], "artifact_id": artifact_id,
                     "selection": [{"start": 0, "stop": 32}, {"start": 0, "stop": 32}, {"start": 0, "stop": 2}],
                     "max_values": 2048, "verify": "full",
                 })
                 assert values["selected_shape"] == [32, 32, 2]
                 np.testing.assert_allclose(values["values"], 0, atol=1e-6)
                 evidence = await call(session, "pixelprobe_evidence", {
-                    "media_path": str(target), "c2pa_trust_anchors_pem": anchors,
+                    "media_path": str(target), "options": {"c2pa_trust_anchors_pem": anchors},
                     "output_name": "evidence.bundle",
                 })
                 assert evidence["c2pa"]["verification_state"] == "trusted"
@@ -205,31 +207,29 @@ async def test_distribution_running_cancel_and_recovery(tmp_path):
         async with stdio_client(params) as (reader, writer):
             async with ClientSession(reader, writer) as session:
                 await session.initialize()
-                job = await call(session, "pixelprobe_submit_job", {
-                    "operation": "workflow", "payload": {"media_path": str(video),
-                    "options": {"workflow": "quality_overview", "end_frame": 399},
-                    "output_name": "cancelled.bundle"},
+                job = await call(session, "pixelprobe_overview", {
+                    "media_path": str(video), "detail": "quality", "at": "f=0..399", "wait": False,
                 })
                 job_id = job["job_id"]
                 while True:
-                    state = await call(session, "pixelprobe_get_job", {"job_id": job_id})
+                    state = await call(session, "pixelprobe_job", {"action": "get", "job_id": job_id})
                     assert state["status"] in {"queued", "running"}, state
                     if state["status"] == "running" and state["resource_plan"] is not None:
                         break
                     await anyio.sleep(0.02)
-                await call(session, "pixelprobe_cancel_job", {"job_id": job_id})
+                await call(session, "pixelprobe_job", {"action": "cancel", "job_id": job_id})
                 while True:
-                    state = await call(session, "pixelprobe_get_job", {"job_id": job_id})
+                    state = await call(session, "pixelprobe_job", {"action": "get", "job_id": job_id})
                     if state["status"] == "cancelled":
                         break
                     assert state["status"] == "running", state
                     await anyio.sleep(0.02)
                 assert not state["result_ready"]
-                refused = await session.call_tool("pixelprobe_get_job_result", {"job_id": job_id})
+                refused = await session.call_tool("pixelprobe_job", {"action": "result", "job_id": job_id})
                 assert refused.isError
-                assert not (tmp_path / "结果" / "cancelled.bundle").exists()
-                recovered = await call(session, "pixelprobe_read_pixels", {
-                    "media_path": str(video), "frame": 0, "points": [{"x": 0, "y": 0}],
+                assert not list((tmp_path / "结果").glob("*.bundle"))
+                recovered = await call(session, "pixelprobe_measure", {
+                    "media_path": str(video), "what": "pixel", "at": "f=0 point(0,0)",
                 })
                 rgb = recovered["pixels"][0]["rgb"]
                 assert [rgb["r"], rgb["g"], rgb["b"]] == pixels[0, 0].tolist()

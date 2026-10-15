@@ -1,17 +1,17 @@
-"""媒体会话：在一个进程内为同一媒体复用已加载的索引，并登记结果编号。
+"""媒体会话：在一个进程内为同一媒体复用已加载的索引。
 
 MCP 常驻工作进程会连续处理同一视频的多次请求。会话按媒体的快速指纹缓存索引，
 文件内容变化后指纹改变、旧会话自然失效；缓存条目数有上限（最近使用优先保留）。
+尚未建立索引的媒体不会被缓存为"无索引"，建立后下一次请求即可读到。
 
-结果编号（如 event3、seg2）登记在会话内，供后续地址中的 @名称 引用；
-编号只在同一进程、同一媒体内容内有效。
+结果编号（如 event3、seg2）由 MCP 服务端按媒体登记，并随请求传给工作进程。
 """
 
 from __future__ import annotations
 
 import threading
 from collections import OrderedDict
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 from pixelprobe.utils.fingerprint import quick_fingerprint
@@ -23,10 +23,6 @@ MAX_SESSIONS = 4
 class MediaSession:
     fingerprint: str
     index: object | None
-    refs: dict[str, str] = field(default_factory=dict)
-
-    def register(self, name: str, address: str) -> None:
-        self.refs[name] = address
 
 
 class SessionCache:

@@ -1,8 +1,9 @@
 # 组合分析流程
 
-当前源码提供 Python run_workflow、CLI workflow 和 MCP pixelprobe_workflow。
+当前源码提供 Python run_workflow、CLI workflow 和 MCP 入口（first_change 在
+pixelprobe_find，compare_media 在 pixelprobe_compare，quality_overview 在 pixelprobe_overview）。
 三个流程共享有界流式读取、资源预算、输入哈希复验和原子 Bundle 提交；
-MCP 同步调用与 operation=workflow 异步任务经过同一调度器。
+MCP 同步调用（wait=true）与后台任务（wait=false）经过同一调度器。
 
 ## 三个流程
 
@@ -43,21 +44,21 @@ result = run_workflow(
 )
 ```
 
-MCP 同步调用参数：
+MCP 调用 `pixelprobe_compare` 的参数（帧范围与步长写在 at 里，阈值写在 options 里）：
 
 ```json
 {
   "media_path": "C:/media/new.mkv",
   "reference_path": "C:/media/old.mkv",
-  "options": {"workflow": "compare_media", "end_frame": 299},
-  "output_name": "comparison.bundle"
+  "at": "f=..299",
+  "options": {"threshold": 10}
 }
 ```
 
-长任务使用 pixelprobe_submit_job，operation 为 workflow，payload 为上述对象。
+长任务加 `"wait": false`，立即返回 job_id，用 `pixelprobe_job` 查询和领取摘要，
+再用 `pixelprobe_bundle action=list/read` 分页读取结果包。
 两个输入都独立执行白名单检查，reference_path 不构成额外授权。
-完成后通过 pixelprobe_get_job_result 领取摘要，再用现有 Artifact 分页接口读取结果。
-组合流程没有 checkpoint，重启后不会自动重跑，不支持 resume_job 恢复。
+组合流程重启后不会自动重跑。
 
 ## 数值、预览和覆盖范围
 

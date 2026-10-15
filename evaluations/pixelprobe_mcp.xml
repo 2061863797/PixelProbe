@@ -37,7 +37,15 @@
     <answer>140</answer>
   </qa_pair>
   <qa_pair>
-    <question>以 standard 模式检查 evaluations/fixtures/精确视频.mkv，结合变化候选和第 15 帧原始画面，找出像素阈值扫描给第 15 帧标记的纯帧异常类型。只回答英文类型名。</question>
+    <question>对 evaluations/fixtures/精确视频.mkv 做概览扫描，结合变化候选和第 15 帧原始画面，找出像素阈值扫描给第 15 帧标记的纯帧异常类型（不是闪帧）。只回答英文类型名。</question>
     <answer>white</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>对 evaluations/fixtures/精确视频.mkv 做整帧变化检测，用返回的第一个事件编号查看该事件的抽帧网格。这个事件从哪一帧开始？只回答整数。</question>
+    <answer>14</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>给 evaluations/fixtures/精确图片.png 叠加 8×6 网格查看，再统计右下角那个格子的区域颜色。该格子平均红色通道是多少？只回答整数。</question>
+    <answer>232</answer>
   </qa_pair>
 </evaluation>

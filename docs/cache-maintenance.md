@@ -33,7 +33,7 @@ Python 对应接口为 cache.maintain(dry_run=True, max_age_seconds=7 * 86400)�
 
 ## MCP checkpoint 与孤立数据
 
-MCP checkpoint 使用 pixelprobe_maintain_storage，CLI clear/prune 不允许绕过它。
+MCP checkpoint（1.x 遗留）使用 `pixelprobe_system action=storage` 清理，CLI clear/prune 不允许绕过它。
 新 checkpoint 目录带有程序归属标记。如果任务记录已经不存在，且整个目录都已超过
 任务保留期、没有活动实例和可疑记录，就可以作为有明确归属的孤立目录清理。
 

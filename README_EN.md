@@ -207,6 +207,7 @@ Then restart the MCP-compatible agent or desktop client and call `pixelprobe_sys
 | `xt` | Generate an X–T slice from a horizontal scan line |
 | `yt` | Generate a Y–T slice from a vertical scan line |
 | `changes` | Locate the strongest changes and group them into events |
+| `streams` | Video container and coding structure: tags, keyframe intervals, timestamp gaps, bytes per second, and forensic clues (see [docs/streams.md](docs/streams.md)) |
 | `find` | Search with a query for black/white frames, flashes, cuts, freezes, dropped-frame gaps, similar frames, metric conditions, and region changes (see [docs/find.md](docs/find.md)) |
 | `scan` | Generate a contact sheet, change events, and anomalous-frame findings |
 | `reduce` | Generate per-pixel mean/median/min/max/std/diff images |

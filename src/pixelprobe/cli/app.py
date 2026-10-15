@@ -27,6 +27,7 @@ from pixelprobe.cli import (
     sheet_cmd,
     spacetime_cmd,
     spectrum_cmd,
+    streams_cmd,
     timeline_cmd,
     usage_error_details,
     validate_cmd,
@@ -50,6 +51,7 @@ app = typer.Typer(
 app.command("info")(info_cmd.info)
 app.command("doctor")(doctor_cmd.doctor)
 app.command("evidence")(evidence_cmd.evidence)
+app.command("streams")(streams_cmd.streams)
 app.command("workflow")(workflow_cmd.workflow)
 app.command("frame")(frame_cmd.frame)
 app.command("pixel")(pixel_cmd.pixel)

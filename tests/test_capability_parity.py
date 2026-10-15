@@ -18,7 +18,7 @@ from pixelprobe_mcp.service import PixelProbeService
 SELECTOR_PARAMETER = {
     "pixelprobe_overview": "detail", "pixelprobe_look": "view", "pixelprobe_measure": "what",
     "pixelprobe_find": "kind", "pixelprobe_bundle": "action", "pixelprobe_index": "action",
-    "pixelprobe_system": "action",
+    "pixelprobe_system": "action", "pixelprobe_evidence": "kind",
 }
 
 
@@ -61,8 +61,6 @@ async def test_every_mcp_selector_dispatches_to_its_capability(
         if item.mcp_tool == "pixelprobe_compare":
             extra = {"reference_path": "r.mkv"} if item.mcp_selector == "media" else {}
             result = await tool(**media, **extra)
-        elif item.mcp_tool == "pixelprobe_evidence":
-            result = await tool(**media)
         elif item.mcp_tool == "pixelprobe_bundle":
             result = await tool(item.mcp_selector, media_path="m.mkv", bundle_path="b.bundle",
                                 requests=[{}])

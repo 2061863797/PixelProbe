@@ -252,6 +252,7 @@ python -m pip install --upgrade --force-reinstall "pixelprobe[mcp] @ git+https:/
 | `xt` | 生成水平扫描线的 X–T 切片 |
 | `yt` | 生成垂直扫描线的 Y–T 切片 |
 | `changes` | 定位变化最大的帧并分段为事件区间 |
+| `streams` | 视频容器与编码结构：标签、关键帧间隔、时间戳空隙、每秒码率与取证线索（见 [码流结构](docs/streams.md)） |
 | `find` | 用搜索语句定位黑帧、闪帧、切换、停住、掉帧、相似帧、指标条件与区域变化（见 [条件搜索](docs/find.md)） |
 | `scan` | 生成网格图、变化事件和异常帧概览 |
 | `reduce` | 生成逐像素 mean/median/min/max/std/diff 统计图 |

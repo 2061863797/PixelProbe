@@ -278,7 +278,8 @@ async def pixelprobe_measure(
         "给出 query（kind=query）：按搜索语句定位时刻与区间，条件用 | 连接取并集——"
         "black/white/flat 黑白纯色帧、flash 闪帧、cut 镜头切换、duplicate 重复帧、"
         "freeze >= 0.5s 画面停住、gap 掉帧间隔、similar f=120 相似帧、frame.luma > 200 或 "
-        "rect(...).r < 30 指标条件、first change in cell(B2) 区域变化；at 只写时间范围；返回 match1… 编号。"
+        "rect(...).r < 30 指标条件、first change in cell(B2) 区域变化、animation in rect(...) 动画时长；"
+        "at 只写时间范围；返回 match1… 编号。"
         "kind=changes：相邻帧变化与事件分段（at 中可写时间范围与 point/rect/cell/grid），返回 event1…。"
         "kind=first_change：组合流程，定位第一次显著变化并写入结果包。"
         "结果只是按数值定义判定的候选，务必再用 pixelprobe_look 查看画面。"
@@ -340,19 +341,27 @@ async def pixelprobe_compare(
 
 
 @mcp.tool(
-    name="pixelprobe_evidence", title="图片取证线索",
+    name="pixelprobe_evidence", title="取证线索",
     description=(
-        "提取 EXIF、验证 C2PA（离线），生成 ELA、噪声与边缘候选热力图，结果写入受控目录的结果包。"
-        "只给出可复核线索与局限，不判定真伪。"
+        "kind=image：图片 EXIF、C2PA（离线）、ELA、噪声与边缘候选热力图，结果写入受控目录的结果包。"
+        "kind=streams：视频容器与编码结构（标签、流参数、关键帧间隔、时间戳空隙、每秒码率；"
+        "options.frame_types=true 再统计 I/P/B）。kind=auto 按扩展名选择。"
+        "只给出可复核线索与局限，不判定真伪、是否重新编码或剪辑。"
     ),
     annotations=WRITE_NON_DESTRUCTIVE,
 )
 async def pixelprobe_evidence(
     media_path: str,
+    kind: Literal["auto", "image", "streams"] = "auto",
     options: dict[str, Any] | None = None,
     output_name: str | None = None,
     wait: bool = True,
 ) -> Annotated[CallToolResult, ToolEnvelope]:
+    if kind == "auto":
+        from pixelprobe.core.media_reader import VIDEO_EXTENSIONS
+        kind = "streams" if os.path.splitext(media_path)[1].lower() in VIDEO_EXTENSIONS else "image"
+    if kind == "streams":
+        return await _capability("streams", media_path=media_path, options=options, wait=wait)
     return await _capability(
         "evidence", media_path=media_path, options=options, output_name=output_name, wait=wait,
     )

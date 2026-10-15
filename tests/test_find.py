@@ -116,6 +116,60 @@ def test_metric_similar_and_region_change(events_video: Path) -> None:
     assert [(m["start_frame"], m["end_frame"]) for m in region["matches"]] == [(5, 5), (29, 29)]
 
 
+def test_animation_duration_merges_short_pauses_and_reports_unsettled(tmp_path: Path) -> None:
+    """按钮区域 10-17 帧动画（第 14 帧停一帧），26-27 帧再动一次直到片尾不足 0.2 秒。"""
+    levels = [50] * 10 + [60, 70, 80, 90, 90, 100, 110, 120] + [120] * 8 + [150, 180, 180, 180]
+    frames = []
+    for level in levels:
+        frame = _solid(30)
+        frame[0:16, 0:16] = level
+        frames.append(frame)
+    video = _write_video(tmp_path / "ui.mkv", frames)
+    data = _run(video, "animation in rect(0,0,16,16)")
+    first, second = data["matches"]
+    assert (first["start_frame"], first["end_frame"]) == (10, 17)
+    assert first["value"] == pytest.approx(0.28) and first["duration_ms"] == pytest.approx(280)
+    assert first["settled"] is True and first["changed_frames"] == 7
+    assert first["frame_interval_seconds"] == pytest.approx(0.04)
+    assert (second["start_frame"], second["end_frame"], second["settled"]) == (26, 27, False)
+    # 区域外的变化不影响结果；整帧条件不受区域条件影响
+    assert _run(video, "animation in rect(16,16,16,16)")["match_count"] == 0
+    with pytest.raises(QueryError):
+        parse_query("animation in point(1,1)")
+
+
+def test_blockiness_separates_block_edges_from_smooth_gradient(tmp_path: Path) -> None:
+    from pixelprobe.index.builder import frame_metrics
+    x = np.arange(64, dtype=np.int32)
+    smooth = np.repeat(np.repeat((x * 2)[None, :, None], 64, axis=0), 3, axis=2)
+    offsets = np.where(((x // 8) % 2 == 0), 10, -10)
+    blocky = smooth + np.add.outer(offsets, offsets)[:, :, None] // 2
+    frames = [smooth.astype(np.uint8)] * 3 + [np.clip(blocky, 0, 255).astype(np.uint8)] * 2 + [_solid(90, 64)]
+    smooth_value = frame_metrics(0, 0.0, frames[0], None)[0]["blockiness"]
+    blocky_value = frame_metrics(3, 0.0, frames[3], None)[0]["blockiness"]
+    assert smooth_value == pytest.approx(1.0, abs=0.05)   # 水平渐变 1 级、垂直平坦：只有水平方向计入
+    assert blocky_value > 3
+    assert np.isnan(frame_metrics(5, 0.0, frames[5], None)[0]["blockiness"])  # 纯色无值
+    video = _write_video(tmp_path / "blocks.mkv", frames)
+    data = _run(video, "frame.blockiness > 3")
+    assert [(m["start_frame"], m["end_frame"]) for m in data["matches"]] == [(3, 4)]
+    assert _run(video, "frame.blockiness < 100")["matches"][-1]["end_frame"] == 4  # NaN 不参与比较
+
+
+def test_old_index_format_is_ignored(events_video: Path, tmp_path: Path) -> None:
+    import json
+    copy = tmp_path / "old.mkv"
+    shutil.copyfile(events_video, copy)
+    store = IndexStore(tmp_path / "index")
+    index = store.save(copy, build_index(copy))
+    manifest = index.directory / "manifest.json"
+    value = json.loads(manifest.read_text(encoding="utf-8"))
+    value["format"] = "pixelprobe-media-index-v1"
+    manifest.write_text(json.dumps(value), encoding="utf-8")
+    assert store.lookup(copy) is None
+    assert store.save(copy, build_index(copy)).manifest["format"] == "pixelprobe-media-index-v2"
+
+
 def test_gap_detects_dropped_frames(tmp_path: Path) -> None:
     pts = [0, 40, 80, 120, 240, 280, 320, 360, 400, 440]  # 120 → 240 缺了两帧
     frames = [_solid(10 * n) for n in range(10)]

@@ -11,6 +11,9 @@ L1 每帧体检表（每个解码帧一行）：
     sharpness                              长边缩到 256 像素（面积平均）的亮度做 4 邻域拉普拉斯，
                                            取方差；只用于相对比较，不是绝对清晰度
     dhash                                  9×8 亮度差分哈希（64 位），相似帧检索用
+    blockiness                             原始分辨率整数亮度在 8 像素块边界处的平均相邻差 ÷ 块内部的平均相邻差
+                                           （水平方向每 4 行、垂直方向每 4 列抽一条，两向取平均）；约 1 表示没有块效应，明显大于 1 表示
+                                           块边界突出（压缩方块）；块内部完全平坦或画面小于 16 像素时为 NaN
 L2 分段：由 diff_prev 按 segment_events 自动阈值得到的变化事件及其间的平稳段。
 L3 缩略立方体：长边 64 像素（面积平均）的缩略帧；总量超出上限时按 thumb_stride 隔帧保留。
 """
@@ -42,8 +45,9 @@ _LUMA_WEIGHTS = luminance_array(np.eye(3, dtype=np.uint8) * 1)  # 每个通道�
 
 FRAME_FIELDS = (
     "frame", "time_seconds", "mean_r", "mean_g", "mean_b", "luma_mean",
-    "min", "max", "std", "diff_prev", "sharpness", "dhash",
+    "min", "max", "std", "diff_prev", "sharpness", "dhash", "blockiness",
 )
+BLOCK_SIZE = 8
 
 
 @dataclass
@@ -76,6 +80,39 @@ def _sharpness(luma: np.ndarray) -> float:
     return float(laplacian.var())
 
 
+def _boundary_ratio(gradient: np.ndarray, axis: int) -> float | None:
+    """gradient 沿 axis 的第 i 个元素是像素 i 与 i+1 之差；i % 8 == 7 处跨越块边界。"""
+    positions = np.arange(gradient.shape[axis])
+    boundary = positions % BLOCK_SIZE == BLOCK_SIZE - 1
+    if not boundary.any() or boundary.all():
+        return None
+    across = float(np.take(gradient, np.nonzero(boundary)[0], axis=axis).mean())
+    inside = float(np.take(gradient, np.nonzero(~boundary)[0], axis=axis).mean())
+    return None if inside == 0 else across / inside
+
+
+def _luma16(arr: np.ndarray) -> np.ndarray:
+    """整数近似 Rec.709 亮度（权重 54/183/19 ÷ 256，最大 65280 不溢出 uint16）。"""
+    total = arr[..., 0].astype(np.uint16) * 54
+    total += arr[..., 1].astype(np.uint16) * 183
+    total += arr[..., 2].astype(np.uint16) * 19
+    return (total >> 8).astype(np.int16)
+
+
+def _blockiness(arr: np.ndarray) -> float:
+    if arr.shape[0] < 2 * BLOCK_SIZE or arr.shape[1] < 2 * BLOCK_SIZE:
+        return float("nan")
+    # 块边界在每一行（列）上的位置相同，水平方向每 4 行、垂直方向每 4 列取一条即可
+    rows, cols = _luma16(arr[::4]), _luma16(arr[:, ::4])
+    ratios = [
+        ratio for ratio in (
+            _boundary_ratio(np.abs(np.diff(rows, axis=1)), 1),
+            _boundary_ratio(np.abs(np.diff(cols, axis=0)), 0),
+        ) if ratio is not None
+    ]
+    return float(np.mean(ratios)) if ratios else float("nan")
+
+
 def _dhash(image: Image.Image) -> int:
     gray = np.asarray(image.convert("L").resize((9, 8), Image.Resampling.BOX), dtype=np.int16)
     bits = (gray[:, 1:] > gray[:, :-1]).ravel()
@@ -102,6 +139,7 @@ def frame_metrics(
         "luma_mean": float(mean_rgb @ _LUMA_WEIGHTS),
         "min": int(arr.min()), "max": int(arr.max()), "std": float(arr.std()),
         "diff_prev": diff, "sharpness": _sharpness(small_luma), "dhash": _dhash(small),
+        "blockiness": _blockiness(arr),
     }
     return row, small
 
@@ -115,7 +153,8 @@ def frame_columns(columns: dict[str, list]) -> dict[str, np.ndarray]:
         "min": np.asarray(columns["min"], dtype=np.uint8),
         "max": np.asarray(columns["max"], dtype=np.uint8),
     }
-    for name in ("mean_r", "mean_g", "mean_b", "luma_mean", "std", "diff_prev", "sharpness"):
+    for name in ("mean_r", "mean_g", "mean_b", "luma_mean", "std", "diff_prev", "sharpness",
+                 "blockiness"):
         frames[name] = np.asarray(columns[name], dtype=np.float64)
     return frames
 

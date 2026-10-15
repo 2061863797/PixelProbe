@@ -22,6 +22,12 @@ class FindOptions(BaseModel):
     freeze_tolerance: float = Field(
         default=0.1, ge=0, le=255, description="freeze：整帧平均绝对差不超过此值视为停住（0～255）",
     )
+    animation_tolerance: float = Field(
+        default=1.0, ge=0, le=255, description="animation：区域平均绝对差超过此值算在动（0～255）",
+    )
+    settle_seconds: float = Field(
+        default=0.2, gt=0, le=60, description="animation：静止持续多少秒算停稳",
+    )
     limit: int = Field(default=200, ge=1, le=2000, description="最多返回的结果区间数")
 
 
@@ -35,6 +41,7 @@ def _find(call: Invocation) -> Outcome:
     result = find(
         call.media, terms, call.address, index=call.index,
         jump_threshold=options.jump_threshold, freeze_tolerance=options.freeze_tolerance,
+        animation_tolerance=options.animation_tolerance, settle_seconds=options.settle_seconds,
         limit=options.limit,
         progress=call.progress, cancel_check=cancel,
     )
@@ -60,6 +67,35 @@ def _find(call: Invocation) -> Outcome:
         refs=refs,
         warnings=["结果按固定数值定义判定，只是候选；请查看对应时刻的画面再下结论"],
     )
+
+
+class StreamsOptions(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    frame_types: bool = Field(
+        default=False, description="再顺序解码一遍统计 I/P/B 帧类型（较慢）；缺省只读压缩包结构",
+    )
+
+
+def _streams(call: Invocation) -> Outcome:
+    from pixelprobe.streams import analyze_streams
+    options: StreamsOptions = call.options  # type: ignore[assignment]
+    if detect_media_type(call.media) != "video":
+        raise UnsupportedMediaError("streams 只适用于视频", hint="图片取证请用 evidence")
+    cancel = call.cancellation.raise_if_cancelled if call.cancellation is not None else None
+    report = analyze_streams(
+        call.media, frame_types=options.frame_types, progress=call.progress, cancel_check=cancel,
+    )
+    return Outcome(
+        data=report,
+        warnings=["码流结构只提供可复核线索与局限，不判定是否重新编码、剪辑或伪造"],
+    )
+
+
+STREAMS = register(Capability(
+    name="streams", summary="视频容器与编码结构：标签、流参数、关键帧间隔、时间戳问题、每秒码率与取证线索",
+    run=_streams, cli="streams", mcp_tool="pixelprobe_evidence", mcp_selector="streams",
+    options=StreamsOptions,
+))
 
 
 FIND = register(Capability(

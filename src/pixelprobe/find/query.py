@@ -8,6 +8,7 @@
     similar f=120   similar t=3.5s <= 4                 与参考帧相似（差分哈希距离，缺省 <= 6）
     frame.luma > 200   rect(0,0,50,50).r < 30            指标比较
     change in cell(B2)   first change in rect(...) > 12   区域变化事件（可给阈值，0～255）
+    animation in rect(...)                               区域动画：开始变化到停稳的时长
 
 指标：luma、r、g、b、std、min、max、diff（与上一帧的平均绝对差，0～255）；
 整帧另有 sharpness。形状可写 point、pid、rect、cell，与地址写法相同。
@@ -24,13 +25,14 @@ from pixelprobe.address.model import Cell, PixelId, Point, Rect, Shape, TimeSpec
 from pixelprobe.models.errors import AddressError, QueryError
 
 EVENTS = ("black", "white", "flat", "flash", "cut", "duplicate", "freeze", "gap")
-FRAME_METRICS = ("luma", "r", "g", "b", "std", "min", "max", "diff", "sharpness")
+FRAME_METRICS = ("luma", "r", "g", "b", "std", "min", "max", "diff", "sharpness", "blockiness")
 REGION_METRICS = ("luma", "r", "g", "b", "std", "min", "max", "diff")
 Operator = Literal[">", ">=", "<", "<=", "==", "!="]
 
 QUERY_HINT = (
     '写法示例："black | flash"、"freeze >= 0.5s"、"similar f=120"、'
-    '"frame.luma > 200"、"rect(0,0,50,50).r < 30"、"first change in cell(B2)"'
+    '"frame.luma > 200"、"rect(0,0,50,50).r < 30"、"first change in cell(B2)"、'
+    '"animation in rect(0,0,200,40)"'
 )
 
 
@@ -79,12 +81,23 @@ class ChangeTerm:
         return text if self.threshold is None else f"{text} > {self.threshold:g}"
 
 
-Term = Union[EventTerm, SimilarTerm, MetricTerm, ChangeTerm]
+@dataclass(frozen=True)
+class AnimationTerm:
+    """区域动画：从开始变化到停稳的完整过程，用于测量动画时长。"""
+
+    shape: Shape
+
+    def __str__(self) -> str:
+        return f"animation in {self.shape}"
+
+
+Term = Union[EventTerm, SimilarTerm, MetricTerm, ChangeTerm, AnimationTerm]
 
 _SHAPE = r"[a-z]+\([^()]*\)"
 # 关键字不区分大小写；形状原文交给地址解析（cell 的列字母需保留大小写）
 _CHANGE = re.compile(rf"^(?P<first>first\s+)?change\s+in\s+(?P<shape>{_SHAPE})"
                      r"(?:\s*>\s*(?P<num>\d+(?:\.\d+)?))?$", re.IGNORECASE)
+_ANIMATION = re.compile(rf"^animation\s+in\s+(?P<shape>{_SHAPE})$", re.IGNORECASE)
 _SIMILAR = re.compile(r"^similar\s+(?P<time>[ft]=\S+)(?:\s*<=\s*(?P<bits>\d+))?$", re.IGNORECASE)
 _EVENT = re.compile(r"^(?P<kind>[a-z]+)(?:\s*>=\s*(?P<num>\d+(?:\.\d+)?)\s*(?P<unit>ms|s|f|x)?)?$",
                     re.IGNORECASE)
@@ -132,6 +145,8 @@ def _term(text: str) -> Term:
         if threshold is not None and threshold > 255:
             raise QueryError("change 阈值是 0～255 的平均绝对差")
         return ChangeTerm(shape=shape, threshold=threshold, first=bool(match["first"]))
+    if match := _ANIMATION.match(text):
+        return AnimationTerm(shape=_shape(match["shape"], (Rect, Cell)))
     if match := _SIMILAR.match(text):
         try:
             address: Address = parse_address(match["time"].lower())
@@ -192,6 +207,7 @@ def parse_query(text: str) -> list[Term]:
 def needs_decode(terms: list[Term]) -> bool:
     """是否含有必须读取原始像素的条件（区域指标与区域变化）；整帧条件可完全由索引回答。"""
     return any(
-        isinstance(term, ChangeTerm) or (isinstance(term, MetricTerm) and term.shape is not None)
+        isinstance(term, (ChangeTerm, AnimationTerm))
+        or (isinstance(term, MetricTerm) and term.shape is not None)
         for term in terms
     )

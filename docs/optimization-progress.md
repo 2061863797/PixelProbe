@@ -17,6 +17,18 @@
   对等测试新增 find 的 CLI/MCP 逐项一致、MCP 端到端（@match1 引用、错误码 INVALID_QUERY）。
 - 未执行：真实录屏与长视频上的阈值校准（目前只用合成素材验证定义）。
 
+### 阶段 5（二）：动画时长、码流结构、块效应
+
+- find 新增 `animation in <区域>`：区域从开始变化到停稳的时长（中途静止不足 settle_seconds 合并），
+  给出毫秒值、帧间隔精度和是否停稳。录屏掉帧/卡顿由 gap、duplicate、freeze 覆盖，截图对比由 compare 覆盖。
+- 新增能力 `streams`（CLI `pixelprobe streams`，MCP `pixelprobe_evidence kind=streams`，视频扩展名自动选择）：
+  容器与流参数、关键帧间隔、B 帧推断、时间戳回退/重复/空隙、包大小与每秒字节、可选 I/P/B 统计，
+  线索附证据与局限，不做真伪结论。不分析 QP（PyAV 不提供）。说明见 `docs/streams.md`。
+- L1 新增 `blockiness`（8 像素块边界相对强度），find 可用 `frame.blockiness`；索引格式升为 v2，
+  旧索引视为未建立。整数亮度 + 隔行抽样后 1080p 每帧约 8 毫秒（初版 22 毫秒）。
+- 计划中"镜头切换写入 L2"改为由 `find "cut"` 查 L1 完成（有索引时即时返回），不另存一份。
+- 验证：全量 **538 passed、0 skipped**；数值基线 38/38。
+
 ## 历史状态：2026-10-15 2.0 重构阶段 4（能力登记表、MCP 精简为 10 个工具）
 
 分两次提交：能力登记表与命令行改造（a6383d6），MCP 改造（404f9af）。

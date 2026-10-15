@@ -298,7 +298,7 @@ def _cache(call: Invocation) -> Outcome:
 
 EVIDENCE = register(Capability(
     name="evidence", summary="图片取证线索：EXIF、C2PA、ELA、噪声与边缘候选（不判定真伪）",
-    run=_evidence, cli="evidence", mcp_tool="pixelprobe_evidence",
+    run=_evidence, cli="evidence", mcp_tool="pixelprobe_evidence", mcp_selector="image",
     options=EvidenceOptions, writes_bundle=True,
 ))
 FIRST_CHANGE = register(Capability(

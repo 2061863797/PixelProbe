@@ -28,10 +28,13 @@ MCP：`pixelprobe_find`，传入 `query`（`at` 只写时间范围）。
 | `frame.luma > 200` | 整帧指标比较 |
 | `rect(0,0,50,50).r < 30`、`cell(C4).diff > 20` | 区域指标比较（point / pid / rect / cell） |
 | `change in cell(B2)`、`first change in rect(...) > 12` | 区域变化事件；`first` 只取第一个 |
+| `animation in rect(...)`、`animation in cell(C4)` | 区域动画时长：从第一个变化帧到最终画面首次出现 |
 
 指标：`luma`（Rec.709 权重亮度）、`r` / `g` / `b`（通道均值）、`std` / `min` / `max`
 （三通道合计）、`diff`（与上一帧的平均绝对差，0～255）；整帧另有 `sharpness`
-（缩到长边 256 后拉普拉斯方差，只用于同一视频内相对比较）。比较符：`> >= < <= == !=`。
+（缩到长边 256 后拉普拉斯方差，只用于同一视频内相对比较，模糊帧数值低）和 `blockiness`
+（8 像素块边界处的亮度相邻差 ÷ 块内部相邻差：约 1 表示没有块效应，明显大于 1 表示压缩方块突出；
+块内部完全平坦时无值、不参与比较）。例如 `frame.blockiness > 1.5`、`frame.sharpness < 20`。比较符：`> >= < <= == !=`。
 
 **跳变**：与上一帧的平均绝对差 / 255 ≥ `jump_threshold`（缺省 0.1，即约 25.5）。
 采用固定阈值（参考 PySceneDetect 的做法），不随片段统计变化；连续三次以上跳变视为渐变或运动，
@@ -39,6 +42,16 @@ MCP：`pixelprobe_find`，传入 `query`（`at` 只写时间范围）。
 
 **停住**：与上一帧的整帧平均绝对差 ≤ `freeze_tolerance`（缺省 0.1）。整帧平均会稀释小面积变化：
 大画面中移动的光标可能仍被算作"停住"。判断局部是否停住请用 `change in <区域>`。
+
+**动画**：区域内与上一帧的平均绝对差 > `animation_tolerance`（缺省 1.0）的帧算"在动"；
+中间静止不足 `settle_seconds`（缺省 0.2 秒，CLI `--settle`）的变化合并为同一次动画（缓动、
+中途停顿一两帧都算同一次）。`value` / `duration_ms` 是第一个变化帧与最终画面首帧的显示时间差，
+精度为一个帧间隔（`frame_interval_seconds`）；`settled=false` 表示到范围末尾仍未静止满
+`settle_seconds`。测 UI 动画请尽量用无损或高码率录屏，压缩噪声会被当作"在动"，必要时调高容差。
+
+```powershell
+pixelprobe find "录屏.mp4" "animation in rect(120,40,200,48)" --at "t=2s..6s"
+```
 
 **相似**：64 位差分哈希只反映亮度起伏的结构；纯色画面之间的距离都为 0。
 

@@ -30,7 +30,8 @@ from pixelprobe.models.media_info import MediaInfo
 from pixelprobe.utils.file_lock import require_plain
 from pixelprobe.utils.fingerprint import QUICK_FINGERPRINT_VERSION, quick_fingerprint
 
-INDEX_FORMAT_VERSION = "pixelprobe-media-index-v1"
+# v2：L1 增加 blockiness。旧版本索引视为不存在（命令退回解码），重建时整体替换
+INDEX_FORMAT_VERSION = "pixelprobe-media-index-v2"
 _KEY_LENGTH = 32
 
 

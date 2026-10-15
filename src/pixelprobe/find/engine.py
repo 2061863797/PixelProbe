@@ -24,7 +24,15 @@ from pixelprobe.core.change_detector import ChangeRecord, segment_events
 from pixelprobe.core.color import luminance_array
 from pixelprobe.core.frame_selector import FrameRange, resolve_range
 from pixelprobe.core.video_reader import VideoReader
-from pixelprobe.find.query import ChangeTerm, EventTerm, MetricTerm, SimilarTerm, Term, needs_decode
+from pixelprobe.find.query import (
+    AnimationTerm,
+    ChangeTerm,
+    EventTerm,
+    MetricTerm,
+    SimilarTerm,
+    Term,
+    needs_decode,
+)
 from pixelprobe.index.builder import frame_columns, frame_metrics
 from pixelprobe.models.errors import DecodeError, InvalidRangeError
 
@@ -36,6 +44,9 @@ FLAT_STD = 2.0
 FREEZE_TOLERANCE = 0.1
 # 切换/闪帧的"跳变"：与上一帧的平均绝对差 / 255 不低于此值（参考 PySceneDetect 的固定阈值思路）
 JUMP_THRESHOLD = 0.1
+# 区域动画：区域内与上一帧的平均绝对差超过此值算"在动"；静止持续 SETTLE_SECONDS 算"停稳"
+ANIMATION_TOLERANCE = 1.0
+SETTLE_SECONDS = 0.2
 # 闪帧前后两帧"相同"：差分哈希距离与通道均值差的上限（纯色画面的哈希都为 0，需同时比较颜色）
 FLASH_SIMILAR_BITS = 10
 FLASH_COLOR_DELTA = 8.0
@@ -43,6 +54,7 @@ _LUMA_WEIGHTS = luminance_array(np.eye(3, dtype=np.uint8))
 _FRAME_COLUMN = {
     "luma": "luma_mean", "r": "mean_r", "g": "mean_g", "b": "mean_b", "std": "std",
     "min": "min", "max": "max", "diff": "diff_prev", "sharpness": "sharpness",
+    "blockiness": "blockiness",
 }
 _OPERATORS: dict[str, Callable[[np.ndarray, float], np.ndarray]] = {
     ">": np.greater, ">=": np.greater_equal, "<": np.less, "<=": np.less_equal,
@@ -66,8 +78,14 @@ DEFINITIONS = {
     "similar": "与参考帧的 64 位差分哈希（9×8 亮度）汉明距离不超过给定值；value 为最小距离。"
                "哈希只反映亮度起伏的结构，纯色画面之间的距离都为 0",
     "metric": "指标比较；luma 为 Rec.709 权重亮度，r/g/b 为通道均值，std/min/max 为三通道合计，"
-              "diff 为与上一帧的平均绝对差（0～255），sharpness 为缩小到长边 256 后的拉普拉斯方差",
+              "diff 为与上一帧的平均绝对差（0～255），sharpness 为缩小到长边 256 后的拉普拉斯方差，"
+              "blockiness 为亮度在 8 像素块边界处的平均相邻差 ÷ 块内部平均相邻差（约 1 无块效应；"
+              "块内平坦时无值，不参与比较）",
     "change": "区域内与上一帧的平均绝对差（0～255）超过阈值；未给阈值时按 changes 的自动阈值分段",
+    "animation": "区域内与上一帧的平均绝对差 > animation_tolerance（缺省 1.0）的帧算在动；中间静止不足 "
+                 "settle_seconds（缺省 0.2 秒）的变化合并为同一次动画。区间从第一个变化帧到最后一个变化帧"
+                 "（即最终画面首次出现），value 为两者显示时间之差（秒），精度为一个帧间隔；"
+                 "settled=false 表示到范围末尾仍未静止满 settle_seconds",
 }
 
 
@@ -124,7 +142,7 @@ def _areas(terms: list[Term], width: int, height: int) -> dict[str, tuple]:
     areas: dict[str, tuple] = {}
     for term in terms:
         shape = getattr(term, "shape", None)
-        if shape is None or not isinstance(term, (MetricTerm, ChangeTerm)):
+        if shape is None or not isinstance(term, (MetricTerm, ChangeTerm, AnimationTerm)):
             continue
         address = Address(shapes=(shape,))
         if isinstance(shape, (Point, PixelId)):
@@ -296,6 +314,37 @@ def _event_matches(
     return matches
 
 
+def _animation_matches(
+    table: _Table, term: AnimationTerm, tolerance: float, settle_seconds: float,
+) -> list[dict]:
+    diffs = table.regions[_region_key(term.shape)]["diff"]
+    times = table.times
+    with np.errstate(invalid="ignore"):
+        changed = (diffs > tolerance) & ~np.isnan(diffs)
+    steps = np.diff(times)
+    typical = float(np.median(steps)) if len(steps) else 0.0
+    # 中间静止不足 settle_seconds 的变化段属于同一次动画（缓动末尾的细小变化也计入）
+    merged: list[list[int]] = []
+    for a, b in _intervals(changed):
+        if merged and float(times[a]) - float(times[merged[-1][1]]) < settle_seconds:
+            merged[-1][1] = b
+        else:
+            merged.append([a, b])
+    matches = []
+    for number, (a, b) in enumerate(merged):
+        last_shown = float(times[-1]) + typical
+        stable = (float(times[merged[number + 1][0]]) if number + 1 < len(merged) else last_shown) - float(times[b])
+        duration = float(times[b]) - float(times[a])
+        matches.append(_match(
+            table, term, "animation", a, b, duration,
+            duration_ms=round(duration * 1000, 3),
+            settled=bool(number + 1 < len(merged) or stable >= settle_seconds - 1e-9),
+            changed_frames=int(changed[a: b + 1].sum()),
+            frame_interval_seconds=round(typical, 6),
+        ))
+    return matches
+
+
 def _reference_hash(reader: VideoReader, table: _Table, index, term: SimilarTerm) -> tuple[int, int]:
     """返回 (参考帧号, 差分哈希)；优先用已有数据，否则只解码该帧。"""
     value = term.time.values[0]
@@ -326,6 +375,8 @@ def find(
     index=None,
     jump_threshold: float = JUMP_THRESHOLD,
     freeze_tolerance: float = FREEZE_TOLERANCE,
+    animation_tolerance: float = ANIMATION_TOLERANCE,
+    settle_seconds: float = SETTLE_SECONDS,
     limit: int = 200,
     progress=None,
     cancel_check=None,
@@ -376,6 +427,9 @@ def find(
                     mask = _OPERATORS[term.operator](values, term.value) & ~np.isnan(values)
                 found = [_match(table, term, "metric", a, b, _extreme(values, term.operator, a, b))
                          for a, b in _intervals(mask)]
+            elif isinstance(term, AnimationTerm):
+                kinds.append("animation")
+                found = _animation_matches(table, term, animation_tolerance, settle_seconds)
             else:
                 kinds.append("change")
                 diffs = table.regions[_region_key(term.shape)]["diff"]

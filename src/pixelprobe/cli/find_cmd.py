@@ -40,6 +40,12 @@ def find(
     freeze_tolerance: float = typer.Option(
         0.1, "--freeze-tolerance", help="freeze：整帧平均绝对差不超过此值视为停住（0～255）",
     ),
+    animation_tolerance: float = typer.Option(
+        1.0, "--animation-tolerance", help="animation：区域平均绝对差超过此值算在动（0～255）",
+    ),
+    settle_seconds: float = typer.Option(
+        0.2, "--settle", help="animation：静止持续多少秒算停稳",
+    ),
     limit: int = typer.Option(200, "--limit", help="最多返回的结果区间数"),
     no_index: bool = NO_INDEX_OPT,
     index_dir: Optional[Path] = INDEX_DIR_OPT,
@@ -59,7 +65,8 @@ def find(
             outcome = run_capability(
                 "find", media, at, ref_file,
                 {"query": query, "jump_threshold": jump_threshold,
-                 "freeze_tolerance": freeze_tolerance, "limit": limit},
+                 "freeze_tolerance": freeze_tolerance, "animation_tolerance": animation_tolerance,
+                 "settle_seconds": settle_seconds, "limit": limit},
                 progress=update,
                 index=find_index(media, no_index=no_index, index_dir=index_dir),
             )

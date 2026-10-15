@@ -71,6 +71,7 @@ pixelprobe pixel video.mp4 --at "@flash point(0,0)" --ref-file refs.json
 | `timeline` | 单帧、范围 | 多个 `point`/`pid`，或一个 `grid` | ✓ |
 | `xt` / `yt` | 单帧、范围 | `row(y)` / `col(x)`（必填） | ✓ |
 | `changes` | 单帧、范围 | 一个 `point`/`pid`/`rect`/`cell`/`grid`，不写为整帧 | ✓ |
+| `find` | 范围（缺省全片） | —（位置写在搜索语句里，见 [条件搜索](find.md)） | — |
 | `reduce` | 范围 | `rect`、`cell` | ✓ |
 | `compare` | 两帧（必填） | `rect`、`cell` | — |
 | `flow` | 两帧；`--accumulate` 时为范围 | — | 累积时 ✓ |

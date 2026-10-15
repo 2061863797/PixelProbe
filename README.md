@@ -86,6 +86,9 @@ pixelprobe timeline input.mp4 --at "point(520,340)" --output timeline.png --csv 
 # 找出选区在 10～20 秒内变化最大的 10 帧
 pixelprobe changes input.mp4 --at "t=10s..20s rect(400,200,200,150)" --top 10
 
+# 按条件搜索：黑帧、闪帧和停住 0.5 秒以上的画面
+pixelprobe find input.mp4 "black | flash | freeze >= 0.5s"
+
 # 一键生成概览网格、变化事件和异常帧
 pixelprobe scan input.mp4 --sheet-output overview.png
 
@@ -249,6 +252,7 @@ python -m pip install --upgrade --force-reinstall "pixelprobe[mcp] @ git+https:/
 | `xt` | 生成水平扫描线的 X–T 切片 |
 | `yt` | 生成垂直扫描线的 Y–T 切片 |
 | `changes` | 定位变化最大的帧并分段为事件区间 |
+| `find` | 用搜索语句定位黑帧、闪帧、切换、停住、掉帧、相似帧、指标条件与区域变化（见 [条件搜索](docs/find.md)） |
 | `scan` | 生成网格图、变化事件和异常帧概览 |
 | `reduce` | 生成逐像素 mean/median/min/max/std/diff 统计图 |
 | `compare` | 比较任意两帧并生成差异图 |

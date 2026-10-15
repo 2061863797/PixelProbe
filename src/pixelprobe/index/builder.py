@@ -82,6 +82,44 @@ def _dhash(image: Image.Image) -> int:
     return int(sum(1 << index for index, bit in enumerate(bits) if bit))
 
 
+def frame_metrics(
+    index: int, timestamp: float, arr: np.ndarray, previous: np.ndarray | None,
+) -> tuple[dict[str, float | int], Image.Image]:
+    """单帧的 L1 体检值（FRAME_FIELDS 各列）与供缩略图复用的缩小图。
+
+    索引建立与无索引时的直接解码共用此函数，两条路径的数值逐值相同。
+    """
+    mean_rgb = arr.mean(axis=(0, 1))
+    if previous is None:
+        diff = float("nan")
+    else:
+        diff = float((np.maximum(arr, previous) - np.minimum(arr, previous)).mean())
+    small = _resized(Image.fromarray(arr), SHARPNESS_LONG_SIDE)
+    small_luma = luminance_array(np.asarray(small))
+    row = {
+        "frame": index, "time_seconds": timestamp,
+        "mean_r": mean_rgb[0], "mean_g": mean_rgb[1], "mean_b": mean_rgb[2],
+        "luma_mean": float(mean_rgb @ _LUMA_WEIGHTS),
+        "min": int(arr.min()), "max": int(arr.max()), "std": float(arr.std()),
+        "diff_prev": diff, "sharpness": _sharpness(small_luma), "dhash": _dhash(small),
+    }
+    return row, small
+
+
+def frame_columns(columns: dict[str, list]) -> dict[str, np.ndarray]:
+    """把逐帧列表转换为与已提交索引相同 dtype 的列。"""
+    frames = {
+        "frame": np.asarray(columns["frame"], dtype=np.int64),
+        "time_seconds": np.asarray(columns["time_seconds"], dtype=np.float64),
+        "dhash": np.asarray(columns["dhash"], dtype=np.uint64),
+        "min": np.asarray(columns["min"], dtype=np.uint8),
+        "max": np.asarray(columns["max"], dtype=np.uint8),
+    }
+    for name in ("mean_r", "mean_g", "mean_b", "luma_mean", "std", "diff_prev", "sharpness"):
+        frames[name] = np.asarray(columns[name], dtype=np.float64)
+    return frames
+
+
 def _segments(frames: dict[str, np.ndarray]) -> tuple[list[dict], float | None]:
     """把逐帧差异切成"变化事件"与其间的"平稳段"，覆盖全部帧且互不重叠。"""
     indices = frames["frame"]
@@ -142,22 +180,8 @@ def build_index(
         for index, timestamp, arr in reader.iter_frames(0, None):
             if cancel_check is not None:
                 cancel_check()
-            mean_rgb = arr.mean(axis=(0, 1))
-            if previous is None:
-                diff = float("nan")
-            else:
-                diff = float((np.maximum(arr, previous) - np.minimum(arr, previous)).mean())
-            image = Image.fromarray(arr)
-            small = _resized(image, SHARPNESS_LONG_SIDE)
-            small_luma = luminance_array(np.asarray(small))
-            for name, value in (
-                ("frame", index), ("time_seconds", timestamp),
-                ("mean_r", mean_rgb[0]), ("mean_g", mean_rgb[1]), ("mean_b", mean_rgb[2]),
-                ("luma_mean", float(mean_rgb @ _LUMA_WEIGHTS)),
-                ("min", int(arr.min())), ("max", int(arr.max())), ("std", float(arr.std())),
-                ("diff_prev", diff), ("sharpness", _sharpness(small_luma)),
-                ("dhash", _dhash(small)),
-            ):
+            row, small = frame_metrics(index, timestamp, arr, previous)
+            for name, value in row.items():
                 columns[name].append(value)
             if done % thumb_stride == 0:
                 thumb = np.asarray(_resized(small, THUMB_LONG_SIDE), dtype=np.uint8)
@@ -178,15 +202,7 @@ def build_index(
                 progress(done, max(done, expected))
         if done == 0:
             raise DecodeError("视频中没有解码出任何帧")
-    frames = {
-        "frame": np.asarray(columns["frame"], dtype=np.int64),
-        "time_seconds": np.asarray(columns["time_seconds"], dtype=np.float64),
-        "dhash": np.asarray(columns["dhash"], dtype=np.uint64),
-        "min": np.asarray(columns["min"], dtype=np.uint8),
-        "max": np.asarray(columns["max"], dtype=np.uint8),
-    }
-    for name in ("mean_r", "mean_g", "mean_b", "luma_mean", "std", "diff_prev", "sharpness"):
-        frames[name] = np.asarray(columns[name], dtype=np.float64)
+    frames = frame_columns(columns)
     segments, threshold = _segments(frames)
     return BuiltIndex(
         info=info,

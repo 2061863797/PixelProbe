@@ -387,6 +387,34 @@ async def test_mcp_video_changes_are_paginated_referenced_and_semantically_guard
 
 
 @pytest.mark.anyio
+async def test_mcp_find_query_returns_matches_usable_as_references(
+    mcp_session: ClientSession, test_video: Path, tmp_path: Path,
+) -> None:
+    target = tmp_path / "搜索.mkv"
+    target.write_bytes(test_video.read_bytes())
+    result = await mcp_session.call_tool(
+        "pixelprobe_find", {"media_path": str(target), "query": "white | flash"},
+    )
+    assert result.isError is False
+    data = result.structuredContent["data"]  # type: ignore[index]
+    assert [(m["kind"], m["start_frame"]) for m in data["matches"]] == [("white", 15), ("flash", 15)]
+    assert data["refs"]["match1"] == "f=15..15"
+    assert result.structuredContent["next_actions"][0]["arguments"]["at"] == "@match1"  # type: ignore[index]
+    sheet = await mcp_session.call_tool(
+        "pixelprobe_look", {"media_path": str(target), "view": "sheet", "at": "@match1"},
+    )
+    assert sheet.isError is False
+    bad = await mcp_session.call_tool(
+        "pixelprobe_find", {"media_path": str(target), "kind": "query"},
+    )
+    assert bad.isError is True and "query" in _text(bad)
+    invalid = await mcp_session.call_tool(
+        "pixelprobe_find", {"media_path": str(target), "query": "blak"},
+    )
+    assert invalid.isError is True and "INVALID_QUERY" in _text(invalid)
+
+
+@pytest.mark.anyio
 async def test_mcp_generates_lists_and_slices_verified_bundle(
     mcp_session: ClientSession, test_image: Path, tmp_path: Path,
 ) -> None:

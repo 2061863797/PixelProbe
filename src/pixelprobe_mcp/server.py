@@ -191,9 +191,6 @@ def pixelprobe_analyze_media_prompt(media_path: str, question: str = "请全面�
 # ---------------- 10 个工具 ----------------
 
 _OVERVIEW = {"meta": "info", "scan": "scan", "quality": "quality_overview"}
-_LOOK = ("frame", "sheet", "xt", "yt", "reduce")
-_MEASURE = ("pixel", "region", "timeline", "spectrum", "spectrum2d", "flow")
-_FIND = ("changes", "first_change")
 
 
 @mcp.tool(
@@ -278,16 +275,20 @@ async def pixelprobe_measure(
 @mcp.tool(
     name="pixelprobe_find", title="定位变化与事件",
     description=(
-        "kind=changes：相邻帧变化与事件分段（at 中可写时间范围与 point/rect/cell/grid，不写为整帧），"
-        "返回 event1… 编号与变化曲线；已建索引时整帧逐帧检测直接查表。"
-        "kind=first_change：组合流程，定位帧范围内第一次显著变化并写入结果包。"
-        "变化分数没有语义，务必再用 pixelprobe_look 查看事件前后画面。"
+        "给出 query（kind=query）：按搜索语句定位时刻与区间，条件用 | 连接取并集——"
+        "black/white/flat 黑白纯色帧、flash 闪帧、cut 镜头切换、duplicate 重复帧、"
+        "freeze >= 0.5s 画面停住、gap 掉帧间隔、similar f=120 相似帧、frame.luma > 200 或 "
+        "rect(...).r < 30 指标条件、first change in cell(B2) 区域变化；at 只写时间范围；返回 match1… 编号。"
+        "kind=changes：相邻帧变化与事件分段（at 中可写时间范围与 point/rect/cell/grid），返回 event1…。"
+        "kind=first_change：组合流程，定位第一次显著变化并写入结果包。"
+        "结果只是按数值定义判定的候选，务必再用 pixelprobe_look 查看画面。"
     ),
     annotations=READ_ONLY,
 )
 async def pixelprobe_find(
     media_path: str,
-    kind: Literal["changes", "first_change"] = "changes",
+    kind: Literal["changes", "first_change", "query"] = "changes",
+    query: str | None = None,
     at: str | None = None,
     options: dict[str, Any] | None = None,
     images: bool = False,
@@ -296,6 +297,13 @@ async def pixelprobe_find(
     limit: int = 50,
     wait: bool = True,
 ) -> Annotated[CallToolResult, ToolEnvelope]:
+    if query is not None or kind == "query":
+        if not query:
+            raise ToolError("kind=query 需要 query 搜索语句")
+        return await _capability(
+            "find", media_path=media_path, at=at, options={**(options or {}), "query": query},
+            refs=refs, images=images, offset=offset, limit=limit, wait=wait,
+        )
     return await _capability(
         kind, media_path=media_path, at=at, options=options, refs=refs, images=images,
         offset=offset, limit=limit, wait=wait,

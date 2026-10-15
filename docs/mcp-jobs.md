@@ -11,7 +11,7 @@ MCP 只有 10 个入口，用参数选择具体能力；每项能力与命令行
 | `pixelprobe_overview` | `detail=meta/scan/quality` | `info` / `scan` / `workflow --mode quality_overview` |
 | `pixelprobe_look` | `view=frame/sheet/xt/yt/reduce` | `frame` / `sheet` / `xt` / `yt` / `reduce` |
 | `pixelprobe_measure` | `what=pixel/region/timeline/spectrum/spectrum2d/flow` | 同名命令 |
-| `pixelprobe_find` | `kind=changes/first_change` | `changes` / `workflow --mode first_change` |
+| `pixelprobe_find` | `query=...`（kind=query）/ `kind=changes/first_change` | `find` / `changes` / `workflow --mode first_change` |
 | `pixelprobe_compare` | 不给 / 给出 `reference_path` | `compare` / `workflow --mode compare_media` |
 | `pixelprobe_evidence` | — | `evidence` |
 | `pixelprobe_bundle` | `action=generate/validate/list/read` | `generate` / `validate`；list/read 读取结果包 |

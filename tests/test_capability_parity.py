@@ -66,6 +66,8 @@ async def test_every_mcp_selector_dispatches_to_its_capability(
         elif item.mcp_tool == "pixelprobe_bundle":
             result = await tool(item.mcp_selector, media_path="m.mkv", bundle_path="b.bundle",
                                 requests=[{}])
+        elif item.mcp_selector == "query":
+            result = await tool(**media, query="black")
         elif item.mcp_tool in {"pixelprobe_index", "pixelprobe_system"}:
             result = await tool(item.mcp_selector, **(media if item.mcp_tool == "pixelprobe_index" else {}))
         else:
@@ -103,6 +105,8 @@ CASES = [
     ("spectrum2d", "image", None, {}),
     ("flow", "motion", "f=0,4", {}),
 ]
+# find 的搜索语句是位置参数，单独比较
+FIND_QUERY = "white | flash | freeze >= 2f | rect(0,0,4,4).r > 100 | first change in cell(B2)"
 
 
 @pytest.fixture(scope="module")
@@ -133,3 +137,14 @@ def test_cli_and_mcp_return_identical_values(
     assert set(_normalized(cli)) <= set(_normalized(mcp)), set(_normalized(cli)) - set(_normalized(mcp))
     for key in shared:
         assert _normalized(cli)[key] == _normalized(mcp)[key], key
+
+
+def test_cli_and_mcp_find_return_identical_matches(test_video: Path, assets_dir: Path) -> None:
+    from conftest import run_json
+    cli = run_json("find", str(test_video), FIND_QUERY, "--json")["data"]
+    service = PixelProbeService(ServerConfig((assets_dir,), assets_dir / "parity-artifacts"))
+    envelope, _ = service.run_capability(CapabilityInput(
+        capability="find", media_path=str(test_video), options={"query": FIND_QUERY}, limit=200,
+    ))
+    assert _normalized(cli) == _normalized(envelope.data)
+    assert cli["refs"] == envelope.data["refs"]

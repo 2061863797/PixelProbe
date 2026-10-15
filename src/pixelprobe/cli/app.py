@@ -14,6 +14,7 @@ from pixelprobe.cli import (
     doctor_cmd,
     evidence_cmd,
     workflow_cmd,
+    find_cmd,
     flow_cmd,
     generate_cmd,
     frame_cmd,
@@ -57,6 +58,7 @@ app.command("timeline")(timeline_cmd.timeline)
 app.command("xt")(spacetime_cmd.xt)
 app.command("yt")(spacetime_cmd.yt)
 app.command("changes")(changes_cmd.changes)
+app.command("find")(find_cmd.find)
 app.command("reduce")(reduce_cmd.reduce)
 app.command("compare")(compare_cmd.compare)
 app.command("sheet")(sheet_cmd.sheet)

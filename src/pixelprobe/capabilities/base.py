@@ -133,4 +133,4 @@ def all_capabilities() -> tuple[Capability, ...]:
 
 def _load() -> None:
     # 各能力模块在导入时登记自身
-    from pixelprobe.capabilities import media, temporal, bundles  # noqa: F401
+    from pixelprobe.capabilities import media, temporal, bundles, search  # noqa: F401

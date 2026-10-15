@@ -51,7 +51,7 @@ MCP_GENERATE_RESOURCES = ResourcePolicy(
 )
 SINGLE_FRAME = {"frame", "pixel", "region", "spectrum2d", "compare"}
 SEQUENTIAL = {
-    "changes", "scan", "sheet", "timeline", "xt", "yt", "reduce", "spectrum", "flow",
+    "changes", "scan", "find", "sheet", "timeline", "xt", "yt", "reduce", "spectrum", "flow",
     "first_change", "compare_media", "quality_overview",
 }
 _NO_SEMANTICS = "只是数值线索，不能单独证明具体事件、物体或内容；请先查看候选时刻前、中、后的画面"
@@ -66,7 +66,7 @@ SEMANTIC_WARNINGS = {
 # 列表字段按 offset/limit 分页返回，其余字段完整返回
 PAGED_LISTS = (
     "frames", "times", "top", "events", "anomalies", "points", "pixels",
-    "sheet_frames", "top_peaks", "peaks", "segments", "records",
+    "sheet_frames", "top_peaks", "peaks", "segments", "records", "matches",
 )
 
 
@@ -338,6 +338,9 @@ class PixelProbeService:
             index is not None and item.name in {"changes", "scan"}
             and not address.shapes and (address.step or 1) == 1
         )
+        if index is not None and item.name == "find":
+            from pixelprobe.find import needs_decode, parse_query
+            served_by_index = not needs_decode(parse_query(str(options.get("query", ""))))
         if served_by_index:
             return
         limit = MCP_MAX_SCAN_SOURCE_FRAMES if item.name == "scan" else MCP_MAX_SOURCE_FRAMES
@@ -562,6 +565,12 @@ class PixelProbeService:
     @staticmethod
     def _next_actions(item: Capability, media: Path, outcome: Outcome) -> list[NextAction]:
         actions: list[NextAction] = []
+        if "match1" in outcome.refs:
+            actions.append(NextAction(
+                tool="pixelprobe_look",
+                reason="搜索结果只是数值候选；用 @match1 查看第一个区间的画面",
+                arguments={"media_path": str(media), "view": "sheet", "at": "@match1"},
+            ))
         if "event1" in outcome.refs:
             actions.append(NextAction(
                 tool="pixelprobe_look",

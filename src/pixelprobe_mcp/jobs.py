@@ -20,6 +20,7 @@ from pydantic import BaseModel
 from pixelprobe_mcp.config import ServerConfig, PathAccessError, _is_reparse_point
 from pixelprobe_mcp.diagnostics import actionable_error, record_diagnostic
 from pixelprobe_mcp.models import ToolEnvelope
+from pixelprobe_mcp.resource_plan import RUNTIME_BYTES
 from pixelprobe_mcp.worker import WorkerError, run_operation_sync
 
 
@@ -42,12 +43,16 @@ OPERATION_DEFAULT_RESOURCES: dict[str, tuple[int, int]] = {
     "read_artifact": (64 * MIB, 0),
 }
 # 写结果包的能力预留临时空间；生成正式表示需要较大的共享帧存储
+# 工作进程的预算计划 = 运行时余量（RUNTIME_BYTES）+ 分析内存；CLI 的分析预算为 256 MiB，
+# 这里必须额外预留运行时余量，否则 100 万像素以上的图片会在预检阶段被误拒
+_ANALYSIS_MIB = 256
+_WORKFLOW_MEMORY = (_ANALYSIS_MIB + RUNTIME_BYTES // MIB) * MIB
 CAPABILITY_DEFAULT_RESOURCES: dict[str, tuple[int, int]] = {
     "generate": (256 * MIB, 2048 * MIB),
-    "evidence": (256 * MIB, 512 * MIB),
-    "first_change": (256 * MIB, 512 * MIB),
-    "compare_media": (256 * MIB, 512 * MIB),
-    "quality_overview": (256 * MIB, 512 * MIB),
+    "evidence": (_WORKFLOW_MEMORY, 512 * MIB),
+    "first_change": (_WORKFLOW_MEMORY, 512 * MIB),
+    "compare_media": (_WORKFLOW_MEMORY, 512 * MIB),
+    "quality_overview": (_WORKFLOW_MEMORY, 512 * MIB),
     # 走引擎的能力：解码帧存放在共享帧存储中，需要临时空间
     **{name: (256 * MIB, 2048 * MIB) for name in (
         "timeline", "xt", "yt", "reduce", "spectrum", "spectrum2d", "flow",

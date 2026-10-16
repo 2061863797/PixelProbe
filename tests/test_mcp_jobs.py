@@ -370,3 +370,17 @@ async def test_mcp_submit_poll_and_get_result(tmp_path, monkeypatch):
     with pytest.raises(Exception, match="MCP_JOB_NOT_FOUND"):
         await server.pixelprobe_job("get", "0" * 32)
     server._job_manager().shutdown(wait=True)
+
+
+@pytest.mark.parametrize("capability", ["evidence", "first_change", "compare_media", "quality_overview"])
+def test_phone_sized_image_passes_mcp_resource_precheck(tmp_path, capability):
+    """回归：计划内存 = 运行时余量 + 分析内存，默认上限必须容得下 1086×1448 这类常见尺寸。"""
+    from pixelprobe_mcp.jobs import estimate_operation_resources
+    from pixelprobe_mcp.resource_plan import plan_operation
+    image = tmp_path / "phone.png"
+    Image.new("RGB", (1086, 1448), (10, 20, 30)).save(image)
+    payload = {"capability": capability, "media_path": str(image), "at": None,
+               "options": {}, "refs": {}}
+    limit, _ = estimate_operation_resources("capability", payload)
+    plan = plan_operation(_config(tmp_path), "capability", payload)
+    assert plan["memory_bytes"] <= limit

@@ -1,8 +1,24 @@
 # 优化实施检查点
 
-## 当前状态：2026-10-16 2.0 重构阶段 6：Claude Code 与 Codex 插件
+## 当前状态：2026-10-16 2.0 重构阶段 7：发布候选（本地验收通过，待合并、打标签与发布）
 
 本节优先于下方历史检查点。
+
+- 版本号 2.0.0；新增 `docs/migration-2.0.md`；README 中英文更新定位与 2.0 新增；安装与 uvx 文档固定 v2.0.0。
+- 本地候选：`build/release-2.0.0-20261016/`
+  - `pixelprobe-2.0.0-py3-none-any.whl` SHA256 `dbeee062abbaae6fe5be8ed6730b6563ec073bee2e0e33c308e93c5fd08f019b`
+  - `pixelprobe-2.0.0.tar.gz` SHA256 `df53d4e3705098371e41f5a16c2acb7a5285e22198fcab4eeee6cded75a75c18`
+- 验证（Windows，Python 3.12）：
+  - wheel 内含全部 2.0 新模块、不含已删除的 compat；`twine check` 两个包均 PASSED；
+  - 干净虚拟环境安装完整 extra：`pixelprobe --version` 为 2.0.0，`find` 结果正确，`doctor` healthy 且无异常项；
+  - uvx 使用本地 wheel 预热后 `--offline` 运行 `tests/test_distribution.py`：4 passed（强制超时回收、
+    MCP 流程 + Zarr + 签名证据、运行中取消与恢复、CLI Zarr 往返）；
+  - 升级回滚演练：v1.1.0 → 2.0.0 → v1.1.0 离线逐阶段核对像素，通过；
+  - 源码全量 549 passed、0 skipped；数值基线 38/38。
+- 未执行：合并到 main、推送、创建 `v2.0.0` 标签与 GitHub Release（需用户确认）；远程标签上的 uvx 冷启动与插件安装；
+  macOS/Linux。本地候选与远程发行物不一定相同，远程发布后需按 SHA256 重新核对。
+
+## 历史状态：2026-10-16 2.0 重构阶段 6：Claude Code 与 Codex 插件
 
 - 先查官方文档确认格式（code.claude.com 插件清单与市场参考；developers.openai.com Codex 插件构建页、
   openai/plugins 官方示例、agent-plugins.org MCP schema）。

@@ -60,6 +60,14 @@ def test_cli_streams_json(test_video: Path) -> None:
     assert data["container"]["format"].startswith("matroska")
 
 
+def test_frame_type_decoding_gets_full_scan_timeout() -> None:
+    """统计帧类型要顺序解码全片且不受帧数上限约束，时限须与建索引相同，不能用 60 秒标准时限。"""
+    import pixelprobe_mcp.server as server
+    assert server._timeout_for("streams") == server.MCP_STANDARD_TIMEOUT_SECONDS
+    assert server._timeout_for("streams", {"frame_types": True}) == server.MCP_INDEX_TIMEOUT_SECONDS
+    assert server._timeout_for("index_build") == server.MCP_INDEX_TIMEOUT_SECONDS
+
+
 @pytest.fixture
 def anyio_backend() -> str:
     return "asyncio"

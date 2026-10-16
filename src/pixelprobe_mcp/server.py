@@ -101,9 +101,12 @@ def _remember_refs(media_path: str | None, refs: dict[str, str] | None) -> None:
 
 # ---------------- 统一调用 ----------------
 
-def _timeout_for(capability: str) -> float:
+def _timeout_for(capability: str, options: dict[str, Any] | None = None) -> float:
     from pixelprobe.capabilities import capability as lookup
-    if capability == "index_build":
+    # 整片顺序解码且不受帧数上限约束的操作：与建索引同样给长时限（长视频请 wait=false）
+    if capability == "index_build" or (
+        capability == "streams" and bool((options or {}).get("frame_types"))
+    ):
         return MCP_INDEX_TIMEOUT_SECONDS
     try:
         item = lookup(capability)
@@ -161,7 +164,9 @@ async def _capability(
         CapabilityInput.model_validate(payload)
     except ValidationError as exc:
         raise ToolError(f"参数无效：{validation_message(exc)}") from exc
-    outcome = await _submit("capability", payload, timeout=_timeout_for(capability), wait=wait)
+    outcome = await _submit(
+        "capability", payload, timeout=_timeout_for(capability, options), wait=wait,
+    )
     if isinstance(outcome, CallToolResult):
         return outcome
     envelope, images = outcome
@@ -290,7 +295,7 @@ async def pixelprobe_measure(
 )
 async def pixelprobe_find(
     media_path: str,
-    kind: Literal["changes", "first_change", "query"] = "changes",
+    kind: Literal["changes", "first_change", "query"] | None = None,
     query: str | None = None,
     at: str | None = None,
     options: dict[str, Any] | None = None,
@@ -300,13 +305,17 @@ async def pixelprobe_find(
     limit: int = 50,
     wait: bool = True,
 ) -> Annotated[CallToolResult, ToolEnvelope]:
-    if query is not None or kind == "query":
+    if kind is None:
+        kind = "query" if query is not None else "changes"
+    if kind == "query":
         if not query:
             raise ToolError("kind=query 需要 query 搜索语句")
         return await _capability(
             "find", media_path=media_path, at=at, options={**(options or {}), "query": query},
             refs=refs, images=images, offset=offset, limit=limit, wait=wait,
         )
+    if query is not None:
+        raise ToolError(f"query 只用于 kind=query；kind={kind} 时请去掉 query")
     return await _capability(
         kind, media_path=media_path, at=at, options=options, refs=refs, images=images,
         offset=offset, limit=limit, wait=wait,
@@ -347,7 +356,8 @@ async def pixelprobe_compare(
     description=(
         "kind=image：图片 EXIF、C2PA（离线）、ELA、噪声与边缘候选热力图，结果写入受控目录的结果包。"
         "kind=streams：视频容器与编码结构（标签、流参数、关键帧间隔、时间戳空隙、每秒码率；"
-        "options.frame_types=true 再统计 I/P/B）。kind=auto 按扩展名选择。"
+        "options.frame_types=true 再顺序解码全片统计 I/P/B，长视频请加 wait=false 后台执行）。"
+        "kind=auto 按扩展名选择。"
         "只给出可复核线索与局限，不判定真伪、是否重新编码或剪辑。"
     ),
     annotations=WRITE_NON_DESTRUCTIVE,

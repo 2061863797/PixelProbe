@@ -38,7 +38,12 @@ class TrackResult:
 
 
 def _luma(arr: np.ndarray) -> np.ndarray:
-    return luminance_array(arr).astype(np.float32)
+    """亮度逐像素计算，先裁剪再换算与先换算再裁剪逐值相同；只换算用到的窗口。"""
+    return luminance_array(np.ascontiguousarray(arr)).astype(np.float32)
+
+
+def _patch(arr: np.ndarray, x: int, y: int, patch: int) -> np.ndarray:
+    return _luma(arr[y - patch: y + patch + 1, x - patch: x + patch + 1])
 
 
 def _strip_row(arr: np.ndarray, x: int, y: int, width: int) -> np.ndarray:
@@ -52,13 +57,13 @@ def _strip_row(arr: np.ndarray, x: int, y: int, width: int) -> np.ndarray:
 
 
 def _match(
-    template: np.ndarray, luma: np.ndarray, x: int, y: int, patch: int, search: int,
+    template: np.ndarray, arr: np.ndarray, x: int, y: int, patch: int, search: int,
 ) -> tuple[int, int, float]:
-    height, width = luma.shape
+    height, width = arr.shape[:2]
     # 候选中心须使模板完整落在画面内
     x0, x1 = max(patch, x - search), min(width - patch - 1, x + search)
     y0, y1 = max(patch, y - search), min(height - patch - 1, y + search)
-    region = luma[y0 - patch: y1 + patch + 1, x0 - patch: x1 + patch + 1]
+    region = _luma(arr[y0 - patch: y1 + patch + 1, x0 - patch: x1 + patch + 1])
     windows = sliding_window_view(region, template.shape)
     cost = np.abs(windows - template).mean(axis=(2, 3))
     best = float(cost.min())
@@ -101,15 +106,14 @@ def track_point(
         for index, timestamp, arr in reader.iter_frames(frame_range.start, frame_range.end, 1):
             if cancel_check is not None:
                 cancel_check()
-            luma = _luma(arr)
             if template is None:
                 first, cost = arr, None
             else:
-                x, y, cost = _match(template, luma, x, y, patch, search)
+                x, y, cost = _match(template, arr, x, y, patch, search)
                 if cost > lost_threshold:
                     lost_at = index
                     break
-            template = luma[y - patch: y + patch + 1, x - patch: x + patch + 1].copy()
+            template = _patch(arr, x, y, patch)
             frames.append(index)
             times.append(round(float(timestamp), 6))
             points.append((x, y))

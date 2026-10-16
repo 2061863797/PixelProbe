@@ -13,16 +13,13 @@ import typer
 
 from pixelprobe.cli import (
     AT_OPT,
-    INDEX_DIR_OPT,
     JSON_OPT,
-    NO_INDEX_OPT,
     NO_PROGRESS_OPT,
     QUIET_OPT,
     REF_FILE_OPT,
     VERBOSE_OPT,
     CliContext,
     cli_guard,
-    find_index,
     run_capability,
 )
 from pixelprobe.models.spacetime import SpacetimeMetadata
@@ -42,17 +39,13 @@ def _run_slice(
     output: Optional[Path],
     ctx: CliContext,
     options: dict,
-    index_kw: dict,
 ) -> None:
     with cli_guard(slice_type, ctx):
         ensure_scale(scale_space, "--scale-x" if slice_type == "xt" else "--scale-y")
         ensure_scale(scale_t, "--scale-t")
         desc = "生成 X–T 切片" if slice_type == "xt" else "生成 Y–T 切片"
         with progress_bar(desc, 1, ctx.progress_disabled) as update:
-            outcome = run_capability(
-                slice_type, media, at, ref_file, options, progress=update,
-                index=find_index(media, **index_kw) if options["time_axis"] == "adaptive" else None,
-            )
+            outcome = run_capability(slice_type, media, at, ref_file, options, progress=update)
         core_data = outcome.data
         # 规范 Tensor 形状 [T, 空间, 3]：纵轴=时间，横轴=空间。
         img = scale_nearest(outcome.images["slice"](), scale_space, scale_t)
@@ -125,8 +118,6 @@ def xt(
     scale_x: int = typer.Option(1, "--scale-x", help="空间轴最近邻放大倍数"),
     scale_t: int = typer.Option(1, "--scale-t", help="时间轴最近邻放大倍数"),
     output: Optional[Path] = typer.Option(None, "--output", help="输出 PNG 路径"),
-    no_index: bool = NO_INDEX_OPT,
-    index_dir: Optional[Path] = INDEX_DIR_OPT,
     json_mode: bool = JSON_OPT,
     quiet: bool = QUIET_OPT,
     verbose: bool = VERBOSE_OPT,
@@ -135,8 +126,7 @@ def xt(
     """X–T 时空切片（横轴=原视频 x，纵轴=时间）：--at "row(120)"，可加时间范围与 step。"""
     ctx = CliContext(json_mode, quiet, verbose, no_progress)
     _run_slice("xt", media, at, ref_file, scale_x, scale_t, output, ctx,
-               {"source": source, "time_axis": time_axis, "rows": rows},
-               {"no_index": no_index, "index_dir": index_dir})
+               {"source": source, "time_axis": time_axis, "rows": rows})
 
 
 def yt(
@@ -149,8 +139,6 @@ def yt(
     scale_y: int = typer.Option(1, "--scale-y", help="空间轴最近邻放大倍数"),
     scale_t: int = typer.Option(1, "--scale-t", help="时间轴最近邻放大倍数"),
     output: Optional[Path] = typer.Option(None, "--output", help="输出 PNG 路径"),
-    no_index: bool = NO_INDEX_OPT,
-    index_dir: Optional[Path] = INDEX_DIR_OPT,
     json_mode: bool = JSON_OPT,
     quiet: bool = QUIET_OPT,
     verbose: bool = VERBOSE_OPT,
@@ -159,5 +147,4 @@ def yt(
     """Y–T 时空切片（横轴=原视频 y，纵轴=时间）：--at "col(40)"，可加时间范围与 step。"""
     ctx = CliContext(json_mode, quiet, verbose, no_progress)
     _run_slice("yt", media, at, ref_file, scale_y, scale_t, output, ctx,
-               {"source": source, "time_axis": time_axis, "rows": rows},
-               {"no_index": no_index, "index_dir": index_dir})
+               {"source": source, "time_axis": time_axis, "rows": rows})

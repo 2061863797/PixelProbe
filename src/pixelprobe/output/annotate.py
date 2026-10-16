@@ -66,7 +66,9 @@ def _scale_for(height: int, width: int, max_side: int) -> float:
     if long_side > max_side:
         return max_side / long_side
     if long_side < MIN_LONG_SIDE:
-        return float(min(MAX_UPSCALE, max(1, MIN_LONG_SIDE // long_side)))
+        # 小图按整数倍放大到约 MIN_LONG_SIDE，但放大后也不能超过调用方给的 max_side
+        factor = min(MAX_UPSCALE, MIN_LONG_SIDE // long_side, max_side // long_side)
+        return float(max(1, factor))
     return 1.0
 
 

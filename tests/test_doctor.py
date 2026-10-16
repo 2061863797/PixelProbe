@@ -37,6 +37,22 @@ def test_doctor_checks_writable_parent_without_creating_output(tmp_path):
     assert list(tmp_path.iterdir()) == []
 
 
+def test_unset_roots_prefer_claude_project_dir_then_cwd(tmp_path, monkeypatch):
+    """插件把留空的 media_roots 传成空字符串；此时用 Claude Code 给出的项目根目录。"""
+    project, launch = tmp_path / "项目", tmp_path / "启动目录"
+    project.mkdir()
+    launch.mkdir()
+    monkeypatch.chdir(launch)
+    monkeypatch.setenv("PIXELPROBE_MCP_ROOTS", "  ")
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(project))
+    assert ServerConfig.from_environment().allowed_roots == (project.resolve(),)
+    monkeypatch.delenv("CLAUDE_PROJECT_DIR")
+    assert ServerConfig.from_environment().allowed_roots == (launch.resolve(),)
+    monkeypatch.setenv("PIXELPROBE_MCP_ROOTS", str(project))
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(launch))
+    assert ServerConfig.from_environment().allowed_roots == (project.resolve(),)
+
+
 def test_mcp_arguments_are_applied_before_server_import(tmp_path, monkeypatch):
     import pixelprobe_mcp.entry as entry
     monkeypatch.setenv("PIXELPROBE_MCP_ROOTS", "missing")

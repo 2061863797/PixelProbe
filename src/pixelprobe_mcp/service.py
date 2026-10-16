@@ -469,7 +469,7 @@ class PixelProbeService:
             data["metadata"] = metadata
         elif (item.name in {"frame", "pixel", "region"} and info is not None
               and info.media_type == "image" and params.options.get("sample") != "native"):
-            self._warn_display_conversion(media, warnings)
+            self._warn_display_conversion(info, warnings)
         images: list[tuple[str, bytes]] = []
         if params.images and outcome.images:
             data["images"] = []
@@ -517,15 +517,14 @@ class PixelProbeService:
         }
 
     @staticmethod
-    def _warn_display_conversion(media: Path, warnings: list[str]) -> None:
-        """透明或调色板图片的显示 RGB8 不等于存储样本，需明确告知。"""
-        with ImageReader() as reader:
-            reader.open(media)
-            native = reader.get_native_metadata()
-        if native.has_alpha or native.mode == "P":
+    def _warn_display_conversion(info: MediaInfo, warnings: list[str]) -> None:
+        """透明或调色板图片的显示 RGB8 不等于存储样本，需明确告知（只看已读出的模式，不重新打开图片）。"""
+        mode = info.color_mode or ""
+        has_alpha = "A" in mode
+        if has_alpha or mode == "P":
             warnings.append(
-                f"数值与预览来自显示 RGB8 转换（存储模式 {native.mode}，"
-                f"{'含 Alpha' if native.has_alpha else '调色板索引'}）；预览不保留透明度。"
+                f"数值与预览来自显示 RGB8 转换（存储模式 {mode}，"
+                f"{'含 Alpha' if has_alpha else '调色板索引'}）；预览不保留透明度。"
                 "需要存储样本请用 pixelprobe_measure what=pixel options.sample=native"
             )
 

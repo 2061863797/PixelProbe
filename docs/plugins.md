@@ -34,7 +34,8 @@ claude plugin install pixelprobe@pixelprobe
 ```
 
 也可以在 Claude Code 里输入 `/plugin` 打开插件界面安装。安装时会提示填写"允许分析的媒体目录"
-（多个目录 Windows 用分号、macOS/Linux 用冒号分隔），留空表示只允许当前项目目录；之后可在 `/config` 里修改。
+（多个目录 Windows 用分号、macOS/Linux 用冒号分隔），留空表示只允许当前项目目录（服务读取 Claude Code
+传给 MCP 进程的 `CLAUDE_PROJECT_DIR`）；之后可在 `/config` 里修改。
 
 ## Codex
 
@@ -46,7 +47,8 @@ codex plugin marketplace add 2061863797/PixelProbe
 codex plugin add pixelprobe@pixelprobe
 ```
 
-Codex 下 MCP 服务名为 `pixelprobe-plugin`，允许目录为启动 Codex 的当前目录。
+Codex 下 MCP 服务名为 `pixelprobe-plugin`。Codex 插件没有设置项，允许目录为 MCP 服务的启动目录；
+需要分析其他目录时，请改用手动 MCP 配置并设置 `PIXELPROBE_MCP_ROOTS`（见 [uvx 指南](uvx.md)），两者不要同时使用。
 
 ## 已经手动配置过 PixelProbe MCP？
 

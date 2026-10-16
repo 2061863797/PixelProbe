@@ -27,10 +27,19 @@ def anyio_backend() -> str:
     return "asyncio"
 
 
-def test_every_capability_has_cli_and_mcp_entry() -> None:
+def _choices(schema: dict) -> set[str]:
+    """参数 JSON Schema 中允许的取值；可选参数是 anyOf [枚举, null]。"""
+    values = set(schema.get("enum", []))
+    for option in schema.get("anyOf", []):
+        values |= set(option.get("enum", []))
+    return values
+
+
+@pytest.mark.anyio
+async def test_every_capability_has_cli_and_mcp_entry() -> None:
     names = [item.name for item in all_capabilities()]
     assert len(names) == len(set(names))
-    tools = server.mcp._tool_manager._tools  # FastMCP 已注册的工具
+    tools = {tool.name: tool for tool in await server.mcp.list_tools()}
     runner = CliRunner()
     for item in all_capabilities():
         assert item.cli, f"{item.name} 缺少命令行入口"
@@ -39,8 +48,8 @@ def test_every_capability_has_cli_and_mcp_entry() -> None:
         assert result.exit_code == 0, f"pixelprobe {item.cli} 不可用：{result.output}"
         parameter = SELECTOR_PARAMETER.get(item.mcp_tool)
         if parameter is not None:
-            schema = tools[item.mcp_tool].parameters["properties"][parameter]
-            assert item.mcp_selector in schema["enum"], f"{item.mcp_tool} 不接受 {parameter}={item.mcp_selector}"
+            schema = tools[item.mcp_tool].inputSchema["properties"][parameter]
+            assert item.mcp_selector in _choices(schema), f"{item.mcp_tool} 不接受 {parameter}={item.mcp_selector}"
 
 
 @pytest.mark.anyio

@@ -13,7 +13,7 @@ pixelprobe xt "录屏.mp4" --at "t=2s..8s row(320)" --source diff --output 差�
 ```
 
 - 第 0 帧没有前帧，不出现在结果中；
-- 带 `step=n` 时仍与**上一展示帧**比较（不是上一采样行），每个采样行多解码一个前帧。
+- 带 `step=n` 时仍与**上一展示帧**比较（不是上一采样行）。
 
 ## 自适应时间轴：`--time-axis adaptive --rows N`
 
@@ -26,7 +26,8 @@ pixelprobe xt "录屏.mp4" --at "t=2s..8s row(320)" --source diff --output 差�
 pixelprobe yt "长视频.mkv" --at "col(640)" --time-axis adaptive --rows 400 --output 自适应.png
 ```
 
-变化量与索引 L1 的 `diff_prev` 同一定义：已建索引时直接查表，否则顺序解码一遍；两者取帧相同。
+变化量与索引 L1 的 `diff_prev` 同一定义。差分与自适应切片都只顺序解码一遍：解码时同时取每帧扫描线和
+整帧变化量，只保留扫描线、不囤积整帧，结果与普通切片逐值相同（有回归测试）。
 自适应时间轴由程序分配行数，地址中不能再写 `step=`。
 
 ## 跟随切片：`track`

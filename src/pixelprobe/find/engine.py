@@ -34,7 +34,7 @@ from pixelprobe.find.query import (
     needs_decode,
 )
 from pixelprobe.index.builder import frame_columns, frame_metrics
-from pixelprobe.models.errors import DecodeError, InvalidRangeError
+from pixelprobe.models.errors import DecodeError
 
 # 与 scan 相同的亮度异常阈值
 BLACK_MAX = 16
@@ -454,8 +454,6 @@ def find(
     # 按时间先后排列；同一帧起点的结果按条件书写顺序
     matches = [item for _, item in sorted(matches, key=lambda pair: (pair[1]["start_frame"], pair[0]))]
     truncated = len(matches) > limit
-    if len(table.frames) == 0:
-        raise InvalidRangeError("所选范围内没有帧")
     return FindResult(
         frame_range=frame_range, frames_analyzed=int(len(table.frames)),
         computed_from=computed_from, matches=matches[:limit], truncated=truncated,

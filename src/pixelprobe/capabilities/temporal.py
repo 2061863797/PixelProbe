@@ -32,7 +32,6 @@ from pixelprobe.capabilities.base import (
 )
 from pixelprobe.core.frame_selector import FrameRange
 from pixelprobe.core.timeline_extractor import TimelineResult
-from pixelprobe.domain.time import TemporalSelection
 from pixelprobe.models.errors import AddressError
 from pixelprobe.models.pixel import PixelCoordinate
 from pixelprobe.output.plot import render_curve
@@ -173,29 +172,41 @@ class SliceOptions(BaseModel):
     )
     time_axis: Literal["uniform", "adaptive"] = Field(
         default="uniform",
-        description="uniform：按 step 等间隔取帧；adaptive：按整帧变化量分配 rows 行，变化多处密、静止处疏",
+        description="uniform：按 step 等间隔取帧；adaptive：按整帧变化量分配 rows 行，变化多处密、静止处疏（单次解码）",
     )
     rows: int = Field(default=256, ge=2, le=4096, description="adaptive：输出行数上限")
 
 
-def _frame_diffs(call: Invocation, start: int, end: int) -> np.ndarray:
-    """start..end 每帧与上一展示帧的整帧平均绝对差（与索引 L1 的 diff_prev 同一定义）。"""
-    if call.index is not None:
-        from pixelprobe.index.queries import rows_for
-        selected = rows_for(call.index, FrameRange(start=start, end=end, sample_every=1))
-        if selected is not None:
-            return np.nan_to_num(call.index.frames["diff_prev"][selected.rows], nan=0.0)
+def _scan_lines(
+    call: Invocation, kind: str, fixed: int, first: int, end: int,
+) -> tuple[list[int], list[float], np.ndarray, np.ndarray]:
+    """顺序解码 first..end 一遍，同时取每帧扫描线与整帧变化量（索引 L1 的 diff_prev 同一定义）。
+
+    返回 (帧号, 时间, 扫描线 [T, L, 3], 变化量 [T])。只保留扫描线，不囤积整帧，
+    差分与自适应切片由此直接组装，不需要第二次解码或索引。
+    """
     from pixelprobe.core.video_reader import VideoReader
-    values: list[float] = []
+    frames: list[int] = []
+    times: list[float] = []
+    lines: list[np.ndarray] = []
+    diffs: list[float] = []
     previous = None
     with VideoReader() as reader:
         reader.open(call.media)
-        for index, _, arr in reader.iter_frames(max(0, start - 1), end, 1):
-            if index >= start:
-                values.append(0.0 if previous is None else float(
-                    (np.maximum(arr, previous) - np.minimum(arr, previous)).mean()))
+        for index, timestamp, arr in reader.iter_frames(first, end, 1):
+            if call.cancellation is not None:
+                call.cancellation.raise_if_cancelled()
+            frames.append(int(index))
+            times.append(float(timestamp))
+            lines.append((arr[fixed, :, :] if kind == "xt" else arr[:, fixed, :]).copy())
+            diffs.append(0.0 if previous is None else float(
+                (np.maximum(arr, previous) - np.minimum(arr, previous)).mean()))
             previous = arr
-    return np.asarray(values, dtype=np.float64)
+            if call.progress is not None:
+                call.progress(len(frames), end - first + 1)
+    if not frames:
+        raise AddressError("所选范围内没有解码出任何帧")
+    return frames, times, np.stack(lines), np.asarray(diffs, dtype=np.float64)
 
 
 def _adaptive_frames(diffs: np.ndarray, start: int, rows: int) -> list[int]:
@@ -229,41 +240,40 @@ def _slice(kind: str):
         request, fixed = _slice_request(call, kind)
         selection = request.selection
         plain = options.source == "frames" and options.time_axis == "uniform"
-        if not plain:
+        data: dict = {"slice_type": kind, "fixed_coordinate": fixed}
+        if plain:
+            tensor = pixelprobe.generate(request).request_tensors[0][0]
+            _progress(call)
+            array = tensor.data.materialize()
+            frames = [int(frame) for frame in tensor.attributes["presentation_indices"]]
+            times = list(tensor.attributes["timeline_timestamps_seconds"])
+        else:
             if options.time_axis == "adaptive" and call.address.step is not None:
                 raise AddressError("adaptive 时间轴自行分配行数，地址中不能再写 step=")
             start = selection.requested_start_frame
             end = selection.requested_end_frame_exclusive - 1
-            if options.source == "diff" and options.time_axis == "adaptive":
-                start = max(start, 1)  # 第 0 帧没有前帧，先排除再分配行数
+            diff = options.source == "diff"
+            # 差分需要每行的上一展示帧；范围从第 0 帧开始时第 0 帧没有前帧，不出现在结果中
+            first = start - 1 if diff and start > 0 else start
+            decoded, decoded_times, lines, changes = _scan_lines(call, kind, fixed, first, end)
+            position = {frame: number for number, frame in enumerate(decoded)}
+            candidates = [frame for frame in decoded if frame >= start and (not diff or frame - 1 in position)]
+            if not candidates:
+                raise AddressError("差分切片需要至少一个有前一帧的帧（第 0 帧没有前帧）")
             if options.time_axis == "adaptive":
-                rows = _adaptive_frames(_frame_diffs(call, start, end), start, options.rows)
+                weights = changes[[position[frame] for frame in candidates]]
+                rows = [candidates[i] for i in _adaptive_frames(weights, 0, options.rows)]
             else:
-                rows = list(range(start, end + 1, selection.sample_every))
-            if options.source == "diff":
-                rows = [frame for frame in rows if frame > 0]
-                if not rows:
-                    raise AddressError("差分切片需要至少一个有前一帧的帧（第 0 帧没有前帧）")
-            needed = sorted(set(rows) | ({frame - 1 for frame in rows} if options.source == "diff" else set()))
-            request = request.model_copy(update={"selection": TemporalSelection(
-                mode="indices", requested_indices=tuple(needed),
-            )})
-        tensor = pixelprobe.generate(request).request_tensors[0][0]
-        _progress(call)
-        array = tensor.data.materialize()
-        frames = [int(frame) for frame in tensor.attributes["presentation_indices"]]
-        times = list(tensor.attributes["timeline_timestamps_seconds"])
-        data: dict = {"slice_type": kind, "fixed_coordinate": fixed}
-        if not plain:
-            position = {frame: number for number, frame in enumerate(frames)}
+                # 非 plain 的等间隔模式必为差分：按 step 取展示帧，跳过没有前帧的第 0 帧
+                usable = set(candidates)
+                rows = [frame for frame in range(start, end + 1, selection.sample_every) if frame in usable]
             picked = [position[frame] for frame in rows]
-            if options.source == "diff":
+            if diff:
                 previous = [position[frame - 1] for frame in rows]
-                current = array[picked].astype(np.int16)
-                array = np.abs(current - array[previous].astype(np.int16)).astype(np.uint8)
+                array = np.abs(lines[picked].astype(np.int16) - lines[previous].astype(np.int16)).astype(np.uint8)
             else:
-                array = array[picked]
-            frames, times = rows, [times[index] for index in picked]
+                array = lines[picked]
+            frames, times = rows, [decoded_times[index] for index in picked]
             data.update(source=options.source, time_axis_mode=options.time_axis)
             if options.time_axis == "adaptive":
                 data["time_axis_note"] = "行间时间间隔不均匀：变化多处取帧密、静止处疏；以 frames/times 为准"

@@ -412,6 +412,15 @@ async def test_mcp_find_query_returns_matches_usable_as_references(
         "pixelprobe_find", {"media_path": str(target), "query": "blak"},
     )
     assert invalid.isError is True and "INVALID_QUERY" in _text(invalid)
+    # 显式 kind 与 query 冲突时报错，不能悄悄忽略 kind
+    conflict = await mcp_session.call_tool(
+        "pixelprobe_find", {"media_path": str(target), "kind": "first_change", "query": "black"},
+    )
+    assert conflict.isError is True and "kind=query" in _text(conflict)
+    explicit = await mcp_session.call_tool(
+        "pixelprobe_find", {"media_path": str(target), "kind": "query", "query": "white"},
+    )
+    assert explicit.isError is False
 
 
 @pytest.mark.anyio

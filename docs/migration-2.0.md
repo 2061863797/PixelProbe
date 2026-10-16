@@ -65,7 +65,7 @@
 - 任务结果可含多张图片，按序号分别校验 SHA-256；1.x 留下的任务记录与 checkpoint 仍可由
   `pixelprobe_system action=storage` 按期清理。
 
-MCP 客户端配置不变（`pixelprobe-mcp` 或 `pixelprobe --mcp`）；也可以改用插件，见 [插件安装](plugins.md)。
+MCP 客户端配置不变（`pixelprobe-mcp` 或 `pixelprobe --mcp`）；也可以改用插件，见 [插件安装](installation.md#插件)。
 
 ## 数据与缓存
 

@@ -114,6 +114,6 @@ pixelprobe doctor --json 额外检查 psutil 是否可用。
 磁盘写满使用确定性的 ENOSPC 故障注入，不填满用户磁盘。
 同时保留现有取消竞争、重启及完整结果校验回归。
 
-Windows 本地测试结果记录在 [优化实施检查点](optimization-progress.md)。
+Windows 本地测试结果记录在[发布与验收记录](optimization-progress.md)。
 Linux 保留正式 Python 测试矩阵；macOS 的 Python/uvx 真实运行仍需在对应平台验证。
 开发者本地冻结程序只验证该机器生成的私有产物，不属于正式发行门槛。

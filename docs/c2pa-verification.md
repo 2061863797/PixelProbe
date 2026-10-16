@@ -63,7 +63,7 @@ SDK 0.37.10 的验证器要求测试签名证书包含组织字段；测试显�
 没有通过忽略签名失败来让测试通过。
 
 Linux Python 矩阵及三平台核心 CI 已配置真实 evidence 依赖。
-Windows 本机运行结果记录在 optimization-progress.md；
+Windows 本机运行结果记录在[发布与验收记录](optimization-progress.md)；
 Linux/macOS 的 Python/uvx C2PA 验证仍需在对应平台实际运行，不由 Windows 测试替代。
 开发者本地冻结程序的验证结果只适用于该本地产物。
 

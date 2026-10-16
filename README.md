@@ -43,7 +43,7 @@ PixelProbe 只提供可复核的证据和数值。详见[定位与路线图](doc
 - **媒体索引**：长视频一次解码建立每帧体检表，之后整帧问题直接查表（[媒体索引](docs/media-index.md)）。
 - **新切法**：差分切片、自适应时间轴、点跟踪与跟随切片（[新切法](docs/slices.md)）。
 - **码流结构**：容器标签、关键帧间隔、时间戳空隙、每秒码率等取证与质量线索（[码流结构](docs/streams.md)）。
-- **面向 AI 的输出**：图片带坐标刻度与网格，结果带编号可直接引用；插件内置录屏、长视频、质量、取证 4 个场景 Skill（[插件安装](docs/plugins.md)）。
+- **面向 AI 的输出**：图片带坐标刻度与网格，结果带编号可直接引用；插件内置录屏、长视频、质量、取证 4 个场景 Skill（[插件安装](docs/installation.md#插件)）。
 
 ## 主要功能
 
@@ -61,8 +61,6 @@ PixelProbe 只提供可复核的证据和数值。详见[定位与路线图](doc
 - **统一表示生成**：一次请求生成 X–T、Path–T、ROI–T、聚合或光流结果。
 - **可校验结果包**：保存原始数值、预览、坐标映射、来源和 SHA-256 校验信息。
 
-MCP 用户可先参考 [uvx 启动与更新指南](docs/uvx.md)，无需手动建立虚拟环境。
-
 当前源码中的证据分析支持 EXIF、JPEG ELA、噪声与边缘候选，以及可选的
 [C2PA 离线签名和信任验证](docs/c2pa-verification.md)。分析结果不自动判定媒体真伪。
 
@@ -71,26 +69,15 @@ MCP 用户可先参考 [uvx 启动与更新指南](docs/uvx.md)，无需手动�
 
 ## 安装
 
-正式发行只提供 Python wheel 和源码包，不发布包含 FFmpeg 等第三方 DLL 的独立程序。
-使用 Python 3.11+ 安装固定版本；需要完整能力时选择对应 extra：
+需要 Python 3.11+。命令行安装全部能力：
 
 ```bash
 python -m pip install "pixelprobe[mcp,flow,storage,evidence] @ git+https://github.com/2061863797/PixelProbe.git@v2.1.0"
 pixelprobe --version
 ```
 
-MCP 用户优先使用 [uvx 固定版本配置](docs/uvx.md)，由 uv 管理隔离环境。
-如需在自己的机器上生成仅供本地使用的单文件程序，可运行：
-
-```bash
-python -m pip install -e ".[dev,mcp,flow,storage,evidence]" pyinstaller
-python scripts/build_local_standalone.py --output build/local-pixelprobe
-```
-
-脚本默认执行真实 CLI/MCP 本地冻结版验收，并写入 `LOCAL-BUILD.txt` 和 `build-info.json`。
-该产物包含当前环境的第三方原生库，不属于官方发行物，也不应在许可审查前公开再分发。
-完整安装、更新、卸载和本地构建说明见
-[安装指南](https://github.com/2061863797/PixelProbe/blob/main/docs/installation.md)。
+给 AI 助手用时推荐装插件（Claude Code：`claude plugin install pixelprobe@pixelprobe`）。插件、手动配置 MCP、
+从源码安装、更新与卸载见[安装与接入](docs/installation.md)。
 
 ## 快速示例
 
@@ -276,7 +263,7 @@ pixelprobe generate input.mp4 --request request.json --output result.bundle \
 ## AI Agent 接入 MCP
 
 **最简单的方式是安装插件**：Claude Code 与 Codex 都可以直接从本仓库安装，插件包含 MCP 服务和
-5 个场景 Skill（录屏 UI、长视频、质量、取证与通用打法），见 [插件安装](docs/plugins.md)。下面是手动配置方式。
+5 个场景 Skill（录屏 UI、长视频、质量、取证与通用打法），见 [插件安装](docs/installation.md#插件)。下面是手动配置方式。
 
 PixelProbe MCP 是现有 Python 核心的薄适配层，不会复制或改变分析算法。它通过
 本地 `stdio` 工作：Agent 负责理解人物、物体、文字、场景和构图；PixelProbe

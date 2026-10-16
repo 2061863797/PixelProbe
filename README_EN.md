@@ -37,7 +37,7 @@ When an AI looks at images and videos, it is good at saying *what* is in the pic
 - **Media index**: decode a long video once into a per-frame table, then answer whole-frame questions by lookup ([docs/media-index.md](docs/media-index.md)).
 - **New slices**: difference slices, adaptive time axes, point tracking with follow slices ([docs/slices.md](docs/slices.md)).
 - **Stream structure**: container tags, keyframe intervals, timestamp gaps, and bytes per second as forensic and quality clues ([docs/streams.md](docs/streams.md)).
-- **AI-oriented output**: images carry coordinate rulers and grids, results carry reusable names, and the plugin ships four scenario Skills ([docs/plugins.md](docs/plugins.md)).
+- **AI-oriented output**: images carry coordinate rulers and grids, results carry reusable names, and the plugin ships four scenario Skills ([installation guide](docs/installation.md#插件), Chinese).
 
 ## Features
 
@@ -57,23 +57,14 @@ When an AI looks at images and videos, it is good at saying *what* is in the pic
 
 ## Installation
 
-Official releases contain the Python wheel and source archive only. They do not publish a standalone executable containing third-party native libraries such as FFmpeg. Install a pinned release with Python 3.11 or later:
+Requires Python 3.11 or later. Install the command-line tool with every capability:
 
 ```bash
 python -m pip install "pixelprobe[mcp,flow,storage,evidence] @ git+https://github.com/2061863797/PixelProbe.git@v2.1.0"
 pixelprobe --version
 ```
 
-MCP users should prefer the pinned [uvx configuration](docs/uvx.md). Developers may create a private local executable from their own environment:
-
-```bash
-python -m pip install -e ".[dev,mcp,flow,storage,evidence]" pyinstaller
-python scripts/build_local_standalone.py --output build/local-pixelprobe
-```
-
-The script runs real CLI/MCP checks against the local frozen executable by default and writes `LOCAL-BUILD.txt` plus `build-info.json`. The result is not an official release and must not be redistributed before reviewing the licenses of the native libraries selected by the local environment.
-
-See the [installation guide](https://github.com/2061863797/PixelProbe/blob/main/docs/installation.md) for uvx, wheel installation, optional dependencies, updates, local builds, and uninstall instructions.
+For AI assistants, the plugin is recommended (Claude Code: `claude plugin install pixelprobe@pixelprobe`). See the [installation guide](docs/installation.md) (Chinese) for the plugin, manual MCP configuration, installing from source, updates, and uninstalling.
 
 ## Quick Examples
 
@@ -240,7 +231,7 @@ pixelprobe generate input.mp4 --request request.json --output result.bundle \
 
 ## Connecting an AI Agent through MCP
 
-**The easiest way is the plugin**: both Claude Code and Codex can install it straight from this repository. It bundles the MCP server with five scenario Skills (UI recordings, long videos, quality, forensics, and the general workflow); see [docs/plugins.md](docs/plugins.md). Manual configuration follows.
+**The easiest way is the plugin**: both Claude Code and Codex can install it straight from this repository. It bundles the MCP server with five scenario Skills (UI recordings, long videos, quality, forensics, and the general workflow); see the [installation guide](docs/installation.md#插件) (Chinese). Manual configuration follows.
 
 PixelProbe MCP is a thin adapter over the existing Python core; it neither copies nor changes the analysis algorithms. It communicates locally over `stdio`. The agent interprets people, objects, text, scenes, and composition, while PixelProbe verifies frame numbers, timestamps, coordinates, pixels, regional statistics, change candidates, and exact numeric representations.
 

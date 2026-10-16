@@ -1,8 +1,24 @@
 # 优化实施检查点
 
-## 当前状态：2026-10-16 PixelProbe 2.0.0 已发布
+## 当前状态：2026-10-17 PixelProbe 2.1.0 本地候选已验收，未发布
 
 本节优先于下方历史检查点。
+
+- 内容：按 [MCP 与 CLI 实测报告](mcp-cli-test-report-2026-10-17.md) 修复——内存按本机自动分配、
+  估算不再作为停止线、内存失败独占重试一次、整机内存监视、引擎单步上限跟随任务额度、
+  中间结果外溢临时文件、错误码修正、CLI/MCP 对等（EXIF 值、info、no_index）。
+  对外接口只新增不删除：`evidence` 仍返回 2.0.0 的 `metadata.exif_fields`，另增 `exif` 值。
+- 本地候选 `build/release-2.1.0-20261017/`：
+  - `pixelprobe-2.1.0-py3-none-any.whl` SHA256 `8a6ab1c309e1ae481a4e320479f215da0b5fca7ee67accbd2d3d445aaa7672f8`
+  - `pixelprobe-2.1.0.tar.gz` SHA256 `3e250f7ff730436402a482ae371f0492e6593c6ef4a2821a5ca29dc2a32c36c8`
+  - twine 检查通过；干净虚拟环境安装完整 extra 后 `--version` 为 2.1.0、`doctor` healthy、`find` 结果正确；
+  - uvx 本地 wheel 离线运行 `tests/test_distribution.py` 4 passed；
+  - 升级回滚演练：2.0.0 → 2.1.0 → 2.0.0，三个阶段均 10 个工具、像素核对通过；
+  - 全量测试 600 passed；capture_golden 仅新增 `evidence_image.metadata.exif_fields` 字段，基线另行提交。
+- 未执行：推送 main、创建 `v2.1.0` 标签与 GitHub Release（需用户确认）；远程标签上的 uvx 冷启动与插件实际安装；
+  macOS/Linux 运行。
+
+## 2026-10-16 PixelProbe 2.0.0 已发布
 
 - PR #1 合并到 main（合并提交 6375356，内容与验收过的 170fecf 逐行相同）；`v2.0.0` 标签触发发布工作流：
   Linux 测试、构建、GitHub Release 全部成功（https://github.com/2061863797/PixelProbe/releases/tag/v2.0.0）。

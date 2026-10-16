@@ -53,6 +53,8 @@ def _exif_summary(metadata: dict, *, include_gps: bool) -> tuple[dict, list[str]
         else:
             values[name] = value
     summary["exif"] = values
+    # 2.0.0 的 MCP 只返回字段名；保留该字段，旧调用方升级后不受影响
+    summary["exif_fields"] = sorted(metadata.get("exif") or {})[:100]
     if omitted:
         summary["exif_omitted_fields"] = sorted(omitted)
     warnings = []

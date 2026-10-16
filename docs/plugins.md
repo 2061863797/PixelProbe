@@ -14,11 +14,11 @@
 
 ## 前提
 
-- 安装 [uv](https://docs.astral.sh/uv/)：插件用 `uvx` 下载并启动固定版本（`v2.0.0` 标签）的 PixelProbe，
+- 安装 [uv](https://docs.astral.sh/uv/)：插件用 `uvx` 下载并启动固定版本（`v2.1.0` 标签）的 PixelProbe，
   首次启动需要联网，之后复用缓存。可先预热：
 
   ```powershell
-  uvx --python 3.12 --from "pixelprobe[mcp] @ git+https://github.com/2061863797/PixelProbe.git@v2.0.0" pixelprobe --version
+  uvx --python 3.12 --from "pixelprobe[mcp] @ git+https://github.com/2061863797/PixelProbe.git@v2.1.0" pixelprobe --version
   ```
 
 - 插件只能读取允许目录内的媒体（见下文"允许的目录"）。
@@ -58,7 +58,7 @@ Codex 下 MCP 服务名为 `pixelprobe-plugin`。Codex 插件没有设置项，�
 
 ## 更新
 
-插件固定启动 `v2.0.0`；发布新版本时同时更新插件里的版本号与启动命令，然后执行
+插件固定启动 `v2.1.0`；发布新版本时同时更新插件里的版本号与启动命令，然后执行
 `claude plugin update pixelprobe@pixelprobe` 或 `codex plugin marketplace upgrade pixelprobe` 后重新安装。
 
 ## 验证记录（2026-10-16，Windows）

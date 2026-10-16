@@ -92,6 +92,8 @@ def test_evidence_returns_exif_values_and_hides_gps_by_default(tmp_path):
     assert metadata["exif"]["DateTimeOriginal"] == "2026:10:01 08:30:00"
     assert metadata["exif"]["LensModel"] == "50mm F1.8"
     assert "MakerNote" in metadata["exif_omitted_fields"] and "MakerNote" not in metadata["exif"]
+    # 兼容 2.0.0：exif_fields 仍列出全部字段名（含只列名不给值的字段）
+    assert {"Model", "DateTimeOriginal", "MakerNote"} <= set(metadata["exif_fields"])
     assert metadata["gps_present"] is True and "gps" not in metadata
     assert any("include_gps" in warning for warning in result.warnings)
     shown, _ = service.run_capability(CapabilityInput(

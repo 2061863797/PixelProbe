@@ -1,6 +1,6 @@
 {
   "name": "pixelprobe",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "本地确定性图片/视频分析：给 AI 补上帧号、时间、坐标、像素数值、变化定位与取证线索（MCP + 场景 Skill）",
   "author": {
     "name": "PixelProbe"

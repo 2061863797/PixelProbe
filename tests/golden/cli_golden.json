@@ -303,7 +303,7 @@
      "trust_anchors_sha256": null,
      "trust_source": "sdk_defaults"
     },
-    "sdk_version": "0.37.10",
+    "sdk_version": "0.37.12",
     "status": "completed",
     "verification_state": "no_credentials"
    },
@@ -334,6 +334,7 @@
     "exif_entry_count": 0,
     "file_size_bytes": 91,
     "format": "PNG",
+    "gps_present": false,
     "height": 16,
     "icc_profile_present": false,
     "mode": "RGB",
@@ -579,10 +580,81 @@
    "color_mode": "RGB",
    "duration_seconds": null,
    "file_size_bytes": 91,
+   "flags": [],
    "fps": null,
    "frame_count": null,
    "frame_count_estimated": false,
    "height": 16,
+   "image_analysis": {
+    "alpha": {
+     "accuracy": "exact",
+     "level_count": 1,
+     "opaque_pixels": 256,
+     "opaque_ratio": 1.0,
+     "partially_transparent_pixels": 0,
+     "partially_transparent_ratio": 0.0,
+     "representation": "none",
+     "source": "full_alpha_histogram",
+     "transparent_pixels": 0,
+     "transparent_ratio": 0.0
+    },
+    "channel_semantics": {
+     "analysis_display": {
+      "channel_count": 3,
+      "meaning": "确定性颜色算子使用的显示 RGB8",
+      "mode": "RGB"
+     },
+     "stored": {
+      "bands": [
+       "R",
+       "G",
+       "B"
+      ],
+      "channel_count": 3,
+      "meaning": "存储样本通道；P 模式下是调色板索引，不是灰度或 RGB",
+      "mode": "RGB"
+     }
+    },
+    "palette": {
+     "accuracy": "exact",
+     "entry_count": null,
+     "indexed": false,
+     "source": "pillow_palette_and_full_histogram",
+     "usage_ratio": null,
+     "used_index_count": null
+    },
+    "regular_pattern": {
+     "accuracy": "unknown",
+     "assessment": "insufficient_data",
+     "coverage": "none",
+     "evidence": null,
+     "interpretation": "仅表示二维高频残差存在规则周期相关性；可能来自刻意网屏、调色板抖动或画面纹理，不能单独证明压缩、损坏或伪造"
+    },
+    "total_pixels": 256
+   },
+   "image_samples": {
+    "engine_conversion_flags": [],
+    "engine_sample_semantics": "decoded_rgb8",
+    "native": {
+     "alpha_representation": "none",
+     "bands": [
+      "R",
+      "G",
+      "B"
+     ],
+     "bits_per_sample": 8,
+     "channel_count": 3,
+     "dtype": "uint8",
+     "has_alpha": false,
+     "mode": "RGB",
+     "sample_semantics": "stored_sample",
+     "shape": [
+      16,
+      16,
+      3
+     ]
+    }
+   },
    "is_vfr": null,
    "media_type": "image",
    "pixel_format": null,
@@ -603,6 +675,10 @@
    "frame_count": 29,
    "frame_count_estimated": true,
    "height": 32,
+   "index": {
+    "hint": "长视频可先建立索引（命令行 pixelprobe index build；MCP pixelprobe_index action=build），之后整帧变化检测直接查表",
+    "status": "missing"
+   },
    "is_vfr": false,
    "media_type": "video",
    "pixel_format": "gbrp",
@@ -623,6 +699,10 @@
    "frame_count": 30,
    "frame_count_estimated": true,
    "height": 32,
+   "index": {
+    "hint": "长视频可先建立索引（命令行 pixelprobe index build；MCP pixelprobe_index action=build），之后整帧变化检测直接查表",
+    "status": "missing"
+   },
    "is_vfr": false,
    "media_type": "video",
    "pixel_format": "gbrp",

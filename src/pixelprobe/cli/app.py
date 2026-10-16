@@ -29,6 +29,7 @@ from pixelprobe.cli import (
     spectrum_cmd,
     streams_cmd,
     timeline_cmd,
+    track_cmd,
     usage_error_details,
     validate_cmd,
 )
@@ -68,6 +69,7 @@ app.command("scan")(scan_cmd.scan)
 app.command("spectrum")(spectrum_cmd.spectrum)
 app.command("spectrum2d")(spectrum_cmd.spectrum2d)
 app.command("flow")(flow_cmd.flow)
+app.command("track")(track_cmd.track)
 app.command("generate")(generate_cmd.generate)
 app.command("validate")(validate_cmd.validate)
 app.add_typer(cache_cmd.app, name="cache")

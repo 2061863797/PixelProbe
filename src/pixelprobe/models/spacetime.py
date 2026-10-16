@@ -21,7 +21,7 @@ class SpacetimeMetadata(BaseModel):
     start_frame: int
     end_frame: int
     frame_count: int
-    sample_every: int
+    sample_every: int | None  # 自适应时间轴时为 None（行间间隔不均匀）
     space_axis: Literal["original_x", "original_y"]
     time_axis: Literal["vertical"]
     width: int

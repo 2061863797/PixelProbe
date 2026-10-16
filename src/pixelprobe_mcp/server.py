@@ -249,14 +249,16 @@ async def pixelprobe_look(
     description=(
         "返回确定性数值。what=pixel：point(x,y)/pid(n) 的 RGB/HEX/HSV/Lab/亮度（options.sample=native 读图片原生通道）；"
         "region：rect/cell 区域统计；timeline：固定像素颜色随时间变化；spectrum：周期闪烁主频；"
-        "spectrum2d：单帧条纹/摩尔纹频谱；flow：两帧（f=0,4）或累积（options.accumulate）光流。"
+        "spectrum2d：单帧条纹/摩尔纹频谱；flow：两帧（f=0,4）或累积（options.accumulate）光流；"
+        "track：从 point(x,y) 起逐帧跟踪（at 如 \"f=10..80 point(120,200)\"），返回轨迹、位移、速度，"
+        "images=true 附跟随切片与轨迹图。"
         "images=true 时附带对应预览图。"
     ),
     annotations=READ_ONLY,
 )
 async def pixelprobe_measure(
     media_path: str,
-    what: Literal["pixel", "region", "timeline", "spectrum", "spectrum2d", "flow"],
+    what: Literal["pixel", "region", "timeline", "spectrum", "spectrum2d", "flow", "track"],
     at: str | None = None,
     options: dict[str, Any] | None = None,
     images: bool = False,

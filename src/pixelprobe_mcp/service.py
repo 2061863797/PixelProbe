@@ -51,7 +51,7 @@ MCP_GENERATE_RESOURCES = ResourcePolicy(
 )
 SINGLE_FRAME = {"frame", "pixel", "region", "spectrum2d", "compare"}
 SEQUENTIAL = {
-    "changes", "scan", "find", "sheet", "timeline", "xt", "yt", "reduce", "spectrum", "flow",
+    "changes", "scan", "find", "track", "sheet", "timeline", "xt", "yt", "reduce", "spectrum", "flow",
     "first_change", "compare_media", "quality_overview",
 }
 _NO_SEMANTICS = "只是数值线索，不能单独证明具体事件、物体或内容；请先查看候选时刻前、中、后的画面"
@@ -554,6 +554,14 @@ class PixelProbeService:
             x_axis = Axis("x" if cap == "xt" else "y", width)
             y_axis = frame_axis(data.get("frames", list(range(height))))
             title = f"{cap} {'row' if cap == 'xt' else 'col'}={data.get('fixed_coordinate')}"
+        elif cap == "track" and name == "follow":
+            # 横轴：相对跟踪点的水平偏移；纵轴：帧号
+            x_axis = Axis("dx", width, offset=-(width // 2))
+            y_axis = frame_axis(data.get("frames", list(range(height))))
+            title = "track follow"
+        elif cap == "track":
+            x_axis, y_axis = Axis("x", width), Axis("y", height)
+            title = f"track path f={data.get('start_frame')}..{data.get('end_frame')}"
         elif cap == "timeline":
             x_axis = frame_axis(data.get("frames", list(range(width))))
             y_axis = Axis("point", height, label=lambda i: f"P{i + 1}")

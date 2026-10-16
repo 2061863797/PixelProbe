@@ -32,6 +32,7 @@ from pixelprobe.capabilities.base import (
 )
 from pixelprobe.core.frame_selector import FrameRange
 from pixelprobe.core.timeline_extractor import TimelineResult
+from pixelprobe.domain.time import TemporalSelection
 from pixelprobe.models.errors import AddressError
 from pixelprobe.models.pixel import PixelCoordinate
 from pixelprobe.output.plot import render_curve
@@ -164,29 +165,188 @@ def _slice_request(call: Invocation, kind: str):
     return spacetime_request(call.media, kind, fixed, **range_options(call.address)), fixed
 
 
+class SliceOptions(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    source: Literal["frames", "diff"] = Field(
+        default="frames",
+        description="frames：原始像素；diff：与上一展示帧的逐通道绝对差（运动、闪烁更醒目；与先差分再切片逐值相同）",
+    )
+    time_axis: Literal["uniform", "adaptive"] = Field(
+        default="uniform",
+        description="uniform：按 step 等间隔取帧；adaptive：按整帧变化量分配 rows 行，变化多处密、静止处疏",
+    )
+    rows: int = Field(default=256, ge=2, le=4096, description="adaptive：输出行数上限")
+
+
+def _frame_diffs(call: Invocation, start: int, end: int) -> np.ndarray:
+    """start..end 每帧与上一展示帧的整帧平均绝对差（与索引 L1 的 diff_prev 同一定义）。"""
+    if call.index is not None:
+        from pixelprobe.index.queries import rows_for
+        selected = rows_for(call.index, FrameRange(start=start, end=end, sample_every=1))
+        if selected is not None:
+            return np.nan_to_num(call.index.frames["diff_prev"][selected.rows], nan=0.0)
+    from pixelprobe.core.video_reader import VideoReader
+    values: list[float] = []
+    previous = None
+    with VideoReader() as reader:
+        reader.open(call.media)
+        for index, _, arr in reader.iter_frames(max(0, start - 1), end, 1):
+            if index >= start:
+                values.append(0.0 if previous is None else float(
+                    (np.maximum(arr, previous) - np.minimum(arr, previous)).mean()))
+            previous = arr
+    return np.asarray(values, dtype=np.float64)
+
+
+def _adaptive_frames(diffs: np.ndarray, start: int, rows: int) -> list[int]:
+    """按累计权重等分取帧，权重一半来自变化量占比、一半均匀分布（静止段也保留行）。
+
+    单帧剧烈变化会让多个等分点落在同一帧；去重后不足 rows 行时，反复在相邻已选帧
+    间隔最大处补中点，直到用满行数。首尾帧总是保留。
+    """
+    count = len(diffs)
+    if count <= rows:
+        return list(range(start, start + count))
+    total = float(diffs.sum())
+    change = diffs / total if total > 0 else np.zeros(count)
+    weights = 0.5 * change + 0.5 / count
+    cumulative = np.cumsum(weights)
+    targets = np.linspace(0.0, float(cumulative[-1]), rows)
+    positions = np.searchsorted(cumulative, targets, side="left").clip(0, count - 1)
+    chosen = sorted(set(int(p) for p in positions) | {0, count - 1})
+    while len(chosen) < rows:
+        gap, left = max((b - a, a) for a, b in zip(chosen, chosen[1:]))
+        if gap < 2:
+            break
+        chosen.append(left + gap // 2)
+        chosen.sort()
+    return [start + position for position in chosen]
+
+
 def _slice(kind: str):
     def run(call: Invocation) -> Outcome:
+        options: SliceOptions = call.options  # type: ignore[assignment]
         request, fixed = _slice_request(call, kind)
+        selection = request.selection
+        plain = options.source == "frames" and options.time_axis == "uniform"
+        if not plain:
+            if options.time_axis == "adaptive" and call.address.step is not None:
+                raise AddressError("adaptive 时间轴自行分配行数，地址中不能再写 step=")
+            start = selection.requested_start_frame
+            end = selection.requested_end_frame_exclusive - 1
+            if options.source == "diff" and options.time_axis == "adaptive":
+                start = max(start, 1)  # 第 0 帧没有前帧，先排除再分配行数
+            if options.time_axis == "adaptive":
+                rows = _adaptive_frames(_frame_diffs(call, start, end), start, options.rows)
+            else:
+                rows = list(range(start, end + 1, selection.sample_every))
+            if options.source == "diff":
+                rows = [frame for frame in rows if frame > 0]
+                if not rows:
+                    raise AddressError("差分切片需要至少一个有前一帧的帧（第 0 帧没有前帧）")
+            needed = sorted(set(rows) | ({frame - 1 for frame in rows} if options.source == "diff" else set()))
+            request = request.model_copy(update={"selection": TemporalSelection(
+                mode="indices", requested_indices=tuple(needed),
+            )})
         tensor = pixelprobe.generate(request).request_tensors[0][0]
         _progress(call)
         array = tensor.data.materialize()
-        frames = list(tensor.attributes["presentation_indices"])
-        return Outcome(
-            data={
-                "slice_type": kind,
-                "fixed_coordinate": fixed,
-                "start_frame": frames[0],
-                "end_frame": frames[-1],
-                "frame_count": len(frames),
-                "sample_every": request.selection.sample_every,
-                "space_axis": "original_x" if kind == "xt" else "original_y",
-                "time_axis": "vertical",
-                "frames": frames,
-                "times": list(tensor.attributes["timeline_timestamps_seconds"]),
-            },
-            images={"slice": lambda: array},
+        frames = [int(frame) for frame in tensor.attributes["presentation_indices"]]
+        times = list(tensor.attributes["timeline_timestamps_seconds"])
+        data: dict = {"slice_type": kind, "fixed_coordinate": fixed}
+        if not plain:
+            position = {frame: number for number, frame in enumerate(frames)}
+            picked = [position[frame] for frame in rows]
+            if options.source == "diff":
+                previous = [position[frame - 1] for frame in rows]
+                current = array[picked].astype(np.int16)
+                array = np.abs(current - array[previous].astype(np.int16)).astype(np.uint8)
+            else:
+                array = array[picked]
+            frames, times = rows, [times[index] for index in picked]
+            data.update(source=options.source, time_axis_mode=options.time_axis)
+            if options.time_axis == "adaptive":
+                data["time_axis_note"] = "行间时间间隔不均匀：变化多处取帧密、静止处疏；以 frames/times 为准"
+            if options.source == "diff":
+                data["value_definition"] = "每行 = 该帧与上一展示帧在扫描线上的逐通道绝对差（uint8）"
+        data.update(
+            start_frame=frames[0],
+            end_frame=frames[-1],
+            frame_count=len(frames),
+            sample_every=selection.sample_every if options.time_axis == "uniform" else None,
+            space_axis="original_x" if kind == "xt" else "original_y",
+            time_axis="vertical",
+            frames=frames,
+            times=times,
         )
+        return Outcome(data=data, images={"slice": lambda: array})
     return run
+
+
+# ---------------- track ----------------
+
+class TrackOptions(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    patch: int = Field(default=8, ge=2, le=64, description="跟踪块半径：模板为 (2p+1)×(2p+1) 像素")
+    search: int = Field(default=16, ge=1, le=128, description="每帧搜索半径（像素）")
+    lost_threshold: float = Field(
+        default=40.0, gt=0, le=255, description="最小平均绝对差超过此值判定跟丢并停止（亮度 0～255）",
+    )
+    strip_width: int = Field(default=64, ge=8, le=1024, description="跟随切片每行宽度（像素）")
+
+
+def _track(call: Invocation) -> Outcome:
+    from pixelprobe.core.frame_selector import resolve_range
+    from pixelprobe.core.tracker import draw_path, track_point
+    from pixelprobe.core.video_reader import VideoReader
+    options: TrackOptions = call.options  # type: ignore[assignment]
+    width, height = _size(call)
+    points = points_of(call.address, width, height)
+    if len(points) != 1:
+        raise AddressError('track 需要恰好一个起点，例如 "f=10..80 point(120,200)"')
+    with VideoReader() as reader:
+        reader.open(call.media)
+        frame_range = resolve_range(reader, **range_options(call.address))
+    result = track_point(
+        call.media, frame_range, points[0], patch=options.patch, search=options.search,
+        lost_threshold=options.lost_threshold, strip_width=options.strip_width,
+        progress=call.progress,
+        cancel_check=call.cancellation.raise_if_cancelled if call.cancellation is not None else None,
+    )
+    track = []
+    for number, (frame, time, (x, y), cost) in enumerate(
+        zip(result.frames, result.times, result.points, result.costs)
+    ):
+        dx = x - result.points[number - 1][0] if number else 0
+        dy = y - result.points[number - 1][1] if number else 0
+        track.append({"frame": frame, "time_seconds": time, "x": x, "y": y, "dx": dx, "dy": dy, "cost": cost})
+    steps = np.hypot(np.diff([p[0] for p in result.points]), np.diff([p[1] for p in result.points]))
+    duration = result.times[-1] - result.times[0]
+    end_x, end_y = result.points[-1]
+    first, strip, path_points = result.first_frame, result.strip, result.points
+    return Outcome(
+        data={
+            "start_frame": result.frames[0], "end_frame": result.frames[-1],
+            "requested_end_frame": frame_range.end,
+            "tracked_frames": len(result.frames), "lost_at": result.lost_at,
+            "start_point": {"x": result.points[0][0], "y": result.points[0][1]},
+            "end_point": {"x": end_x, "y": end_y},
+            "displacement": {"dx": end_x - result.points[0][0], "dy": end_y - result.points[0][1]},
+            "path_length_pixels": round(float(steps.sum()), 4),
+            "mean_speed_pixels_per_second": round(float(steps.sum()) / duration, 4) if duration > 0 else None,
+            "track": track,
+            "frames": result.frames,
+            "parameters": result.parameters,
+            "method": "逐帧亮度块匹配（平均绝对差最小、同分取位移最小），整数像素精度；模板每帧更新，误差可能累积",
+        },
+        images={
+            "follow": lambda: strip,
+            "path": lambda: draw_path(first, path_points),
+        },
+        refs={"track_end": f"f={result.frames[-1]} point({end_x},{end_y})"},
+        warnings=([f"第 {result.lost_at} 帧匹配误差超过 lost_threshold，已判定跟丢并停止"]
+                  if result.lost_at is not None else []),
+    )
 
 
 # ---------------- changes ----------------
@@ -556,12 +716,20 @@ TIMELINE = register(Capability(
 XT = register(Capability(
     name="xt", summary="X–T 时空切片：一整行像素随时间的变化（横轴 x，纵轴时间）",
     run=_slice("xt"), cli="xt", mcp_tool="pixelprobe_look", mcp_selector="xt",
-    address=AddressRule(_RANGE, frozenset({"row"}), step=True), image_names=("slice",),
+    address=AddressRule(_RANGE, frozenset({"row"}), step=True), options=SliceOptions,
+    image_names=("slice",),
 ))
 YT = register(Capability(
     name="yt", summary="Y–T 时空切片：一整列像素随时间的变化（横轴 y，纵轴时间）",
     run=_slice("yt"), cli="yt", mcp_tool="pixelprobe_look", mcp_selector="yt",
-    address=AddressRule(_RANGE, frozenset({"col"}), step=True), image_names=("slice",),
+    address=AddressRule(_RANGE, frozenset({"col"}), step=True), options=SliceOptions,
+    image_names=("slice",),
+))
+TRACK = register(Capability(
+    name="track", summary="点跟踪：逐帧块匹配得到轨迹、位移与速度，并生成随物体移动的跟随切片",
+    run=_track, cli="track", mcp_tool="pixelprobe_measure", mcp_selector="track",
+    address=AddressRule(_RANGE, frozenset({"point", "pid"})),
+    options=TrackOptions, image_names=("follow", "path"),
 ))
 CHANGES = register(Capability(
     name="changes", summary="相邻帧变化量与事件分段（点/区域/网格/整帧）",

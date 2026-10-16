@@ -8,6 +8,28 @@ PixelProbe fills the gaps in how AI analyzes images and videos: the AI understan
 
 > **Upgrading from 1.x?** 2.0 uses a single `--at` option for time and location, and MCP is reduced to 10 tools; old options and tool names were removed. See the mapping tables in [docs/migration-2.0.md](docs/migration-2.0.md) (Chinese).
 
+## Where It Helps
+
+When an AI looks at images and videos, it is good at saying *what* is in the picture but unreliable at saying *which frame, which millisecond, which coordinate, what value*. It also easily misses a flash that lasts one or two frames, or a faint signal that only appears across many consecutive frames. PixelProbe fills these gaps with deterministic computation, and every number traces back to a frame index, timestamp, coordinate, and parameter set.
+
+| Scenario | Questions it answers | Typical commands / tools |
+|---|---|---|
+| **UI and screen-recording testing** | Which frame does the button appear on? How many milliseconds does the animation take? Are frames dropped or frozen? Where do two screenshots differ? Is a control's color exactly right? | `find`, `changes`, `compare`, `pixel`, `track` |
+| **Helping an AI watch long videos** | Which part of a two-hour video is worth looking at? Exactly which frame and where does the change happen? | `index build`, `scan`, `find`, `sheet` |
+| **Video quality checks** | Black, white, or flash frames? Freezes, periodic flicker, moiré, block artifacts, bitrate drops? | `find`, `scan`, `spectrum`, `spectrum2d`, `streams` |
+| **Image and video forensics** | What EXIF is present (camera, capture time, lens)? Signs of recompression, inconsistent noise, C2PA credentials? Anomalous keyframes or timestamps? | `evidence`, `streams` |
+| **Hidden or faint signals** | Patterns that look like noise in one frame, slowly changing watermarks, motion-energy distribution | `reduce`, `xt` / `yt`, `spectrum` |
+
+**Practical value:**
+
+- **From "roughly" to "exactly"**: instead of "the button appears at about one second", PixelProbe reports "frame 30, 1.000 s, pixel (40,90,220)", which can go straight into a test assertion or bug report.
+- **Short problems are not missed**: a one-frame flash or a half-second stall only shows up in a frame-by-frame check; an AI sampling frames easily skips it.
+- **Saves the AI's context**: index and scan a long video first, then look only at the moments that matter instead of feeding the whole video to the model.
+- **Results can be re-checked**: formal results are saved as bundles with SHA-256 integrity records, parameters, coordinates, and provenance, so others can recompute and compare.
+- **Everything runs locally**: media is never uploaded, and MCP reads only directories you allow.
+
+**What it does not do**: it does not recognize image content, run OCR, edit or transcode media, or decide whether media is authentic. Those are left to the AI or dedicated tools; PixelProbe supplies reviewable evidence and numbers. See the [positioning document](docs/positioning.md) (Chinese).
+
 ## New in 2.0
 
 - **Unified addresses**: `--at "t=3s..5s rect(400,200,200,150)"`, `cell(C4)`, `@event1`, identical in the CLI and MCP ([docs/address.md](docs/address.md)).
@@ -107,7 +129,61 @@ pixelprobe spectrum input.mp4 --source luma
 pixelprobe flow input.mp4 --at "f=100,101" --flow-output flow.png
 ```
 
-## Example Result
+## Worked Example: A Simulated Screen Recording
+
+The repository includes a script that generates a simulated screen recording with fully defined pixel values (640×360, 30 fps, 4 seconds, lossless): a blue button appears on frame 30, the whole frame flashes white for one frame at frame 60, and a moving block stops on frames 80–109. The outputs below were produced by actually running the commands on this video, so you can reproduce each one:
+
+```bash
+python examples/make_demo_video.py demo.mkv
+```
+
+The CLI prints Chinese table labels; they are translated below, and the values are unchanged.
+
+**1. Find flash frames and freezes**
+
+```bash
+pixelprobe find demo.mkv "flash | freeze >= 0.5s"
+```
+
+```text
+Search results: 2 intervals, 120 frames analyzed (decoded)
+Name     Condition  Start  End  Start s  End s  Value
+@match1  flash      60     60   2.000    2.000  0.23046
+@match2  freeze     79     109  2.633    3.633  1.034
+```
+
+The flash is exactly on frame 60. The freeze starts at frame 79 (frame 80 onward is identical to frame 79) and lasts 1.034 seconds.
+
+**2. Which frame does the button appear on?**
+
+```bash
+pixelprobe find demo.mkv "first change in rect(240,150,160,60)"
+```
+
+```text
+Name     Condition  Start  End  Start s  End s  Value
+@match1  change     29     30   0.967    1.000  96.6667
+```
+
+The button region first changes between frames 29 and 30, so the button appears on frame 30 (1.000 s).
+
+**3. Check the button color**
+
+```bash
+pixelprobe pixel demo.mkv --at "f=30 point(300,180)"
+```
+
+```text
+Pixel query (frame 30)
+x    y    R   G   B    HEX
+300  180  40  90  220  #285ADC
+```
+
+The value matches the (40, 90, 220) defined in the generator script exactly. Add `--json` to any command for structured output that can be used directly in automated test assertions; returned names such as `@match1` can be referenced in a later command's `--at`.
+
+An AI calling through MCP uses the same syntax, for example `pixelprobe_find(media_path="demo.mkv", query="flash | freeze >= 0.5s")`; parity tests guarantee identical CLI and MCP results.
+
+## Example Result: Digits Hidden in Noise
 
 The short video below contains low-contrast digits obscured by strong noise. A single frame is difficult to interpret reliably, but aggregating consecutive frame intervals makes the time-varying digit structure much clearer:
 
@@ -190,6 +266,16 @@ MCP provides 10 tools that together cover every CLI feature (see the mapping in 
 For images, the response separately describes stored sample channels, the RGB channels used for deterministic analysis, and the visual PNG channels. It also reports palette usage, complete alpha statistics, and candidates for regular high-frequency textures. A texture candidate includes the analyzed coverage, period, and correlation evidence. It is only a prompt for agent review and is never presented as confirmed compression, corruption, or manipulation.
 
 Images returned to the agent carry original-coordinate rulers, can overlay an 8×6 grid (`grid=true`; cell names can be used directly as `cell(C4)`), and are scaled to `max_side`; the scale factors are included in the response. Previews are for locating things only — read exact values with `pixelprobe_measure`. Operations that write Bundles (evidence, workflows, representation generation) write only to the controlled Artifact directory and never overwrite an existing result.
+
+### Memory Use
+
+Memory is sized automatically from the machine, so usually nothing needs configuring: the total budget is the smaller of half the physical memory and 70% of the memory free at startup, and each task may use up to "total budget ÷ number of workers". A machine with 32 GB of RAM gets about 8 GB, enough to analyze 2K and 4K video directly.
+
+- To cap or fix the amount, set `PIXELPROBE_MAX_MEMORY_MB` (shared by the CLI and MCP) or `PIXELPROBE_MCP_TOTAL_MEMORY_MB` (MCP only); plugin users fill in the plugin's memory-budget setting.
+- A task that fails for lack of memory waits for other tasks to finish and is rerun once with the whole budget; the job status field `memory_retry` records why.
+- When free system memory is very low, heavy tasks wait before starting so the computer is not slowed down.
+
+See [resource control](docs/resource-control.md) (Chinese) for details.
 
 ### Updating MCP
 
@@ -279,6 +365,40 @@ Results can be written as:
 - Bundle: Data, Preview, coordinate mappings, source identity, ExecutionPlan, execution events, provenance, and integrity records.
 
 Preview is display-only and never replaces or resizes Data. Clearing the local cache never deletes a Bundle.
+
+## Running the Tests
+
+Install the development dependencies from source and run the full suite (about 600 tests, roughly two minutes on a typical computer):
+
+```bash
+python -m pip install -e ".[dev,mcp,flow,storage,evidence]"
+python -m pytest
+```
+
+To run only part of it, pass a file or a keyword, for example:
+
+```bash
+python -m pytest tests/test_capability_parity.py
+python -m pytest -k "memory_retry"
+```
+
+What the main test files cover:
+
+| Test file | What it checks |
+|---|---|
+| `test_capability_parity.py` | Every feature works in both the CLI and MCP, with identical values for the same input |
+| `test_resource_enforcement.py`, `test_mcp_jobs.py`, `test_mcp_worker.py` | Memory and disk budgets, timeouts, cancellation, retry after failure, worker cleanup |
+| `test_error_semantics.py` | Clear error codes for missing, corrupt, or duplicate-output cases |
+| `test_evidence.py`, `test_c2pa_real.py` | EXIF, ELA, noise, and C2PA signature verification |
+| `test_v10_generate.py`, `test_v08_bundle.py` | Structure, integrity, and values of the unified representation engine and result bundles |
+
+After changing computation logic, also confirm that CLI output still matches the numeric baseline:
+
+```bash
+python scripts/capture_golden.py --check
+```
+
+It passes when every case matches the baseline. If expected values genuinely need to change, refresh them with `--write` and explain why in the commit message.
 
 ## License
 

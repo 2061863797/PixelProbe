@@ -11,6 +11,31 @@ PixelProbe 补齐 AI 分析图片和视频的短板：AI 负责看懂画面内�
 > **从 1.x 升级？** 2.0 统一用 `--at` 写时间与位置，MCP 精简为 10 个工具，旧参数与旧工具名均已删除。
 > 对照表见 [迁移到 2.0](docs/migration-2.0.md)。
 
+## 能用在哪些地方
+
+AI 看图看视频时，擅长说出"画面里是什么"，但说不准"第几帧、第几毫秒、哪个坐标、什么数值"，
+也容易漏掉只持续一两帧的闪烁、只在连续多帧里才显现的微弱信号。PixelProbe 用确定性计算补上这些，
+每个数字都能追溯到帧号、时间、坐标和参数。
+
+| 场景 | 能回答的问题 | 常用命令 / 工具 |
+|---|---|---|
+| **软件界面与录屏测试** | 按钮在第几帧出现？动画持续了多少毫秒？有没有掉帧、卡住？两张截图哪里不一样？某个控件的颜色值对不对？ | `find`、`changes`、`compare`、`pixel`、`track` |
+| **帮 AI 看长视频** | 两小时的视频先看哪一段？这一段里变化发生在哪一帧、哪个位置？ | `index build`、`scan`、`find`、`sheet` |
+| **视频质量检查** | 有没有黑帧、白帧、闪帧、冻结、周期闪烁、摩尔纹、压缩块、码率骤降？ | `find`、`scan`、`spectrum`、`spectrum2d`、`streams` |
+| **图片与视频取证** | 有哪些 EXIF（相机、拍摄时间、镜头）？有没有重压缩、噪声不一致、C2PA 签名？关键帧和时间戳是否异常？ | `evidence`、`streams` |
+| **隐藏或微弱信号** | 单帧看像噪声的图案、慢变水印、运动能量分布 | `reduce`、`xt` / `yt`、`spectrum` |
+
+**实际作用：**
+
+- **把"大概"变成"精确"**：人眼或 AI 说"按钮大约 1 秒时出现"，PixelProbe 给出"第 30 帧、1.000 秒、像素 (40,90,220)"，可以写进测试断言或缺陷报告。
+- **不漏掉短暂问题**：1 帧的闪白、0.5 秒的卡顿，逐帧检查才能发现，AI 抽帧浏览很容易错过。
+- **省 AI 的上下文**：长视频先用索引和扫描找到值得看的时刻，再只看那几帧，不用把整段视频喂给模型。
+- **结果可复核**：正式结果保存为带 SHA-256 校验的结果包，记录参数、坐标和来源，别人可以重算核对。
+- **全部本地运行**：媒体文件不上传，MCP 只读取你允许的目录。
+
+**不做的事**：不识别画面内容、不做 OCR、不剪辑转码，也不自动判定真伪——这些交给 AI 或专门工具，
+PixelProbe 只提供可复核的证据和数值。详见[定位与路线图](docs/positioning.md)。
+
 ## 2.0 新增
 
 - **统一地址**：`--at "t=3s..5s rect(400,200,200,150)"`、`cell(C4)`、`@event1`，命令行与 MCP 写法相同（[地址写法](docs/address.md)）。
@@ -123,7 +148,63 @@ pixelprobe spectrum input.mp4 --source luma
 pixelprobe flow input.mp4 --at "f=100,101" --flow-output flow.png
 ```
 
-## 示例效果
+## 实测示例：模拟录屏
+
+仓库自带一个脚本，生成一段像素值完全确定的模拟录屏（640×360、30 帧/秒、4 秒、无损编码）：
+第 30 帧出现蓝色按钮，第 60 帧整帧闪白 1 帧，一个移动方块在第 80～109 帧停住不动。
+下面的输出都是对这段视频实际运行得到的，你可以逐条复现：
+
+```bash
+python examples/make_demo_video.py demo.mkv
+```
+
+**1. 找闪帧和画面卡住**
+
+```bash
+pixelprobe find demo.mkv "flash | freeze >= 0.5s"
+```
+
+```text
+搜索结果：2 个区间，分析 120 帧（解码）
+编号     条件    起始帧  结束帧  起始秒  结束秒  值
+@match1  flash   60      60      2.000   2.000   0.23046
+@match2  freeze  79      109     2.633   3.633   1.034
+```
+
+闪白恰好在第 60 帧；卡住从第 79 帧开始（第 80 帧起与第 79 帧完全相同），持续 1.034 秒。
+
+**2. 按钮在第几帧出现**
+
+```bash
+pixelprobe find demo.mkv "first change in rect(240,150,160,60)"
+```
+
+```text
+编号     条件    起始帧  结束帧  起始秒  结束秒  值
+@match1  change  29      30      0.967   1.000   96.6667
+```
+
+按钮区域在第 29→30 帧之间第一次变化，即第 30 帧（1.000 秒）出现。
+
+**3. 核对按钮颜色**
+
+```bash
+pixelprobe pixel demo.mkv --at "f=30 point(300,180)"
+```
+
+```text
+像素查询（帧 30）
+x    y    R   G   B    HEX
+300  180  40  90  220  #285ADC
+```
+
+读出的值与生成脚本里定义的 (40, 90, 220) 完全一致。所有命令加 `--json` 即得到结构化结果，
+可直接用于自动化测试断言；返回的 `@match1` 等编号可在下一条命令的 `--at` 里引用。
+
+AI 通过 MCP 调用时写法相同，例如 `pixelprobe_find(media_path="demo.mkv", query="flash | freeze >= 0.5s")`，
+CLI 与 MCP 的结果由对等测试保证一致。
+
+## 示例效果：噪声中的隐藏数字
 
 下面的短视频包含被强噪声遮盖的低对比度数字。单看某一帧很难稳定判断，按连续帧区间
 聚合后，随时间变化的数字结构会更加明显：
@@ -237,6 +318,17 @@ MCP 共 10 个工具，覆盖命令行的全部功能（对照表见 [MCP 工具
 请用 `pixelprobe_measure` 读取。写结果包的操作（证据、组合流程、表示生成）只能写入受控
 Artifact 目录且不覆盖已有结果。
 
+### 内存使用
+
+默认按本机内存自动分配，一般不用设置：总预算取物理内存的一半与启动时空闲内存 70% 中较小者，
+每个任务最多用到"总预算 ÷ 工作进程数"。例如 32 GB 内存的电脑约分到 8 GB，2K、4K 视频可直接分析。
+
+- 想限制或固定用量时，设置 `PIXELPROBE_MAX_MEMORY_MB`（CLI 与 MCP 共用）或 `PIXELPROBE_MCP_TOTAL_MEMORY_MB`（只管 MCP）；插件用户在插件设置里填写"媒体分析内存总预算"。
+- 任务因内存不足失败时，会等其他任务结束后用整份预算自动重跑一次；任务状态的 `memory_retry` 记录了原因。
+- 整机空闲内存过低时，重任务会暂停启动，避免拖慢电脑。
+
+细节见[资源控制](docs/resource-control.md)。
+
 ### 更新 MCP
 
 更新 PixelProbe 后，MCP 客户端必须重启服务器进程才会加载新版本。若使用克隆的仓库：
@@ -329,6 +421,40 @@ pixelprobe info input.mp4 --json
   provenance 和完整性校验。
 
 Preview 只用于显示，不会替代或缩小 Data。清理本机缓存不会删除任何 Bundle。
+
+## 运行测试
+
+从源码安装开发依赖后运行全部测试（约 600 项，普通电脑约 2 分钟）：
+
+```bash
+python -m pip install -e ".[dev,mcp,flow,storage,evidence]"
+python -m pytest
+```
+
+只跑某一部分时指定文件或关键字，例如：
+
+```bash
+python -m pytest tests/test_capability_parity.py
+python -m pytest -k "memory_retry"
+```
+
+测试覆盖的重点：
+
+| 测试文件 | 检查什么 |
+|---|---|
+| `test_capability_parity.py` | 每项功能 CLI 与 MCP 都能用，且同一输入得到相同数值 |
+| `test_resource_enforcement.py`、`test_mcp_jobs.py`、`test_mcp_worker.py` | 内存与磁盘预算、超时、取消、失败重试、工作进程回收 |
+| `test_error_semantics.py` | 文件不存在、损坏、输出重名等情况给出明确错误码 |
+| `test_evidence.py`、`test_c2pa_real.py` | EXIF、ELA、噪声、C2PA 签名验证 |
+| `test_v10_generate.py`、`test_v08_bundle.py` | 统一表示引擎与结果包的结构、校验和数值 |
+
+修改计算逻辑后，还要确认命令行输出与数值基线一致：
+
+```bash
+python scripts/capture_golden.py --check
+```
+
+输出"全部与基线一致"即通过；确需改变期望值时用 `--write` 刷新，并在提交说明中写明原因。
 
 ## 开源许可
 

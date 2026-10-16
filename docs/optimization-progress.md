@@ -1,8 +1,28 @@
 # 优化实施检查点
 
-## 当前状态：2026-10-15 2.0 重构阶段 5（一）：find 搜索语言
+## 当前状态：2026-10-16 2.0 重构阶段 6：Claude Code 与 Codex 插件
 
-本节优先于下方历史检查点。阶段 5 按小项分别提交。
+本节优先于下方历史检查点。
+
+- 先查官方文档确认格式（code.claude.com 插件清单与市场参考；developers.openai.com Codex 插件构建页、
+  openai/plugins 官方示例、agent-plugins.org MCP schema）。
+- 新增 `plugins/pixelprobe/`：Claude Code 清单 `.claude-plugin/plugin.json` + `.mcp.json`（`userConfig.media_roots`
+  传入允许目录）；Codex 便携清单 `plugin.json` + `mcp.json`，以及兼容层 `.codex-plugin/plugin.json` + `codex-mcp.json`；
+  5 个 Skill（pixelprobe-core、ui-recording、long-video、quality、forensics）。仓库根目录新增
+  `.claude-plugin/marketplace.json` 与 `.agents/plugins/marketplace.json`。启动命令固定 `v2.0.0` 标签。
+- 实测发现：Codex 0.162.1 读的是兼容层（`.codex-plugin` + 旧格式 MCP 文件），不读根目录便携 `mcp.json`；
+  且插件 MCP 服务与用户手动配置的同名服务冲突时会被整个遮住。因此 Codex 侧服务名改为 `pixelprobe-plugin`，
+  两种格式都提供。
+- 验证：`claude plugin validate` 插件与市场均通过；`claude plugin details` 识别 5 Skill + 1 MCP（常驻约 460 token）；
+  Codex 本地市场安装后会话中 5 个 Skill 与 10 个工具全部出现。测试后卸载并确认 `config.toml` 与备份一致。
+  新增 `tests/test_plugin_manifest.py`（版本、启动命令、Skill 名与工具名一致性）。全量 **549 passed、0 skipped**。
+- 未执行：`v2.0.0` 标签的 uvx 冷启动（发布时创建标签）；Claude Code 命令行会话内实际调用（本机 CLI 登录过期，
+  未代为登录）；Codex 中工具调用被测试时设置的"禁止审批"策略拦下，只验证到工具加载；macOS/Linux。
+  按项目规则，阶段 6 标记为"配置完成"，不是"验收通过"。
+
+## 历史状态：2026-10-15 2.0 重构阶段 5（一）：find 搜索语言
+
+阶段 5 按小项分别提交。
 
 - 新增 `pixelprobe.find`（解析 + 求值）与能力 `find`：CLI `pixelprobe find <视频> "<语句>"`，
   MCP `pixelprobe_find query=...`。条件：black/white/flat、flash、cut、duplicate、freeze、gap、

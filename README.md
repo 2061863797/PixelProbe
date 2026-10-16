@@ -182,6 +182,9 @@ pixelprobe generate input.mp4 --request request.json --output result.bundle \
 
 ## AI Agent 接入 MCP
 
+**最简单的方式是安装插件**：Claude Code 与 Codex 都可以直接从本仓库安装，插件包含 MCP 服务和
+5 个场景 Skill（录屏 UI、长视频、质量、取证与通用打法），见 [插件安装](docs/plugins.md)。下面是手动配置方式。
+
 PixelProbe MCP 是现有 Python 核心的薄适配层，不会复制或改变分析算法。它通过
 本地 `stdio` 工作：Agent 负责理解人物、物体、文字、场景和构图；PixelProbe
 负责核实帧号、时间、坐标、像素、区域统计、变化候选和正式数值表示。

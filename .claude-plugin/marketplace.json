@@ -1,0 +1,16 @@
+{
+  "name": "pixelprobe",
+  "description": "PixelProbe：本地确定性图片/视频分析插件",
+  "owner": {
+    "name": "PixelProbe",
+    "url": "https://github.com/2061863797/PixelProbe"
+  },
+  "plugins": [
+    {
+      "name": "pixelprobe",
+      "source": "./plugins/pixelprobe",
+      "description": "给 AI 补上帧号、时间、坐标、像素数值、变化定位与取证线索（MCP + 场景 Skill）",
+      "category": "development"
+    }
+  ]
+}

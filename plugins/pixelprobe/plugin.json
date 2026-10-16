@@ -1,0 +1,26 @@
+{
+  "name": "pixelprobe",
+  "version": "2.0.0",
+  "description": "本地确定性图片/视频分析：给 AI 补上帧号、时间、坐标、像素数值、变化定位与取证线索（MCP + 场景 Skill）",
+  "author": {
+    "name": "PixelProbe"
+  },
+  "homepage": "https://github.com/2061863797/PixelProbe",
+  "repository": "https://github.com/2061863797/PixelProbe",
+  "license": "Apache-2.0",
+  "keywords": ["video", "image", "pixel", "forensics", "screen-recording", "mcp"],
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "PixelProbe",
+        "shortDescription": "精确核实图片/视频的帧号、坐标、像素和变化",
+        "longDescription": "AI 负责看懂画面，PixelProbe 负责测量：带坐标刻度的画面、像素与区域数值、变化与事件定位（黑帧、闪帧、切换、卡顿、动画时长）、时空切片与点跟踪、码流结构与图片取证线索。全部在本机运行，只读取允许目录内的文件。",
+        "developerName": "PixelProbe",
+        "category": "Developer Tools",
+        "capabilities": [],
+        "websiteURL": "https://github.com/2061863797/PixelProbe",
+        "defaultPrompt": ["用 PixelProbe 检查这个视频里画面卡住和闪烁的时刻"]
+      }
+    }
+  }
+}

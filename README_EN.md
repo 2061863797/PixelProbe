@@ -153,6 +153,8 @@ pixelprobe generate input.mp4 --request request.json --output result.bundle \
 
 ## Connecting an AI Agent through MCP
 
+**The easiest way is the plugin**: both Claude Code and Codex can install it straight from this repository. It bundles the MCP server with five scenario Skills (UI recordings, long videos, quality, forensics, and the general workflow); see [docs/plugins.md](docs/plugins.md). Manual configuration follows.
+
 PixelProbe MCP is a thin adapter over the existing Python core; it neither copies nor changes the analysis algorithms. It communicates locally over `stdio`. The agent interprets people, objects, text, scenes, and composition, while PixelProbe verifies frame numbers, timestamps, coordinates, pixels, regional statistics, change candidates, and exact numeric representations.
 
 Add the local server to an MCP-compatible agent:

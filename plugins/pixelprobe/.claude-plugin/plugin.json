@@ -1,0 +1,21 @@
+{
+  "name": "pixelprobe",
+  "displayName": "PixelProbe",
+  "version": "2.0.0",
+  "description": "本地确定性图片/视频分析：给 AI 补上帧号、时间、坐标、像素数值、变化定位与取证线索（MCP + 场景 Skill）",
+  "author": {
+    "name": "PixelProbe"
+  },
+  "homepage": "https://github.com/2061863797/PixelProbe",
+  "repository": "https://github.com/2061863797/PixelProbe",
+  "license": "Apache-2.0",
+  "keywords": ["video", "image", "pixel", "forensics", "screen-recording", "mcp"],
+  "userConfig": {
+    "media_roots": {
+      "type": "string",
+      "title": "允许分析的媒体目录",
+      "description": "PixelProbe 只读取这些目录内的文件；多个目录在 Windows 用分号分隔、在 macOS/Linux 用冒号分隔。留空表示只允许当前项目目录。",
+      "default": ""
+    }
+  }
+}

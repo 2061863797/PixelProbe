@@ -1,0 +1,14 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+  "mcpServers": {
+    "pixelprobe-plugin": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": [
+        "--python", "3.12",
+        "--from", "pixelprobe[mcp] @ git+https://github.com/2061863797/PixelProbe.git@v2.0.0",
+        "pixelprobe-mcp"
+      ]
+    }
+  }
+}

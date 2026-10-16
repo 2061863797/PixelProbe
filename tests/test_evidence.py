@@ -60,7 +60,47 @@ def test_mcp_evidence_reports_actual_unavailable_reason(tmp_path, monkeypatch, r
     result, _ = service.run_capability(CapabilityInput(capability="evidence", media_path=str(source)))
     assert any(reason in warning for warning in result.warnings)
     assert all("未安装" not in warning for warning in result.warnings)
-    assert "exif" not in result.data["metadata"] and "exif_fields" in result.data["metadata"]
+    assert result.data["metadata"]["exif"] == {} and result.data["metadata"]["gps_present"] is False
+
+
+def _photo_with_exif(path: Path) -> None:
+    from PIL import ExifTags
+    exif = Image.Exif()
+    exif[ExifTags.Base.Make] = "TestCam"
+    exif[ExifTags.Base.Model] = "Model X"
+    sub = exif.get_ifd(ExifTags.IFD.Exif)
+    sub[ExifTags.Base.DateTimeOriginal] = "2026:10:01 08:30:00"
+    sub[ExifTags.Base.LensModel] = "50mm F1.8"
+    sub[ExifTags.Base.MakerNote] = b"\x00" * 600
+    gps = exif.get_ifd(ExifTags.IFD.GPSInfo)
+    gps[ExifTags.GPS.GPSLatitudeRef] = "N"
+    gps[ExifTags.GPS.GPSLatitude] = (31.0, 14.0, 0.0)
+    Image.new("RGB", (32, 32), (90, 90, 90)).save(path, exif=exif, quality=90)
+
+
+def test_evidence_returns_exif_values_and_hides_gps_by_default(tmp_path):
+    """回归：MCP 曾只返回 EXIF 字段名；现在 CLI 与 MCP 都返回值（含 Exif 子目录），GPS 需显式开启。"""
+    from pixelprobe_mcp.config import ServerConfig
+    from pixelprobe_mcp.models import CapabilityInput
+    from pixelprobe_mcp.service import PixelProbeService
+    source = tmp_path / "photo.jpg"
+    _photo_with_exif(source)
+    service = PixelProbeService(ServerConfig((tmp_path,), tmp_path / "artifacts"))
+    result, _ = service.run_capability(CapabilityInput(capability="evidence", media_path=str(source)))
+    metadata = result.data["metadata"]
+    assert metadata["exif"]["Model"] == "Model X"
+    assert metadata["exif"]["DateTimeOriginal"] == "2026:10:01 08:30:00"
+    assert metadata["exif"]["LensModel"] == "50mm F1.8"
+    assert "MakerNote" in metadata["exif_omitted_fields"] and "MakerNote" not in metadata["exif"]
+    assert metadata["gps_present"] is True and "gps" not in metadata
+    assert any("include_gps" in warning for warning in result.warnings)
+    shown, _ = service.run_capability(CapabilityInput(
+        capability="evidence", media_path=str(source), options={"include_gps": True},
+    ))
+    assert shown.data["metadata"]["gps"]["GPSLatitudeRef"] == "N"
+    # 写入结果包的完整报告保留 GPS 与 MakerNote，不受返回值裁剪影响
+    full = analyze_evidence(source, output_path=tmp_path / "full.bundle").report["metadata"]
+    assert full["gps"]["GPSLatitudeRef"] == "N" and "MakerNote" in full["exif"]
 
 
 def test_c2pa_adapter_separates_validation_failure_from_unknown_trust(

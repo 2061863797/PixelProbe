@@ -26,6 +26,9 @@ def evidence(
     c2pa_trust_anchors: Optional[Path] = typer.Option(
         None, "--c2pa-trust-anchors", help="替换 SDK 默认信任锚的 PEM 文件，最大 64 KiB",
     ),
+    include_gps: bool = typer.Option(
+        False, "--include-gps", help="输出 GPS 位置字段（默认只报告是否存在）",
+    ),
     json_mode: bool = JSON_OPT,
     quiet: bool = QUIET_OPT,
     verbose: bool = VERBOSE_OPT,
@@ -47,7 +50,7 @@ def evidence(
             outcome = run_capability(
                 "evidence", media, None, None,
                 {"jpeg_quality": jpeg_quality, "block_size": block_size,
-                 "c2pa_trust_anchors_pem": trust_pem},
+                 "c2pa_trust_anchors_pem": trust_pem, "include_gps": include_gps},
                 output_path=target, progress=update,
             )
         report = outcome.data
@@ -61,6 +64,8 @@ def evidence(
         print_kv("证据分析", [
             ("结果包", bundle.root),
             ("EXIF 条目", report["metadata"].get("exif_entry_count", 0)),
+            ("GPS 位置", ("已输出" if "gps" in report["metadata"] else "存在（加 --include-gps 输出）")
+             if report["metadata"].get("gps_present") else "无"),
             ("C2PA", report["c2pa"]["verification_state"]),
             ("ELA", report["ela"]["status"]),
             ("噪声一致性", report["noise_consistency"]["status"]),

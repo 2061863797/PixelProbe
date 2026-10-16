@@ -145,7 +145,8 @@ class ServerConfig:
             raise ValueError("MCP queue_size 必须在 0～256 之间")
 
         def _positive_int(value: int | None, env_name: str, default: int) -> int:
-            raw = value if value is not None else os.environ.get(env_name, str(default))
+            # 插件把留空的配置项传成空字符串，按未设置处理
+            raw = value if value is not None else (os.environ.get(env_name) or "").strip() or str(default)
             try:
                 parsed = int(raw)
             except (TypeError, ValueError) as exc:
@@ -154,9 +155,13 @@ class ServerConfig:
                 raise ValueError(f"{env_name} 必须为正整数")
             return parsed
 
+        # 显式参数 > 字节数 > MB（便于插件配置）> 按本机内存自动（物理内存一半与空闲 70% 取小）
+        from pixelprobe.utils.resource_budget import machine_memory_budget
+        default_memory = _positive_int(
+            None, "PIXELPROBE_MCP_TOTAL_MEMORY_MB", max(1, machine_memory_budget() // (1024 * 1024)),
+        ) * 1024 * 1024
         memory_budget = _positive_int(
-            total_memory_bytes, "PIXELPROBE_MCP_TOTAL_MEMORY_BYTES",
-            512 * 1024 * 1024,
+            total_memory_bytes, "PIXELPROBE_MCP_TOTAL_MEMORY_BYTES", default_memory,
         )
         temporary_budget = _positive_int(
             total_temporary_bytes, "PIXELPROBE_MCP_TOTAL_TEMPORARY_BYTES",
@@ -170,7 +175,14 @@ class ServerConfig:
         )
 
     def resolve_file(self, value: str) -> Path:
-        path = Path(value).expanduser().resolve(strict=True)
+        # 先按白名单判断再报"不存在"，避免借错误码探测白名单外的文件是否存在
+        self._require_allowed(Path(value).expanduser().resolve(strict=False))
+        try:
+            path = Path(value).expanduser().resolve(strict=True)
+        except FileNotFoundError as exc:
+            from pixelprobe.models.errors import MediaNotFoundError
+            # 工作进程错误不回显调用方传入的路径或文件名
+            raise MediaNotFoundError("输入文件不存在", hint="请检查路径拼写") from exc
         if not path.is_file():
             raise PathAccessError(f"不是可读文件：{value}")
         self._require_allowed(path)
@@ -277,7 +289,11 @@ class ServerConfig:
         if target.is_symlink() or _is_reparse_point(target):
             raise PathAccessError("Artifact 输出目标不能是链接或重解析点")
         if target.exists():
-            raise PathAccessError("Artifact 输出名称已存在；请换一个 output_name")
+            # 与 CLI 相同的错误码；这不是白名单问题，不能报 PATH_NOT_ALLOWED
+            from pixelprobe.artifacts.errors import BundleTargetExistsError
+            raise BundleTargetExistsError(
+                f"输出名称已存在：{name}", hint="换一个 output_name，或省略它让服务自动命名",
+            )
         return target
 
     def _require_allowed(self, path: Path) -> None:

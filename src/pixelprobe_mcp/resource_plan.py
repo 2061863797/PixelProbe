@@ -6,14 +6,74 @@ from pixelprobe.utils.resource_budget import EVIDENCE_BYTES_PER_PIXEL
 MIB = 1024 * 1024
 RUNTIME_BYTES = 128 * MIB
 CONTROL_BYTES = 4 * MIB
+VIDEO_DECODE_BYTES_PER_PIXEL = 72
+SEQUENTIAL_DECODE_BYTES_PER_PIXEL = 88
+# 时间聚合的 float64 工作集倍数，与引擎 _reduce 的预检一致；中位数/百分位需整段物化
+_REDUCE_WORKING_MULTIPLIERS = {"min": 2, "max": 2, "mean": 3, "diff": 4, "rms": 4, "std": 5}
+
+
+def _rect_area(rect, pixels: int) -> int:
+    return int(rect[2]) * int(rect[3]) if rect else pixels
+
+
+def _representation_cost(request, info, pixels: int, stored: int) -> tuple[int, int, int]:
+    """返回（结果数值字节、解码之外的分析内存、预览字节基数）。
+
+    已知特征按其真实数据流估算：切片只保留几何采样，时间聚合流式累加，
+    光流和二维频谱只处理一对帧/一张图；未知特征（generate 的任意请求）沿用保守的全分辨率模型。
+    """
+    feature = request.feature.name
+    config = request.feature.config
+    representation = request.representation
+    if representation in {"xt", "yt", "roi_t", "points_t", "path_t"}:
+        if representation == "xt":
+            samples = info.width
+        elif representation == "yt":
+            samples = info.height
+        elif representation == "roi_t":
+            samples = 1
+        else:
+            samples = int(config.get("sample_count", config.get("point_count", pixels)))
+        values = stored * samples * (3 if feature == "rgb" else 32)
+        return values, values * (2 if feature == "rgb" else 4), values
+    if representation == "frames" and request.reduction is not None and feature == "rgb":
+        area = _rect_area(request.reduction.config.get("rect"), pixels)
+        operation = request.reduction.name
+        multiplier = _REDUCE_WORKING_MULTIPLIERS.get(operation, stored + 1)
+        # float64 工作集 + 共享帧存储写入与回读的映射页
+        working = area * 3 * 8 * multiplier + stored * pixels * 3 * 2
+        return area * 3 * 8, working, area * 3
+    if representation == "feature_t" and feature == "temporal_fft":
+        values = stored * _rect_area(config.get("rect"), 1) * 8
+        return values, values * 16, 0
+    if representation == "feature_t" and feature == "farneback":
+        # 两帧灰度、二通道 float32 光流场、幅值与预览；累积模式额外保留累加场
+        return pixels * 8, pixels * (80 if config.get("accumulate") else 64), 0
+    if representation == "feature_t" and feature == "spatial_fft":
+        area = _rect_area(config.get("rect"), pixels)
+        return area * 8, area * 48, 0
+    values = stored * pixels * (3 if feature == "rgb" else 32)
+    extra = values * (4 if request.reduction or feature != "rgb" else 2)
+    if feature in {"flow", "farneback"}:
+        extra += pixels * 128
+    if "fft" in feature or "frequency" in feature or feature == "stft":
+        extra += values * 16
+    return values, extra, values
 
 
 def media_plan(operation, info, payload):
     pixels = info.width * info.height
     decoded, stored, full_scan = 1, 1, False
     # 原生解码、RGB 转换、数组副本及算子浮点工作区。
-    # evidence 用实测峰值校准的系数；inspect_media 尚未实测，保持原保守值
-    per_pixel = {"evidence": EVIDENCE_BYTES_PER_PIXEL, "inspect_media": 128}.get(operation, 32)
+    # evidence 用实测峰值校准的系数；inspect_media 尚未实测，保持原保守值；
+    # 视频解码含解码器参考帧与格式转换缓冲；无缓存时实测 1080p/4K 扣除运行时余量后约 56～60 字节/像素，取 72 留余量
+    default_per_pixel = VIDEO_DECODE_BYTES_PER_PIXEL if info.media_type == "video" else 32
+    if operation == "find_changes" and info.media_type == "video":
+        # 顺序扫描同时保留上一帧和多项逐帧统计的工作数组；实测 2K/4K 约 70 字节/像素
+        default_per_pixel = SEQUENTIAL_DECODE_BYTES_PER_PIXEL
+    per_pixel = {"evidence": EVIDENCE_BYTES_PER_PIXEL, "inspect_media": 128}.get(
+        operation, default_per_pixel,
+    )
     memory = pixels * per_pixel
     disk = 0
     if operation == "generate_representation":
@@ -38,30 +98,19 @@ def media_plan(operation, info, payload):
         if stored is None:
             return {"estimate_kind": "unknown_frame_count", "full_scan": True,
                     "decoded_frames_upper_bound": None, "stored_frames_estimate": None}
-        feature = request.feature.name
-        # frames/颜色/光流可能保留全分辨率浮点结果。切片按实际几何维度估算。
-        if request.representation == "xt":
-            samples = info.width
-        elif request.representation == "yt":
-            samples = info.height
-        elif request.representation == "roi_t":
-            samples = 1
-        elif request.representation in {"points_t", "path_t"}:
-            samples = int(request.feature.config.get("sample_count",
-                          request.feature.config.get("point_count", pixels)))
-        else:
-            samples = pixels
-        values = stored * samples * (3 if feature == "rgb" else 32)
+        values, extra, preview = _representation_cost(request, info, pixels, stored)
         # 帧 mmap、缓存复制、持久化副本和 PNG/元数据均计入；运行时按真实编码字节复核。
         frames = stored * pixels * 3 + (pixels * 8 if info.media_type == "image" else 0)
         disk = frames + values * 4 + 4 * MIB
-        memory += values * (4 if request.reduction or feature != "rgb" else 2)
+        if request.reduction is not None or request.representation == "feature_t":
+            # 整段帧作为中间结果供下游计算时会落到临时文件（引擎自动外溢），再占一份帧空间
+            disk += stored * pixels * 3
+        memory += extra
+        if info.media_type == "video" and request.reduction is None:
+            # 共享帧存储写入时驻留的映射页；实测 4K 切片比单帧多约 8 帧 RGB（时间聚合已单独计入回读）
+            memory += min(stored, 8) * pixels * 3
         if request.output.include_preview:
-            memory += values * 8
-        if feature in {"flow", "farneback"}:
-            memory += pixels * 128
-        if "fft" in feature or "frequency" in feature or feature == "stft":
-            memory += values * 16
+            memory += preview * 8
     elif operation == "evidence":
         disk = pixels * 48 + 4 * MIB
     elif operation in {"find_changes", "inspect_media"} and info.media_type == "video":
@@ -179,7 +228,8 @@ def plan_capability(config, payload: dict) -> dict:
             ))
         pixels = sum(item_info.width * item_info.height for item_info in infos)
         count = decoded // sample_every + 1
-        memory = pixels * 96 + count * 2048
+        # 实测 quality_overview 在 720p～4K 上分析内存约 110～115 字节/像素（扣除运行时余量）
+        memory = pixels * 132 + count * 2048
         return {
             "estimate_kind": "bounded_streaming_workflow", "full_scan": False,
             "decoded_frames_upper_bound": decoded * len(infos),
@@ -199,7 +249,8 @@ def plan_capability(config, payload: dict) -> dict:
     if name == "index_build":
         pixels = info.width * info.height
         frames = info.frame_count or 0
-        memory = pixels * 24 + MCP_INDEX_THUMB_BUDGET_BYTES + frames * 256
+        # 建索引同样顺序解码全分辨率帧，按顺序扫描系数估算
+        memory = pixels * SEQUENTIAL_DECODE_BYTES_PER_PIXEL + MCP_INDEX_THUMB_BUDGET_BYTES + frames * 256
         return {
             "estimate_kind": "index_full_sequential_scan", "full_scan": True,
             "decoded_frames_upper_bound": None, "decoded_frames_per_pass_estimate": frames,

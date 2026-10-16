@@ -27,6 +27,7 @@ from pixelprobe.artifacts.zarr_io import ZarrArrayHandle, save_array_handle_zarr
 from pixelprobe.artifacts.errors import (
     ArtifactChecksumMismatchError,
     ArtifactFileMissingError,
+    ArtifactNotFoundError,
     ArtifactSchemaMismatchError,
     BundleManifestInvalidError,
     BundleManifestMissingError,
@@ -601,7 +602,11 @@ class Bundle:
         for record in self.manifest.artifacts:
             if record.artifact_id == artifact_id:
                 return record
-        raise KeyError(artifact_id)
+        raise ArtifactNotFoundError(
+            f"结果包中没有 artifact：{artifact_id}",
+            object_id=artifact_id,
+            hint="请使用结果包 manifest 中登记的 artifact_id（MCP 可用 pixelprobe_bundle 的 list 查看）",
+        )
 
     def open_tensor(self, artifact_id: str) -> TensorField:
         data_record = self.artifact(artifact_id)

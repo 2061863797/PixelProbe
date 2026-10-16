@@ -19,6 +19,39 @@ _current: ContextVar[ResourceBudget | None] = ContextVar("pixelprobe_budget", de
 # 取 80 留约 14% 边际；CLI 预检与 MCP 执行计划共用此值，避免两侧估算再次不一致
 EVIDENCE_BYTES_PER_PIXEL = 80
 
+MEMORY_BUDGET_ENV = "PIXELPROBE_MAX_MEMORY_MB"
+MIN_MEMORY_BUDGET_BYTES = 256 * 1024 * 1024
+
+
+def machine_memory_budget() -> int:
+    """按本机内存给出分析可用的内存上限（字节），做法同 Dask 的 memory_limit="auto"。
+
+    取物理内存的一半与当前空闲内存的 70% 中较小者，至少 256 MiB；
+    环境变量 PIXELPROBE_MAX_MEMORY_MB 显式指定时优先。读不到系统内存时退回 256 MiB。
+    """
+    raw = (os.environ.get(MEMORY_BUDGET_ENV) or "").strip()
+    if raw:
+        try:
+            value = int(raw)
+        except ValueError as exc:
+            raise ValueError(f"{MEMORY_BUDGET_ENV} 必须是整数（MB）") from exc
+        if value < 1:
+            raise ValueError(f"{MEMORY_BUDGET_ENV} 必须为正整数")
+        return value * 1024 * 1024
+    try:
+        import psutil
+        memory = psutil.virtual_memory()
+        value = min(memory.total // 2, memory.available * 7 // 10)
+    except Exception:
+        return MIN_MEMORY_BUDGET_BYTES
+    return max(MIN_MEMORY_BUDGET_BYTES, int(value))
+
+
+def ambient_memory_budget() -> int:
+    """当前作用域的内存上限：MCP 工作进程内为该任务分到的额度，否则为本机预算。"""
+    budget = current_budget()
+    return budget.memory if budget is not None else machine_memory_budget()
+
 
 class ResourceBudget:
     def __init__(self, memory: int, disk: int | None, check=None):

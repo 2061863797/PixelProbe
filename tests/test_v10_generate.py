@@ -992,6 +992,53 @@ def test_generate_memory_output_fails_loud_when_exact_result_exceeds_budget(
         pixelprobe.generate(request)
 
 
+def test_default_request_memory_cap_follows_machine_or_job_budget(
+    test_video: Path, monkeypatch,
+) -> None:
+    """回归：引擎单步上限曾固定 256 MiB，4K 光流两侧都失败；未显式限定时改跟随本机/任务额度。"""
+    import importlib
+    generate_module = importlib.import_module("pixelprobe.api.generate")
+    seen: list[int] = []
+    original = generate_module.LocalExecutionContext
+
+    def capture(resources, *args, **kwargs):
+        seen.append(resources.max_memory_bytes)
+        return original(resources, *args, **kwargs)
+
+    monkeypatch.setattr(generate_module, "LocalExecutionContext", capture)
+    monkeypatch.setattr(generate_module, "ambient_memory_budget", lambda: 2 * 1024**3)
+    pixelprobe.generate(_xt(test_video))
+    explicit = _xt(test_video).model_copy(update={
+        "resources": ResourcePolicy(max_memory_bytes=64 * 1024**2),
+    })
+    pixelprobe.generate(explicit)
+    assert seen == [2 * 1024**3, 64 * 1024**2]
+
+
+def test_intermediate_frames_spill_to_temp_file_when_over_memory_budget(
+    test_video: Path,
+) -> None:
+    """回归：reduce/spectrum 的整段帧中间结果曾强制放在内存里，1080p 30 帧即超过 256 MiB。
+
+    中间结果超限时落到临时文件，最终输出仍在内存，数值与不受限时逐位一致。
+    """
+    from pixelprobe.core.media_reader import get_media_info
+    from pixelprobe.request_builders import reduce_request
+    info = get_media_info(test_video)
+    frames_bytes = info.frame_count * info.width * info.height * 3
+    working_bytes = 5 * info.width * info.height * 3 * 8
+    limit = working_bytes + 4096
+    # 旧行为：整段帧物化峰值约 2 倍帧数据，必然超过该上限
+    assert frames_bytes * 2 > limit
+    request = reduce_request(test_video, operation="std", rect=None)
+    expected = pixelprobe.generate(request).request_tensors[0][0].data.materialize()
+    limited = request.model_copy(update={
+        "resources": ResourcePolicy(max_memory_bytes=limit),
+    })
+    actual = pixelprobe.generate(limited).request_tensors[0][0].data.materialize()
+    assert np.array_equal(actual, expected)
+
+
 def test_generate_cli_uses_request_file_and_stable_json(
     test_video: Path, tmp_path: Path,
 ) -> None:

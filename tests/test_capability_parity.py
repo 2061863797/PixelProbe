@@ -86,14 +86,20 @@ async def test_every_mcp_selector_dispatches_to_its_capability(
 # ---------------- 数值一致性抽样 ----------------
 
 _VOLATILE = {"images", "refs", "list_totals", "path", "computed_from", "bundle_path"}
-# 只有命令行有的输出文件说明：保存位置与时间线图片的版式（MCP 的图片说明在 data.images）
-_CLI_OUTPUT = {"orientation", "raw_width", "raw_height", "scale"}
+# 只有命令行有的字段都描述命令行自己写出的 PNG/CSV 文件（版式、像素尺寸、放大倍数）；
+# MCP 不写这些文件，预览图的尺寸与缩放在 data.images 中。其余字段两侧必须完全相同。
+_CLI_OUTPUT = {
+    "timeline": {"orientation", "raw_width", "raw_height", "scale"},
+    "xt": {"width", "height", "scale_space", "scale_t"},
+    "yt": {"width", "height", "scale_space", "scale_t"},
+    "frame": {"output_width", "output_height"},
+}
 
 
-def _normalized(data: dict) -> dict:
+def _normalized(data: dict, name: str = "") -> dict:
     clean = {
         key: value for key, value in data.items()
-        if key not in _VOLATILE | _CLI_OUTPUT and not key.endswith("_path")
+        if key not in _VOLATILE | _CLI_OUTPUT.get(name, set()) and not key.endswith("_path")
     }
     return json.loads(json.dumps(clean, ensure_ascii=False, default=str))
 
@@ -111,6 +117,11 @@ CASES = [
     ("spectrum", "blink", "point(1,1)", {}),
     ("spectrum2d", "image", None, {}),
     ("flow", "motion", "f=0,4", {}),
+    ("info", "palette", None, {}),
+    ("frame", "video", "f=3", {}),
+    ("xt", "video", "row(4)", {}),
+    ("yt", "video", "col(4)", {}),
+    ("track", "motion", "f=0..10 point(4,4)", {}),
 ]
 # find 的搜索语句是位置参数，单独比较
 FIND_QUERY = "white | flash | freeze >= 2f | rect(0,0,4,4).r > 100 | first change in cell(B2)"
@@ -119,7 +130,12 @@ FIND_QUERY = "white | flash | freeze >= 2f | rect(0,0,4,4).r > 100 | first chang
 @pytest.fixture(scope="module")
 def media(assets_dir: Path, blink_video: Path, motion_video: Path, test_image: Path,
           test_video: Path) -> dict[str, Path]:
-    return {"image": test_image, "video": test_video, "blink": blink_video, "motion": motion_video}
+    from PIL import Image
+    palette = assets_dir / "parity-palette.png"
+    if not palette.exists():
+        Image.new("RGB", (16, 12), (200, 30, 30)).convert("P", palette=Image.Palette.ADAPTIVE).save(palette)
+    return {"image": test_image, "video": test_video, "blink": blink_video, "motion": motion_video,
+            "palette": palette}
 
 
 @pytest.mark.parametrize(("name", "kind", "at", "options"), CASES,
@@ -138,12 +154,11 @@ def test_cli_and_mcp_return_identical_values(
         capability=name, media_path=str(source), at=at, options=options, images=False, limit=200,
     ))
     mcp = envelope.data
-    shared = set(_normalized(cli)) & set(_normalized(mcp))
-    assert shared, "两侧没有共同字段"
-    # MCP 只做加法（图片说明、索引状态等），不得改变或丢失命令行的数值字段
-    assert set(_normalized(cli)) <= set(_normalized(mcp)), set(_normalized(cli)) - set(_normalized(mcp))
-    for key in shared:
-        assert _normalized(cli)[key] == _normalized(mcp)[key], key
+    cli_clean, mcp_clean = _normalized(cli, name), _normalized(mcp, name)
+    # 回归：info 的图片通道语义、索引状态曾只在 MCP 返回；现在两侧字段集合与数值完全相同
+    assert set(cli_clean) == set(mcp_clean), (set(cli_clean) ^ set(mcp_clean))
+    for key in cli_clean:
+        assert cli_clean[key] == mcp_clean[key], key
 
 
 def test_cli_and_mcp_find_return_identical_matches(test_video: Path, assets_dir: Path) -> None:

@@ -78,7 +78,16 @@ MCP_RESOURCE_LIMIT，先发送协作取消，2 秒后仍未退出则终止并确
 
 | 环境变量 | 单位 / 含义 |
 | --- | --- |
-| PIXELPROBE_MCP_TOTAL_MEMORY_BYTES | 所有活动媒体工作进程的合计预留字节数 |
+| PIXELPROBE_MCP_TOTAL_MEMORY_BYTES | 所有活动媒体工作进程的合计预留字节数（优先于下一项） |
+| PIXELPROBE_MCP_TOTAL_MEMORY_MB | 同上，以 MB 计（插件配置项 `total_memory_mb`）；留空时按本机自动分配 |
+| PIXELPROBE_MAX_MEMORY_MB | 本机内存预算（MB），CLI 的分析上限与 MCP 的默认总预算都用它；留空时取物理内存一半与当前空闲内存 70% 中较小者，至少 256 MB |
+
+内存控制方式（参考 Dask 的 `memory_limit="auto"`、Ray 的内存监视与 Nextflow/Snakemake 的按次加大内存重试）：
+
+- 预估只用于排队和事先拒绝明显做不完的任务，不再作为停止线。
+- 每个任务的执行期硬上限是它分到的额度（总预算 ÷ 工作进程数），引擎各步的内存上限也随之放宽；请求中显式给出的 `resources` 原样遵守。
+- 整机空闲内存低于物理内存 5%（至少 256 MB）时，不启动新任务，运行中的任务停止。
+- 因内存失败的任务（超出额度、分配失败、整机内存过低、引擎单步上限不足）会等其他任务全部结束，用整份总预算单独重跑一次；第二次仍失败才报错。任务状态的 `memory_retry` 记录首次失败原因和两次额度。参数错误、文件损坏等不重试。
 | PIXELPROBE_MCP_TOTAL_TEMPORARY_BYTES | 所有活动任务的合计执行文件预算 |
 | PIXELPROBE_MCP_WORKERS | 媒体工作进程并行数 |
 

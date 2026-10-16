@@ -63,7 +63,8 @@ def with_refs(data: dict, outcome) -> dict:
 
 def find_index(media: Path, *, no_index: bool, index_dir: Path | None):
     """取与媒体当前内容匹配的索引；未建立、已过期或被禁用时返回 None。"""
-    if no_index:
+    # 文件不存在或为空时不查索引，让能力本身报出 FILE_NOT_FOUND / UNSUPPORTED_MEDIA
+    if no_index or not Path(media).is_file() or Path(media).stat().st_size == 0:
         return None
     from pixelprobe.core.media_reader import detect_media_type
     from pixelprobe.index import IndexStore

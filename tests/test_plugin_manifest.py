@@ -47,6 +47,9 @@ def test_every_server_launches_the_same_pinned_release() -> None:
     roots = _servers()[".mcp.json"]["pixelprobe"]["env"]["PIXELPROBE_MCP_ROOTS"]
     assert roots == "${user_config.media_roots}"
     assert "media_roots" in _json(PLUGIN / ".claude-plugin" / "plugin.json")["userConfig"]
+    memory = _servers()[".mcp.json"]["pixelprobe"]["env"]["PIXELPROBE_MCP_TOTAL_MEMORY_MB"]
+    assert memory == "${user_config.total_memory_mb}"
+    assert "total_memory_mb" in _json(PLUGIN / ".claude-plugin" / "plugin.json")["userConfig"]
 
 
 def test_skills_have_matching_frontmatter_and_only_name_existing_tools() -> None:

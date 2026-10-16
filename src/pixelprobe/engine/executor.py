@@ -798,6 +798,19 @@ class LocalExecutor:
             raise InvalidRangeError("一次执行最多只能指定一个独立 NPY 输出")
         if has_bundle_output and npy_output_indexes:
             raise InvalidRangeError("独立 NPY 与 Bundle/Zarr 不能共用同一 output_path")
+        # 只被其他计算节点消费、不直接作为输出的中间结果（如 reduce/spectrum 的整段帧）
+        # 落到受预算管理的临时文件，下游按帧流式读取；否则 1080p 30 帧就会超过内存上限。
+        # 直接交给 artifact 的最终结果仍按输出格式决定，内存输出超限照常报错。
+        compute_types = {"sample", "transform", "reduce", "frequency", "preview"}
+        consumed_by_compute = {
+            item for node in plan.nodes if node.node_type in compute_types
+            for item in node.input_node_ids
+        }
+        consumed_by_artifact = {
+            item for node in plan.nodes if node.node_type == "artifact"
+            for item in node.input_node_ids
+        }
+        spill_node_ids = consumed_by_compute - consumed_by_artifact
         succeeded = False
         try:
             for node in plan.nodes:
@@ -863,6 +876,7 @@ class LocalExecutor:
                                 has_bundle_output
                                 or bool(npy_output_indexes)
                                 or context.cache is not None
+                                or node.node_id in spill_node_ids
                             ),
                             partial_path=self._partial_path(
                                 context, request_sha256, node.node_id,

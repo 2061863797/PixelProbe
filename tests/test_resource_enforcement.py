@@ -90,6 +90,62 @@ def test_time_selection_reports_full_scan_without_fps_mapping():
     assert plan["decoded_frames_upper_bound"] is None
 
 
+def _engine_plan(info, representation, feature, *, reduction=None, selection=None, geometry=None):
+    raw = request(selection)
+    raw.update(representation=representation, feature=feature)
+    if reduction is not None:
+        raw["reduction"] = reduction
+    if geometry is not None:
+        raw["geometry"] = geometry
+    return media_plan("generate_representation", info, {"request": raw})
+
+
+def test_video_decode_plan_covers_measured_1080p_peak():
+    """回归：1080p 单帧实测峰值约 200～250 MiB，旧系数 32 字节/像素只计划 191 MiB 导致中途被杀。"""
+    from pixelprobe_mcp.jobs import MEDIA_DEFAULT_MEMORY
+    info = SimpleNamespace(width=1920, height=1080, media_type="video", frame_count=30)
+    plan = media_plan("get_frame", info, {"frame": 20})
+    assert 250 * MIB <= plan["memory_bytes"] <= MEDIA_DEFAULT_MEMORY
+
+
+def test_engine_plans_follow_streaming_cost_not_full_resolution_stack():
+    """回归：flow/reduce/spectrum2d 曾按"全部帧 × 每像素 32 个浮点"估算到 1～2 GiB，MCP 直接拒绝而 CLI 可跑。"""
+    from pixelprobe_mcp.jobs import CAPABILITY_DEFAULT_RESOURCES
+    limit = CAPABILITY_DEFAULT_RESOURCES["flow"][0]
+    video_1080 = SimpleNamespace(width=1920, height=1080, media_type="video", frame_count=30)
+    video_720 = SimpleNamespace(width=1280, height=720, media_type="video", frame_count=30)
+    photo = SimpleNamespace(width=1086, height=1448, media_type="image", frame_count=1)
+    pair = {"mode": "indices", "requested_indices": [0, 4], "sample_every": 1}
+    flow = _engine_plan(video_1080, "feature_t",
+                        {"name": "farneback", "config": {"frame_pair": [0, 4]}}, selection=pair)
+    reduce = _engine_plan(video_720, "frames", {"name": "rgb", "config": {}},
+                          reduction={"name": "std", "axes": ["time"], "config": {"rect": None}})
+    spectrum2d = _engine_plan(photo, "feature_t", {"name": "spatial_fft", "config": {"rect": None}})
+    # 下限取实测真实峰值：flow 1080p 271 MiB、reduce 720p 374 MiB、spectrum2d 1.5MP 164 MiB
+    for plan, measured in ((flow, 271), (reduce, 374), (spectrum2d, 164)):
+        assert measured * MIB <= plan["memory_bytes"] <= limit
+
+
+@pytest.mark.parametrize(("width", "height", "measured_mib"), [
+    (1920, 1080, 257), (2560, 1440, 394), (3840, 2160, 760),
+])
+def test_sequential_scan_plan_covers_measured_peak(width, height, measured_mib):
+    """回归：scan 在 2K/4K 上实测 394/760 MiB，按单帧系数只计划 381/697 MiB 而被中途停止。"""
+    info = SimpleNamespace(width=width, height=height, media_type="video", frame_count=60)
+    plan = media_plan("find_changes", info, {"end_frame": None})
+    assert plan["memory_bytes"] >= measured_mib * MIB * 1.05
+
+
+def test_capability_default_reservations_include_runtime_allowance():
+    """回归：引擎类能力默认只预留 256 MiB，扣掉 128 MiB 运行时余量后分析内存只剩一半。"""
+    from pixelprobe_mcp.jobs import CAPABILITY_DEFAULT_RESOURCES, estimate_operation_resources
+    from pixelprobe_mcp.resource_plan import RUNTIME_BYTES
+    for name, (memory, _) in CAPABILITY_DEFAULT_RESOURCES.items():
+        assert memory - RUNTIME_BYTES >= 256 * MIB, name
+    memory, _ = estimate_operation_resources("capability", {"capability": "frame", "media_path": "x"})
+    assert memory - RUNTIME_BYTES >= 256 * MIB
+
+
 def test_crop_cannot_bypass_decode_budget(tmp_path):
     from pixelprobe.address import parse_address
     from pixelprobe.capabilities import capability

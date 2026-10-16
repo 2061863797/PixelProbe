@@ -25,7 +25,7 @@ import numpy as np
 
 from pixelprobe.engine.cache_lifecycle import gate, reference, require_idle
 from pixelprobe.index.builder import FRAME_FIELDS, BuiltIndex
-from pixelprobe.models.errors import InvalidRangeError
+from pixelprobe.models.errors import InvalidRangeError, OutputWriteError
 from pixelprobe.models.media_info import MediaInfo
 from pixelprobe.utils.file_lock import require_plain
 from pixelprobe.utils.fingerprint import QUICK_FINGERPRINT_VERSION, quick_fingerprint
@@ -52,6 +52,33 @@ def default_index_root() -> Path:
     if configured:
         return Path(configured)
     return default_data_root() / "index"
+
+
+_ERROR_NOT_SAME_DEVICE = 17
+# manifest 必须最后写入：读取方以 manifest 存在且指纹匹配判定提交完成
+_INDEX_FILES = ("frames.npz", "thumbs.npy", "thumb_frames.npy", "manifest.json")
+
+
+def _commit_directory(temporary: Path, target: Path) -> None:
+    """改名提交；个别加密或被过滤驱动重定向的目录拒绝同目录改名时，退回逐文件复制。
+
+    复制在调用方持有的 gate 内进行，manifest 最后落盘，所以中途失败只会留下读取方视为
+    "不存在"的半成品，并在这里立即清掉。
+    """
+    try:
+        os.replace(temporary, target)
+        return
+    except OSError as exc:
+        if getattr(exc, "winerror", None) != _ERROR_NOT_SAME_DEVICE:
+            raise
+    target.mkdir()
+    try:
+        for name in _INDEX_FILES:
+            shutil.copyfile(temporary / name, target / name)
+    except BaseException:
+        shutil.rmtree(target, ignore_errors=True)
+        raise
+    shutil.rmtree(temporary, ignore_errors=True)
 
 
 @dataclass
@@ -139,6 +166,15 @@ class IndexStore:
 
     def save(self, media: Path, built: BuiltIndex) -> MediaIndex:
         """原子提交：先写临时目录，完整写完后改名；同指纹索引已存在时保留已有的一份。"""
+        try:
+            return self._save(media, built)
+        except OSError as exc:
+            raise OutputWriteError(
+                f"索引写入失败：{exc.strerror or type(exc).__name__}",
+                hint=f"可设置环境变量 {INDEX_DIR_ENV} 指向其他可写目录后重试",
+            ) from exc
+
+    def _save(self, media: Path, built: BuiltIndex) -> MediaIndex:
         key, fingerprint = self.key_for(media)
         self.root.mkdir(parents=True, exist_ok=True)
         require_plain(self.root)
@@ -175,7 +211,7 @@ class IndexStore:
                         require_idle(self.root)
                         shutil.rmtree(target)
                 if temporary.exists():
-                    os.replace(temporary, target)
+                    _commit_directory(temporary, target)
         finally:
             if temporary.exists():
                 shutil.rmtree(temporary, ignore_errors=True)

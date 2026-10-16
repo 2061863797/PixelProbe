@@ -8,7 +8,8 @@
         "pixelprobe-mcp"
       ],
       "env": {
-        "PIXELPROBE_MCP_ROOTS": "${user_config.media_roots}"
+        "PIXELPROBE_MCP_ROOTS": "${user_config.media_roots}",
+        "PIXELPROBE_MCP_TOTAL_MEMORY_MB": "${user_config.total_memory_mb}"
       }
     }
   }

@@ -13,6 +13,7 @@ from pixelprobe.engine.graph import GraphBuilder
 from pixelprobe.engine.planner import ExecutionPlan, Planner
 from pixelprobe.engine.operator_registry import OperatorRegistry
 from pixelprobe.engine.request import RepresentationRequest, merge_resource_policies
+from pixelprobe.utils.resource_budget import ambient_memory_budget
 
 
 RequestInput = RepresentationRequest | Mapping[str, object]
@@ -56,6 +57,12 @@ def generate(
     resources = merge_resource_policies(
         tuple(item.resources for item in requests)
     )
+    if not any("resources" in item.model_fields_set for item in requests):
+        # 请求未显式限定内存时，单步上限跟随本机预算（MCP 内为该任务额度），
+        # 不再固定 256 MiB；显式给出的 ResourcePolicy 原样遵守。计划 ID 不受影响。
+        resources = resources.model_copy(update={
+            "max_memory_bytes": max(resources.max_memory_bytes, ambient_memory_budget()),
+        })
     if temporary_root is not None:
         context = LocalExecutionContext(
             resources, Path(temporary_root),

@@ -58,6 +58,25 @@ def test_pool_reuses_one_worker_for_consecutive_requests(tmp_path):
     assert pool.idle_count == 0
 
 
+def test_small_task_after_large_task_is_not_charged_for_previous_peak(tmp_path):
+    """回归：Windows 的 peak_wset 是进程终身峰值，大任务之后复用进程的小任务不能被误判超限。"""
+    photo = tmp_path / "photo.jpg"
+    Image.new("RGB", (2000, 1500), (40, 80, 120)).save(photo, quality=90)
+    small = tmp_path / "small.png"
+    Image.new("RGB", (4, 4), (1, 2, 3)).save(small)
+    config = ServerConfig((tmp_path,), tmp_path / "artifacts")
+    shutdown_worker_pools()
+    try:
+        run_operation_sync(config, "capability", {
+            "capability": "evidence", "media_path": str(photo), "output_name": "big.bundle",
+        }, timeout_seconds=120)
+        for _ in range(2):
+            envelope, _ = run_operation_sync(config, "capability", _pixel(small, 1, 1), timeout_seconds=60)
+            assert envelope.data["pixels"][0]["rgb"] == {"r": 1, "g": 2, "b": 3}
+    finally:
+        shutdown_worker_pools()
+
+
 def test_cancelled_worker_is_retired_not_reused(tmp_path):
     source = tmp_path / "取消.png"
     Image.new("RGB", (4, 4), (9, 9, 9)).save(source)
@@ -78,10 +97,15 @@ def test_cancelled_worker_is_retired_not_reused(tmp_path):
 def test_worker_errors_do_not_echo_untrusted_payload(tmp_path):
     config = ServerConfig((tmp_path,), tmp_path / "artifacts")
     secret = str(tmp_path / "private-secret.png")
+    corrupt = tmp_path / "private-secret-corrupt.png"
+    corrupt.write_bytes(b"not an image")
+    (tmp_path / "private-secret-empty.png").write_bytes(b"")
     for payload in (
         {"capability": "pixel", "media_path": secret, "at": "point(-1,0)"},
         {"capability": "pixel", "media_path": "private-secret", "unknown": 1},
         {"capability": "no-such-capability-private-secret", "media_path": secret},
+        {"capability": "pixel", "media_path": str(corrupt), "at": "point(0,0)"},
+        {"capability": "pixel", "media_path": str(tmp_path / "private-secret-empty.png"), "at": "point(0,0)"},
     ):
         with pytest.raises(WorkerError) as caught:
             run_operation_sync(config, "capability", payload, timeout_seconds=30)

@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import io
 import json
 from pathlib import Path
+import struct
 from typing import Any
 import uuid
 
@@ -24,7 +25,8 @@ from pixelprobe.domain.tensor import MemoryArrayHandle, TensorField
 from pixelprobe.engine.execution import CancellationToken
 from pixelprobe.operators.base import ResourcePolicy
 from pixelprobe.utils.resource_budget import (
-    EVIDENCE_BYTES_PER_PIXEL, ResourceBudget, budget_scope, require_memory, check_active,
+    EVIDENCE_BYTES_PER_PIXEL, ResourceBudget, ambient_memory_budget, budget_scope,
+    require_memory, check_active,
 )
 
 
@@ -53,12 +55,26 @@ def _json_safe(value: Any, *, depth: int = 0) -> Any:
     return str(value)[:4096]
 
 
+_EXIF_IFD_POINTER = 0x8769
+_GPS_IFD_POINTER = 0x8825
+
+
 def _metadata(path: Path, image: Image.Image) -> dict[str, Any]:
+    raw = image.getexif()
+    # 主 IFD 只有指针；拍摄时间、镜头、曝光等在 Exif 子目录，位置在 GPS 子目录
     exif = {
         ExifTags.TAGS.get(int(tag), str(tag)): _json_safe(value)
-        for tag, value in image.getexif().items()
+        for tag, value in raw.items()
+        if int(tag) not in {_EXIF_IFD_POINTER, _GPS_IFD_POINTER}
     }
-    return {
+    try:
+        sub_ifd = raw.get_ifd(_EXIF_IFD_POINTER)
+        gps_ifd = raw.get_ifd(_GPS_IFD_POINTER)
+    except (OSError, ValueError, KeyError, struct.error):
+        sub_ifd, gps_ifd = {}, {}
+    for tag, value in sub_ifd.items():
+        exif.setdefault(ExifTags.TAGS.get(int(tag), str(tag)), _json_safe(value))
+    result: dict[str, Any] = {
         "status": "completed",
         "format": image.format,
         "mode": image.mode,
@@ -70,6 +86,12 @@ def _metadata(path: Path, image: Image.Image) -> dict[str, Any]:
         "xmp_present": bool(image.info.get("xmp")),
         "file_size_bytes": path.stat().st_size,
     }
+    if gps_ifd:
+        result["gps"] = {
+            ExifTags.GPSTAGS.get(int(tag), str(tag)): _json_safe(value)
+            for tag, value in gps_ifd.items()
+        }
+    return result
 
 
 def _c2pa(path: Path, *, trust_anchors_pem: str | None = None) -> dict[str, Any]:
@@ -451,8 +473,9 @@ def analyze_evidence(
     resources: ResourcePolicy | None = None,
     c2pa_trust_anchors_pem: str | None = None,
 ) -> EvidenceResult:
+    # 未显式指定时按本机内存（MCP 工作进程内按该任务额度）给出上限
     resources = resources or ResourcePolicy(
-        max_memory_bytes=256 * 1024 * 1024,
+        max_memory_bytes=ambient_memory_budget(),
         max_temporary_bytes=512 * 1024 * 1024,
     )
     token = cancellation or CancellationToken()

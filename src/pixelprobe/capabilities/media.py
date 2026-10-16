@@ -30,7 +30,42 @@ def _rect_dict(rect: tuple[int, int, int, int] | None) -> dict | None:
 
 
 def _info(call: Invocation) -> Outcome:
-    return Outcome(data=core.get_media_info(call.media).model_dump())
+    """基本信息；图片附通道语义与调色板/透明度标志，视频附索引状态（CLI 与 MCP 相同）。"""
+    info = core.get_media_info(call.media)
+    data = info.model_dump()
+    warnings: list[str] = []
+    refs: dict[str, str] = {}
+    if info.media_type == "image":
+        from pixelprobe.capabilities.image_report import (
+            image_analysis_flags, image_content_analysis_payload, native_image_metadata_payload,
+        )
+        from pixelprobe.core.image_reader import ImageReader
+        with ImageReader() as reader:
+            reader.open(call.media)
+            analysis = reader.get_content_analysis()
+            data["image_samples"] = {
+                "native": native_image_metadata_payload(reader.get_native_metadata()),
+                "engine_sample_semantics": reader.engine_sample_semantics(),
+                "engine_conversion_flags": list(reader.engine_conversion_flags()),
+            }
+        data["image_analysis"] = image_content_analysis_payload(analysis)
+        data["flags"] = image_analysis_flags(analysis)
+        if analysis.pattern_assessment == "candidate":
+            warnings.append("检测到规则高频纹理候选；它可能影响视觉识别，但不能单独证明压缩、损坏或伪造")
+    elif call.index is None:
+        data["index"] = {
+            "status": "missing",
+            "hint": "长视频可先建立索引（命令行 pixelprobe index build；MCP pixelprobe_index action=build），"
+                    "之后整帧变化检测直接查表",
+        }
+    else:
+        segments = call.index.segments
+        data["index"] = {"status": "ready", **call.index.summary(), "segments": segments}
+        refs = {
+            f"seg{n}": f"f={item['start_frame']}..{item['end_frame']}"
+            for n, item in enumerate(segments, start=1)
+        }
+    return Outcome(data=data, warnings=warnings, refs=refs)
 
 
 def _frame(call: Invocation) -> Outcome:

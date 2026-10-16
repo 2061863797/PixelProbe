@@ -47,14 +47,20 @@ OPERATION_DEFAULT_RESOURCES: dict[str, tuple[int, int]] = {
 # 这里必须额外预留运行时余量，否则 100 万像素以上的图片会在预检阶段被误拒
 _ANALYSIS_MIB = 256
 _WORKFLOW_MEMORY = (_ANALYSIS_MIB + RUNTIME_BYTES // MIB) * MIB
+# 媒体任务的通用预留：与 CLI 相同的 256 MiB 分析预算 + 运行时余量
+MEDIA_DEFAULT_MEMORY = _WORKFLOW_MEMORY
+# 引擎类能力还要映射共享帧存储（时间聚合会回读全部帧），多留 128 MiB；
+# 预留只在工作进程报回计划前生效，之后按计划收缩，不会长期占住总预算
+_ENGINE_MEMORY = _WORKFLOW_MEMORY + 128 * MIB
 CAPABILITY_DEFAULT_RESOURCES: dict[str, tuple[int, int]] = {
-    "generate": (256 * MIB, 2048 * MIB),
+    "generate": (_ENGINE_MEMORY, 2048 * MIB),
     "evidence": (_WORKFLOW_MEMORY, 512 * MIB),
-    "first_change": (_WORKFLOW_MEMORY, 512 * MIB),
-    "compare_media": (_WORKFLOW_MEMORY, 512 * MIB),
-    "quality_overview": (_WORKFLOW_MEMORY, 512 * MIB),
+    # 组合流程 1080p 计划约 400 MiB，预留与引擎类相同（报回计划后收缩）
+    "first_change": (_ENGINE_MEMORY, 512 * MIB),
+    "compare_media": (_ENGINE_MEMORY, 512 * MIB),
+    "quality_overview": (_ENGINE_MEMORY, 512 * MIB),
     # 走引擎的能力：解码帧存放在共享帧存储中，需要临时空间
-    **{name: (256 * MIB, 2048 * MIB) for name in (
+    **{name: (_ENGINE_MEMORY, 2048 * MIB) for name in (
         "timeline", "xt", "yt", "reduce", "spectrum", "spectrum2d", "flow",
     )},
 }
@@ -72,7 +78,7 @@ def estimate_operation_resources(
     if payload and isinstance(payload, dict):
         if "media_path" in payload or "bundle_path" in payload:
             # 引擎、NumPy、原生库及 Python 本身也消耗内存；实际计划在受限子进程内细化。
-            default_mem = max(default_mem, 256 * 1024 * 1024)
+            default_mem = max(default_mem, MEDIA_DEFAULT_MEMORY)
             default_temp = max(default_temp, 4 * 1024 * 1024)
         custom_mem = payload.get("required_memory_bytes")
         custom_temp = payload.get("required_temporary_bytes")
@@ -81,6 +87,18 @@ def estimate_operation_resources(
         if custom_temp is not None:
             default_temp = max(default_temp, int(custom_temp))
     return default_mem, default_temp
+
+
+def is_memory_failure(message: str) -> bool:
+    """超出任务额度、内存分配失败、整机内存过低，或引擎单步内存上限不足。"""
+    return message.startswith(("MCP_RESOURCE_LIMIT", "MATERIALIZATION_LIMIT_EXCEEDED"))
+
+
+def _system_has_room(operation: str, payload: dict[str, Any]) -> bool:
+    """整机空闲内存是否够启动该任务：保底余量 + 该类任务的默认预留。"""
+    from pixelprobe_mcp.worker import _system_available_bytes, system_low_memory_bytes
+    need, _ = estimate_operation_resources(operation, payload)
+    return _system_available_bytes() >= system_low_memory_bytes() + need
 
 
 _JOB_IMAGE = re.compile(r"[0-9a-f]{32}\.\d{1,3}\.png")
@@ -127,6 +145,8 @@ class Job:
     resource_reserved: bool = False
     resource_plan: dict[str, Any] | None = None
     resource_usage: dict[str, Any] | None = None
+    # 第一次因内存失败后，用整份总预算单独重跑过一次（记录首次失败原因）
+    memory_retry: dict[str, Any] | None = None
 
     def public(self) -> dict[str, Any]:
         return {
@@ -140,6 +160,7 @@ class Job:
             "capability": self.payload.get("capability"),
             "resource_plan": self.resource_plan,
             "resource_usage": self.resource_usage,
+            "memory_retry": self.memory_retry,
         }
 
 
@@ -324,12 +345,74 @@ class JobManager:
             if (memory < 0 or disk < 0 or memory > job.required_memory_bytes
                     or disk > job.required_temporary_bytes):
                 raise WorkerError("MCP_RESOURCE_LIMIT：工作进程计划超出已预留预算")
-            self._allocated_memory_bytes -= job.required_memory_bytes - memory
+            # 内存预留不随估算收缩：它就是执行期的硬上限，估算偏低也不会因此被误停；
+            # 临时空间按计划收缩，让给排队中的任务
             self._allocated_temporary_bytes -= job.required_temporary_bytes - disk
-            job.required_memory_bytes, job.required_temporary_bytes = memory, disk
+            job.required_temporary_bytes = disk
             job.resource_plan = dict(plan)
             self._persist(job)
             self._condition.notify_all()
+
+    def _run_with_memory_retry(self, job: Job) -> Any:
+        """执行；因内存失败时用整份总预算单独重跑一次（做法同 Nextflow/Snakemake 的按次加大内存）。
+
+        结果包原子提交、工作进程失败即回收，重跑不会留下半成品；只重试一次，
+        非内存类失败（参数、文件损坏等）不重试。
+        """
+        while True:
+            try:
+                return run_operation_sync(
+                    self.config, job.operation, job.payload,
+                    timeout_seconds=job.timeout_seconds, cancel_event=job.cancel_event,
+                    memory_limit_bytes=job.required_memory_bytes,
+                    temporary_limit_bytes=job.required_temporary_bytes,
+                    on_plan=lambda plan: self._apply_resource_plan(job, plan),
+                    on_usage=lambda usage: setattr(job, "resource_usage", usage),
+                )
+            except WorkerError as exc:
+                if (job.memory_retry is not None or not is_memory_failure(str(exc))
+                        or job.required_memory_bytes >= self.config.total_memory_bytes):
+                    raise
+                first_failure = {
+                    "reason": str(exc).partition("；")[0],
+                    "memory_limit_bytes": job.required_memory_bytes,
+                    "peak_worker_rss_bytes": (job.resource_usage or {}).get("peak_worker_rss_bytes"),
+                }
+                if not self._reserve_whole_budget(job):
+                    raise
+                job.memory_retry = {**first_failure,
+                                    "retry_memory_limit_bytes": job.required_memory_bytes}
+                job.resource_plan = None
+                self._persist(job)
+
+    def _reserve_whole_budget(self, job: Job) -> bool:
+        """释放本任务原预留，等其他任务都结束后独占整份内存预算；超时或取消返回 False。
+
+        独占可避免两个大任务同时重试再次一起超限（同 Ray "保证至少一个任务能跑完"）。
+        """
+        deadline = time.monotonic() + max(self.config.queue_timeout_seconds, job.timeout_seconds)
+        with self._lock:
+            if job.resource_reserved:
+                self._allocated_memory_bytes -= job.required_memory_bytes
+                job.resource_reserved = False
+                self._allocated_temporary_bytes -= job.required_temporary_bytes
+                self._condition.notify_all()
+            while not job.cancel_event.is_set():
+                if self._allocated_memory_bytes == 0 and _system_has_room(job.operation, job.payload):
+                    job.required_memory_bytes = self.config.total_memory_bytes
+                    self._allocated_memory_bytes += job.required_memory_bytes
+                    self._allocated_temporary_bytes += job.required_temporary_bytes
+                    job.resource_reserved = True
+                    return True
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                self._condition.wait(min(remaining, 0.5))
+            # 没拿到独占额度：恢复原预留，交由 finally 统一释放
+            self._allocated_memory_bytes += job.required_memory_bytes
+            self._allocated_temporary_bytes += job.required_temporary_bytes
+            job.resource_reserved = True
+            return False
 
     def _run(self, job: Job) -> Any:
         try:
@@ -344,9 +427,10 @@ class JobManager:
                         self._allocated_memory_bytes + job.required_memory_bytes <= self.config.total_memory_bytes
                         and self._allocated_temporary_bytes + job.required_temporary_bytes <= self.config.total_temporary_bytes
                     )
-                    if first is job and fits:
+                    if first is job and fits and _system_has_room(job.operation, job.payload):
                         break
-                    self._condition.wait(remaining)
+                    # 整机空闲内存不会触发条件变量，短间隔重查
+                    self._condition.wait(min(remaining, 0.5))
                 if job.queue_timer is not None:
                     job.queue_timer.cancel()
                 if time.monotonic() - job.queued_at >= self.config.queue_timeout_seconds:
@@ -362,14 +446,7 @@ class JobManager:
                 self._condition.notify_all()
             self._persist(job)
             try:
-                result = run_operation_sync(
-                    self.config, job.operation, job.payload,
-                    timeout_seconds=job.timeout_seconds, cancel_event=job.cancel_event,
-                    memory_limit_bytes=job.required_memory_bytes,
-                    temporary_limit_bytes=job.required_temporary_bytes,
-                    on_plan=lambda plan: self._apply_resource_plan(job, plan),
-                    on_usage=lambda usage: setattr(job, "resource_usage", usage),
-                )
+                result = self._run_with_memory_retry(job)
             except TimeoutError:
                 self._set_error(
                     job, status="timeout", code="MCP_TIMEOUT",
@@ -567,7 +644,15 @@ class JobManager:
         value = self.get(job_id)
         public = value.public() if isinstance(value, Job) else value
         if public["status"] != "succeeded" or not public["result_ready"]:
-            raise WorkerError("MCP_JOB_NOT_READY：任务尚未成功完成")
+            status = public["status"]
+            if status in {"queued", "running"}:
+                detail = f"任务仍在{'排队' if status == 'queued' else '运行'}，请稍后再领取"
+            elif status == "succeeded":
+                detail = "任务已完成但结果尚未提交，请稍后再领取"
+            else:
+                # 终态失败/取消/超时/中断永远不会产生结果，提示不能让调用方以为等待即可
+                detail = f"任务状态为 {status}，不会产生结果；请查看任务的 error 或重新提交"
+            raise WorkerError(f"MCP_JOB_NOT_READY：{detail}")
         if isinstance(value, Job) and not value.persistent:
             result, images = self.split_result(value.result)
             if isinstance(result, BaseModel):

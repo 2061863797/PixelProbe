@@ -384,3 +384,107 @@ def test_phone_sized_image_passes_mcp_resource_precheck(tmp_path, capability):
     limit, _ = estimate_operation_resources("capability", payload)
     plan = plan_operation(_config(tmp_path), "capability", payload)
     assert plan["memory_bytes"] <= limit
+
+
+MIB = 1024 * 1024
+
+
+def _memory_config(root: Path) -> ServerConfig:
+    return ServerConfig((root,), root / "artifacts", workers=2, queue_size=4,
+                        total_memory_bytes=2048 * MIB)
+
+
+@pytest.mark.parametrize("failure", [
+    "MCP_RESOURCE_LIMIT：工作进程实际内存超过预算，已停止执行",
+    "MCP_RESOURCE_LIMIT：工作进程内存分配失败",
+    "MATERIALIZATION_LIMIT_EXCEEDED：Farneback 完整分辨率工作集至少需要 1 字节",
+])
+def test_memory_failure_retries_once_with_whole_budget(tmp_path, monkeypatch, failure):
+    """内存类失败后用整份总预算单独重跑一次，成功后结果可领取，并记录首次失败。"""
+    import pixelprobe_mcp.jobs as jobs
+    limits: list[int] = []
+
+    def execute(_config, _operation, _payload, **kwargs):
+        limits.append(kwargs["memory_limit_bytes"])
+        if len(limits) == 1:
+            raise jobs.WorkerError(failure)
+        return {"ok": True}
+
+    monkeypatch.setattr(jobs, "run_operation_sync", execute)
+    manager = JobManager(_memory_config(tmp_path))
+    try:
+        job = manager.submit("capability", {"capability": "frame", "media_path": "v.mkv"},
+                             timeout_seconds=5, persistent=False)
+        job.future.result(10)
+        assert job.status == "succeeded" and job.result == {"ok": True}
+        assert limits == [1024 * MIB, 2048 * MIB]
+        assert job.memory_retry["memory_limit_bytes"] == 1024 * MIB
+        assert job.memory_retry["retry_memory_limit_bytes"] == 2048 * MIB
+        assert manager.allocated_memory_bytes == 0
+    finally:
+        manager.shutdown(wait=True)
+
+
+def test_non_memory_failure_and_second_memory_failure_are_not_retried(tmp_path, monkeypatch):
+    import pixelprobe_mcp.jobs as jobs
+    calls: list[str] = []
+
+    def execute(_config, _operation, payload, **_kwargs):
+        calls.append(payload["capability"])
+        if payload["capability"] == "frame":
+            raise jobs.WorkerError("UNSUPPORTED_MEDIA：无法识别的图片格式，或文件已损坏")
+        raise jobs.WorkerError("MCP_RESOURCE_LIMIT：工作进程实际内存超过预算，已停止执行")
+
+    monkeypatch.setattr(jobs, "run_operation_sync", execute)
+    manager = JobManager(_memory_config(tmp_path))
+    try:
+        broken = manager.submit("capability", {"capability": "frame", "media_path": "v.mkv"},
+                                timeout_seconds=5, persistent=False)
+        broken.future.result(10)
+        heavy = manager.submit("capability", {"capability": "scan", "media_path": "v.mkv"},
+                               timeout_seconds=5, persistent=False)
+        heavy.future.result(10)
+        assert calls == ["frame", "scan", "scan"]
+        assert broken.error_code == "UNSUPPORTED_MEDIA" and broken.memory_retry is None
+        assert heavy.error_code == "MCP_RESOURCE_LIMIT" and heavy.memory_retry is not None
+        assert manager.allocated_memory_bytes == 0
+    finally:
+        manager.shutdown(wait=True)
+
+
+def test_memory_retry_waits_for_exclusive_budget(tmp_path, monkeypatch):
+    """重试要等其他任务结束、独占整份预算，避免两个大任务同时重试再次一起超限。"""
+    import pixelprobe_mcp.jobs as jobs
+    release = threading.Event()
+    other_started = threading.Event()
+    seen: list[tuple[str, int, bool]] = []
+
+    def execute(_config, _operation, payload, **kwargs):
+        name = payload["capability"]
+        seen.append((name, kwargs["memory_limit_bytes"], release.is_set()))
+        if name == "pixel":
+            other_started.set()
+            release.wait(5)
+            return {"ok": "other"}
+        if len(seen) <= 2:
+            other_started.wait(5)
+            raise jobs.WorkerError("MCP_RESOURCE_LIMIT：工作进程实际内存超过预算，已停止执行")
+        return {"ok": "retried"}
+
+    monkeypatch.setattr(jobs, "run_operation_sync", execute)
+    manager = JobManager(_memory_config(tmp_path))
+    try:
+        heavy = manager.submit("capability", {"capability": "scan", "media_path": "a.mkv"},
+                               timeout_seconds=10, persistent=False)
+        other = manager.submit("capability", {"capability": "pixel", "media_path": "b.mkv"},
+                               timeout_seconds=10, persistent=False)
+        time.sleep(0.5)
+        assert len([item for item in seen if item[0] == "scan"]) == 1, "其他任务未结束前不得重试"
+        release.set()
+        heavy.future.result(10)
+        other.future.result(10)
+        assert heavy.result == {"ok": "retried"}
+        assert seen[-1] == ("scan", 2048 * MIB, True)
+    finally:
+        release.set()
+        manager.shutdown(wait=True)

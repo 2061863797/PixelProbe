@@ -16,6 +16,12 @@
       "title": "允许分析的媒体目录",
       "description": "PixelProbe 只读取这些目录内的文件；多个目录在 Windows 用分号分隔、在 macOS/Linux 用冒号分隔。留空表示只允许当前项目目录（Claude Code 提供的项目根目录）。",
       "default": ""
+    },
+    "total_memory_mb": {
+      "type": "string",
+      "title": "媒体分析内存总预算（MB）",
+      "description": "所有分析进程合计可用的内存。留空时按本机自动分配（物理内存的一半与当前空闲内存 70% 中较小者）；只有想限制或固定用量时才需要填写。单个任务因内存不足失败时，会等其他任务结束后用整份预算自动重试一次。",
+      "default": ""
     }
   }
 }

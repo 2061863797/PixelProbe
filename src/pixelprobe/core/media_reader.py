@@ -55,8 +55,18 @@ def detect_media_type(path: Path) -> Literal["image", "video"]:
 def get_media_info(path: Path) -> MediaInfo:
     """读取图片或视频的基本信息。"""
     path = ensure_file_exists(Path(path))
+    if path.stat().st_size == 0:
+        # 不回显文件名：MCP 工作进程原样转发该消息，不得回显调用方输入
+        raise UnsupportedMediaError("文件为空（0 字节）", hint="请确认文件已完整下载或导出")
     if detect_media_type(path) == "image":
-        with Image.open(path) as image:
+        try:
+            image = Image.open(path)
+        except UnidentifiedImageError as exc:
+            raise UnsupportedMediaError(
+                "无法识别的图片格式，或文件已损坏",
+                hint="支持 PNG / JPEG / BMP / WebP 等常见格式；请确认文件完整",
+            ) from exc
+        with image:
             return MediaInfo(
                 path=str(path), media_type="image", width=image.width, height=image.height,
                 channels=len(image.getbands()), color_mode=image.mode,

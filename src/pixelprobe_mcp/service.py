@@ -18,8 +18,6 @@ from pixelprobe import core
 from pixelprobe.address import Address, parse_address
 from pixelprobe.artifacts import BundleReader
 from pixelprobe.capabilities import Capability, Outcome, all_capabilities, capability
-from pixelprobe.core.image_reader import ImageContentAnalysis, ImageReader, NativeImageMetadata
-from pixelprobe.core.media_reader import detect_media_type
 from pixelprobe.models.media_info import MediaInfo
 from pixelprobe.operators.base import ResourcePolicy
 from pixelprobe.output.annotate import Axis, annotate, frame_axis
@@ -119,131 +117,6 @@ def _ensure_response_size(response: ToolEnvelope) -> ToolEnvelope:
             f"响应约 {size} 字符，超过 {CHARACTER_LIMIT}；请减小 limit、缩小地址范围或分页读取"
         )
     return response
-
-
-def _native_image_metadata_payload(metadata: NativeImageMetadata) -> dict[str, Any]:
-    return {
-        "sample_semantics": metadata.sample_semantics,
-        "mode": metadata.mode,
-        "dtype": metadata.dtype,
-        "shape": list(metadata.shape),
-        "bands": list(metadata.bands),
-        "channel_count": metadata.channel_count,
-        "bits_per_sample": metadata.bits_per_sample,
-        "has_alpha": metadata.has_alpha,
-        "alpha_representation": metadata.alpha_representation,
-    }
-
-
-def _image_content_analysis_payload(analysis: ImageContentAnalysis) -> dict[str, Any]:
-    pattern_evidence = None
-    if analysis.pattern_sample_rect is not None:
-        pattern_evidence = {
-            "sample_rect": list(analysis.pattern_sample_rect),
-            "horizontal_period_pixels": analysis.pattern_horizontal_period_pixels,
-            "horizontal_correlation": analysis.pattern_horizontal_correlation,
-            "vertical_period_pixels": analysis.pattern_vertical_period_pixels,
-            "vertical_correlation": analysis.pattern_vertical_correlation,
-            "high_frequency_stddev": analysis.pattern_high_frequency_stddev,
-        }
-    return {
-        "total_pixels": analysis.total_pixels,
-        "channel_semantics": {
-            "stored": {
-                "mode": analysis.stored_mode, "bands": list(analysis.stored_bands),
-                "channel_count": analysis.stored_channel_count,
-                "meaning": "存储样本通道；P 模式下是调色板索引，不是灰度或 RGB",
-            },
-            "analysis_display": {
-                "mode": analysis.analysis_display_mode,
-                "channel_count": analysis.analysis_display_channel_count,
-                "meaning": "确定性颜色算子使用的显示 RGB8",
-            },
-        },
-        "palette": {
-            "indexed": analysis.is_indexed,
-            "entry_count": analysis.palette_entry_count,
-            "used_index_count": analysis.used_palette_index_count,
-            "usage_ratio": analysis.palette_usage_ratio,
-            "accuracy": "exact", "source": "pillow_palette_and_full_histogram",
-        },
-        "alpha": {
-            "representation": analysis.transparency_kind,
-            "level_count": analysis.alpha_level_count,
-            "transparent_pixels": analysis.transparent_pixel_count,
-            "partially_transparent_pixels": analysis.partially_transparent_pixel_count,
-            "opaque_pixels": analysis.opaque_pixel_count,
-            "transparent_ratio": analysis.transparent_ratio,
-            "partially_transparent_ratio": analysis.partially_transparent_ratio,
-            "opaque_ratio": analysis.opaque_ratio,
-            "accuracy": "exact", "source": "full_alpha_histogram",
-        },
-        "regular_pattern": {
-            "assessment": analysis.pattern_assessment,
-            "accuracy": analysis.pattern_accuracy,
-            "coverage": analysis.pattern_coverage,
-            "evidence": pattern_evidence,
-            "interpretation": (
-                "仅表示二维高频残差存在规则周期相关性；可能来自刻意网屏、"
-                "调色板抖动或画面纹理，不能单独证明压缩、损坏或伪造"
-            ),
-        },
-    }
-
-
-def _image_analysis_flags(analysis: ImageContentAnalysis) -> list[dict[str, Any]]:
-    flags: list[dict[str, Any]] = []
-    if analysis.is_indexed:
-        flags.append({
-            "code": "INDEXED_COLOR_IMAGE", "severity": "info", "accuracy": "exact",
-            "source": "pillow_mode",
-            "evidence": {
-                "stored_mode": analysis.stored_mode,
-                "palette_entries": analysis.palette_entry_count,
-                "used_palette_indices": analysis.used_palette_index_count,
-            },
-            "coverage": "full",
-            "message": "图片存储的是调色板索引；单个 P 样本不能直接当作灰度或 RGB。",
-        })
-    if analysis.is_indexed and analysis.transparency_kind != "none":
-        flags.append({
-            "code": "PALETTE_TRANSPARENCY", "severity": "info", "accuracy": "exact",
-            "source": "full_alpha_histogram",
-            "evidence": {
-                "kind": analysis.transparency_kind,
-                "transparent_ratio": analysis.transparent_ratio,
-                "partially_transparent_ratio": analysis.partially_transparent_ratio,
-            },
-            "coverage": "full",
-            "message": "透明度由调色板或颜色键表达。",
-        })
-    if analysis.transparent_ratio >= 0.95:
-        flags.append({
-            "code": (
-                "FULLY_TRANSPARENT_IMAGE" if analysis.transparent_ratio == 1.0
-                else "MOSTLY_TRANSPARENT_IMAGE"
-            ),
-            "severity": "warning", "accuracy": "exact", "source": "full_alpha_histogram",
-            "evidence": {"transparent_ratio": analysis.transparent_ratio},
-            "coverage": "full",
-            "message": "图片绝大部分像素完全透明，视觉模型可能忽略透明区域中的内容。",
-        })
-    if analysis.pattern_assessment == "candidate":
-        flags.append({
-            "code": "REGULAR_PATTERN_CANDIDATE", "severity": "warning",
-            "accuracy": analysis.pattern_accuracy,
-            "source": "pixelprobe_high_frequency_periodicity",
-            "evidence": {
-                "sample_rect": list(analysis.pattern_sample_rect or ()),
-                "horizontal_period_pixels": analysis.pattern_horizontal_period_pixels,
-                "horizontal_correlation": analysis.pattern_horizontal_correlation,
-                "vertical_period_pixels": analysis.pattern_vertical_period_pixels,
-                "vertical_correlation": analysis.pattern_vertical_correlation,
-            },
-            "coverage": analysis.pattern_coverage,
-            "message": "检测到规则高频纹理候选，可能干扰视觉识别；该标志不等同于压缩或损坏。",
-        })
-    return flags
 
 
 def _paginate(data: dict[str, Any], offset: int, limit: int) -> Pagination | None:
@@ -440,13 +313,18 @@ class PixelProbeService:
         is_media = item.needs_media and item.name != "validate"
         info = core.get_media_info(media) if is_media else None
         index = None
-        if info is not None and info.media_type == "video":
+        if info is not None and info.media_type == "video" and not params.no_index:
             index = media_sessions().index_for(media)
         if info is not None:
             self._ensure_budget(item, info, address, params.options, index)
         settings: dict[str, Any] = {}
         if item.name == "generate":
-            settings["resources"] = MCP_GENERATE_RESOURCES
+            # 内存上限跟随该任务分到的额度；时限、临时空间与分块仍按 MCP 固定边界
+            from pixelprobe.utils.resource_budget import ambient_memory_budget
+            settings["resources"] = MCP_GENERATE_RESOURCES.model_copy(update={
+                "max_memory_bytes": max(MCP_GENERATE_RESOURCES.max_memory_bytes,
+                                        ambient_memory_budget()),
+            })
         outcome = item.invoke(
             media, address, params.options,
             index=index, reference=reference, output_path=output_path,
@@ -460,14 +338,7 @@ class PixelProbeService:
         warnings = list(outcome.warnings)
         if item.name in SEMANTIC_WARNINGS:
             warnings.insert(0, SEMANTIC_WARNINGS[item.name])
-        if item.name == "info" and info is not None:
-            self._enrich_info(media, info, data, warnings)
-        elif item.name == "evidence" and isinstance(data.get("metadata"), dict):
-            # 完整 EXIF 可能很大（如厂商私有字段），只返回字段名；完整内容在结果包中
-            metadata = dict(data["metadata"])
-            metadata["exif_fields"] = sorted(metadata.pop("exif", None) or {})[:100]
-            data["metadata"] = metadata
-        elif (item.name in {"frame", "pixel", "region"} and info is not None
+        if (item.name in {"frame", "pixel", "region"} and info is not None
               and info.media_type == "image" and params.options.get("sample") != "native"):
             self._warn_display_conversion(info, warnings)
         images: list[tuple[str, bytes]] = []
@@ -488,33 +359,6 @@ class PixelProbeService:
             next_actions=self._next_actions(item, media, outcome),
         )
         return _ensure_response_size(response), images
-
-    def _enrich_info(self, media: Path, info: MediaInfo, data: dict, warnings: list[str]) -> None:
-        if detect_media_type(media) == "image":
-            with ImageReader() as reader:
-                reader.open(media)
-                analysis = reader.get_content_analysis()
-                data["image_samples"] = {
-                    "native": _native_image_metadata_payload(reader.get_native_metadata()),
-                    "engine_sample_semantics": reader.engine_sample_semantics(),
-                    "engine_conversion_flags": list(reader.engine_conversion_flags()),
-                }
-            data["image_analysis"] = _image_content_analysis_payload(analysis)
-            data["flags"] = _image_analysis_flags(analysis)
-            if analysis.pattern_assessment == "candidate":
-                warnings.append("检测到规则高频纹理候选；它可能影响视觉识别，但不能单独证明压缩、损坏或伪造")
-            return
-        index = media_sessions().index_for(media)
-        if index is None:
-            data["index"] = {"status": "missing",
-                             "hint": "长视频可先 pixelprobe_index build（wait=false），之后整帧变化检测直接查表"}
-            return
-        segments = index.segments
-        data["index"] = {"status": "ready", **index.summary(), "segments": segments}
-        data["refs"] = {
-            f"seg{n}": f"f={item['start_frame']}..{item['end_frame']}"
-            for n, item in enumerate(segments, start=1)
-        }
 
     @staticmethod
     def _warn_display_conversion(info: MediaInfo, warnings: list[str]) -> None:

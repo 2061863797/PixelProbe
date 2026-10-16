@@ -33,6 +33,36 @@ class EvidenceOptions(BaseModel):
         default=None, min_length=1, max_length=65536,
         description="可选 PEM 根证书集合，替换 SDK 默认信任锚；不等同于媒体真实性背书",
     )
+    include_gps: bool = Field(
+        default=False,
+        description="返回 GPS 位置字段；默认只报告是否存在，避免把拍摄地点带进对话",
+    )
+
+
+# 返回值里单个 EXIF 字段的长度上限；二进制块（如厂商私有 MakerNote）只列名称，完整内容在结果包
+_EXIF_VALUE_MAX_CHARS = 256
+
+
+def _exif_summary(metadata: dict, *, include_gps: bool) -> tuple[dict, list[str]]:
+    summary = dict(metadata)
+    values: dict = {}
+    omitted: list[str] = []
+    for name, value in (metadata.get("exif") or {}).items():
+        if isinstance(value, dict) or (isinstance(value, str) and len(value) > _EXIF_VALUE_MAX_CHARS):
+            omitted.append(name)
+        else:
+            values[name] = value
+    summary["exif"] = values
+    if omitted:
+        summary["exif_omitted_fields"] = sorted(omitted)
+    warnings = []
+    gps = summary.pop("gps", None)
+    summary["gps_present"] = bool(gps)
+    if gps and include_gps:
+        summary["gps"] = gps
+    elif gps:
+        warnings.append("图片含 GPS 位置，默认未返回；需要时设置 include_gps=true（完整值也保存在结果包报告中）")
+    return summary, warnings
 
 
 def _evidence(call: Invocation) -> Outcome:
@@ -51,7 +81,13 @@ def _evidence(call: Invocation) -> Outcome:
     if result.report.get("c2pa", {}).get("status") == "unavailable":
         reason = result.report["c2pa"].get("reason", "验证能力不可用")
         warnings.append(f"C2PA 未完成检查：{reason}")
-    return Outcome(data=dict(result.report), artifacts={"bundle": result.bundle}, warnings=warnings)
+    data = dict(result.report)
+    if isinstance(data.get("metadata"), dict) and data["metadata"].get("status") == "completed":
+        data["metadata"], gps_warnings = _exif_summary(
+            data["metadata"], include_gps=options.include_gps,
+        )
+        warnings.extend(gps_warnings)
+    return Outcome(data=data, artifacts={"bundle": result.bundle}, warnings=warnings)
 
 
 # ---------------- 组合流程 ----------------

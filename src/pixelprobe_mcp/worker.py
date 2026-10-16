@@ -21,6 +21,7 @@ import psutil
 from multiprocessing.connection import Connection
 
 from pixelprobe_mcp.config import ServerConfig
+from pixelprobe_mcp.resource_plan import RUNTIME_BYTES
 
 MAX_TASKS_PER_WORKER = 200
 IDLE_TIMEOUT_SECONDS = 300.0
@@ -37,6 +38,30 @@ OPERATIONS = {
 
 class WorkerError(RuntimeError):
     """工作进程返回的已脱敏错误。"""
+
+
+# 内存类失败的固定消息；调度器据此判断能否加大额度单独重试一次
+OVER_LIMIT_MESSAGE = "MCP_RESOURCE_LIMIT：工作进程实际内存超过预算，已停止执行"
+PLAN_OVER_LIMIT_MESSAGE = "实际执行计划超过任务预算；请缩小范围或提高总预算"
+MEMORY_ALLOCATION_FAILED_MESSAGE = "MCP_RESOURCE_LIMIT：工作进程内存分配失败"
+SYSTEM_LOW_MEMORY_MESSAGE = "MCP_RESOURCE_LIMIT：系统可用内存过低（其他程序占用较多），已停止执行"
+SYSTEM_CHECK_SECONDS = 0.5
+
+
+def _system_available_bytes() -> int:
+    try:
+        return int(psutil.virtual_memory().available)
+    except psutil.Error:
+        return 1 << 62
+
+
+def system_low_memory_bytes() -> int:
+    """整机空闲内存低于此值即停止媒体任务：物理内存的 5%，至少 256 MiB。"""
+    try:
+        total = int(psutil.virtual_memory().total)
+    except psutil.Error:
+        return 256 * 1024 * 1024
+    return max(256 * 1024 * 1024, total // 20)
 
 
 def execute_operation(config: ServerConfig, operation: str, payload: dict, cancellation=None):
@@ -100,11 +125,14 @@ def _run_task(connection: Connection, config: ServerConfig, operation: str, payl
                              psutil.Process().memory_info().rss + 16 * 1024 * 1024)
         planned_disk = max(CONTROL_BYTES, plan.get("temporary_bytes", disk_limit))
         if planned_memory > memory_limit or planned_disk > disk_limit:
-            raise McpResourceLimitError("实际执行计划超过任务预算；请缩小范围或提高总预算")
-        plan.update(memory_bytes=planned_memory, temporary_bytes=planned_disk)
+            raise McpResourceLimitError(PLAN_OVER_LIMIT_MESSAGE)
+        plan.update(memory_bytes=planned_memory, temporary_bytes=planned_disk,
+                    memory_limit_bytes=memory_limit)
         connection.send(("plan", plan))
-        budget = ResourceBudget(planned_memory, planned_disk - CONTROL_BYTES,
-                                token.raise_if_cancelled)
+        # 估算只用于事先拒绝明显做不完的任务；执行期内存上限是该任务分到的整份额度
+        # （扣除运行时余量），引擎各步也按它放宽，不再卡在估算值上
+        budget = ResourceBudget(max(16 * 1024 * 1024, memory_limit - RUNTIME_BYTES),
+                                planned_disk - CONTROL_BYTES, token.raise_if_cancelled)
         with budget_scope(budget):
             result = execute_operation(config, operation, payload, token)
         connection.send(("usage", usage()))
@@ -124,7 +152,7 @@ def _run_task(connection: Connection, config: ServerConfig, operation: str, payl
     except McpInputError as exc:
         message = f"参数无效：{exc}"
     except MemoryError:
-        message = "MCP_RESOURCE_LIMIT：工作进程内存分配失败"
+        message = MEMORY_ALLOCATION_FAILED_MESSAGE
     except (ValueError, OSError, KeyError, RuntimeError):
         message = "MCP_OPERATION_FAILED：请检查参数、媒体完整性和资源限制"
     except Exception:
@@ -158,10 +186,18 @@ def run_operation_sync(
     scratch = tempfile.TemporaryDirectory(prefix="pixelprobe-worker-")
     started_at = time.monotonic()
     usage = {"peak_worker_rss_bytes": 0, "memory_sampling_interval_ms": 20}
+    low_memory_bytes = system_low_memory_bytes()
+    next_system_check = started_at
     # finished：工作进程按协议报告了本任务的最终结果（成功或已脱敏的失败），可放回空闲池
     finished = False
     try:
         worker.cancel_event.clear()
+        # Windows 的 peak_wset 是进程终身峰值；复用进程时只有本任务期间新创的峰值才计入，
+        # 否则上一个大任务留下的峰值会让紧随其后的小任务被误判超限
+        try:
+            baseline_peak = getattr(worker.monitored.memory_info(), "peak_wset", 0)
+        except psutil.Error:
+            baseline_peak = 0
         worker.connection.send((operation, payload, memory_limit, disk_limit, scratch.name))
         while True:
             if cancel_event is not None and cancel_event.is_set():
@@ -170,21 +206,27 @@ def run_operation_sync(
                 raise TimeoutError
             try:
                 memory_info = worker.monitored.memory_info()
-                rss = max(memory_info.rss, getattr(memory_info, "peak_wset", 0))
+                peak = getattr(memory_info, "peak_wset", 0)
+                rss = max(memory_info.rss, peak if peak > baseline_peak else 0)
                 usage["peak_worker_rss_bytes"] = max(usage["peak_worker_rss_bytes"], rss)
             except psutil.NoSuchProcess:
                 rss = 0
             except psutil.Error as exc:
                 raise WorkerError("MCP_RESOURCE_MONITOR_FAILED：无法监测工作进程内存") from exc
             if rss > memory_limit:
-                raise WorkerError("MCP_RESOURCE_LIMIT：工作进程实际内存超过预算，已停止执行")
+                raise WorkerError(OVER_LIMIT_MESSAGE)
+            now = time.monotonic()
+            if now >= next_system_check:
+                # 整机兜底（同 Ray 的内存监视）：其他程序占满内存时先停下，避免拖垮电脑
+                next_system_check = now + SYSTEM_CHECK_SECONDS
+                if _system_available_bytes() < low_memory_bytes:
+                    raise WorkerError(SYSTEM_LOW_MEMORY_MESSAGE)
             if worker.connection.poll(0.02):
                 try:
                     success, result = worker.connection.recv()
                 except (EOFError, OSError) as exc:
                     raise WorkerError("MCP_WORKER_CRASHED：媒体工作进程异常退出") from exc
                 if success == "plan":
-                    memory_limit = result["memory_bytes"]
                     if on_plan is not None:
                         on_plan(result)
                     continue
@@ -254,7 +296,9 @@ class WorkerPool:
             worker.process.is_alive()
             and rss is not None
             and worker.tasks_done < MAX_TASKS_PER_WORKER
-            and rss <= self.config.total_memory_bytes // 2
+            # 只复用常驻内存不超过运行时余量的进程：各任务计划按"运行时余量 + 分析内存"估算，
+            # 大任务后分配器留存的内存会被算到下一个任务头上，因此直接回收
+            and rss <= min(RUNTIME_BYTES, self.config.total_memory_bytes // 2)
         )
         with self._lock:
             if keep and len(self._idle) < max(1, self.config.workers):

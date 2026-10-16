@@ -9,7 +9,7 @@ import typer
 from pydantic import ValidationError
 
 import pixelprobe
-from pixelprobe.cli import JSON_OPT, CliContext, cli_guard
+from pixelprobe.cli import JSON_OPT, NO_PROGRESS_OPT, CliContext, cli_guard
 from pixelprobe.domain.media import MediaSource
 from pixelprobe.engine.request import OutputRequest, RepresentationRequest
 from pixelprobe.models.errors import InvalidRangeError
@@ -35,8 +35,10 @@ def generate(
         help="从严格匹配的检查点恢复",
     ),
     json_mode: bool = JSON_OPT,
+    no_progress: bool = NO_PROGRESS_OPT,
 ) -> None:
     """通过统一 DAG 生成一个或多个正式媒体表示。"""
+    # 本命令没有进度输出；接受 --no-progress 只为与其他命令一致
     ctx = CliContext(json_mode=json_mode, no_progress=True)
     with cli_guard("generate", ctx):
         if (checkpoint is not None or resume_from is not None) and cache_dir is None:

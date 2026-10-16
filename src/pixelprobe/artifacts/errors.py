@@ -29,6 +29,15 @@ ArtifactSchemaMismatchError = _error(
 ProvenanceGraphInvalidError = _error(
     "ProvenanceGraphInvalidError", "PROVENANCE_GRAPH_INVALID"
 )
+class ArtifactNotFoundError(BundleError, KeyError):
+    """结果包中没有该 artifact_id；同时是 KeyError，兼容按字典查找语义捕获的调用方。"""
+
+    code = "ARTIFACT_NOT_FOUND"
+
+    def __str__(self) -> str:
+        return self.message
+
+
 ZarrDependencyMissingError = _error(
     "ZarrDependencyMissingError", "ZARR_DEPENDENCY_MISSING"
 )

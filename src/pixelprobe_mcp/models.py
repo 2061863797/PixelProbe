@@ -43,6 +43,9 @@ class CapabilityInput(StrictModel):
     )
     offset: int = Field(default=0, ge=0, description="列表类结果的分页偏移")
     limit: int = Field(default=50, ge=1, le=200, description="列表类结果每页条数")
+    no_index: bool = Field(
+        default=False, description="不使用已建立的媒体索引，强制逐帧解码（与命令行 --no-index 相同）",
+    )
 
 
 class JobIdInput(StrictModel):

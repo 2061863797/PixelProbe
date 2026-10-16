@@ -74,8 +74,10 @@ def show(
     json_mode: bool = JSON_OPT,
     quiet: bool = QUIET_OPT,
     verbose: bool = VERBOSE_OPT,
+    no_progress: bool = NO_PROGRESS_OPT,
 ) -> None:
     """查看媒体当前内容对应的索引；没有或已失效时报告 missing。"""
+    # 本命令没有进度输出；接受 --no-progress 只为与其他命令一致，便于脚本统一追加
     ctx = CliContext(json_mode, quiet, verbose, True)
     with cli_guard("index show", ctx):
         store = _store(index_dir)
@@ -96,6 +98,7 @@ def remove(
     json_mode: bool = JSON_OPT,
     quiet: bool = QUIET_OPT,
     verbose: bool = VERBOSE_OPT,
+    no_progress: bool = NO_PROGRESS_OPT,
 ) -> None:
     """删除该媒体当前内容对应的索引。"""
     ctx = CliContext(json_mode, quiet, verbose, True)
@@ -118,6 +121,7 @@ def prune(
     json_mode: bool = JSON_OPT,
     quiet: bool = QUIET_OPT,
     verbose: bool = VERBOSE_OPT,
+    no_progress: bool = NO_PROGRESS_OPT,
 ) -> None:
     """清理长时间未使用的索引；默认只预览，加 --apply 才删除。"""
     ctx = CliContext(json_mode, quiet, verbose, True)

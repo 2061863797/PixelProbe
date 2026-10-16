@@ -53,6 +53,24 @@ def test_unset_roots_prefer_claude_project_dir_then_cwd(tmp_path, monkeypatch):
     assert ServerConfig.from_environment().allowed_roots == (project.resolve(),)
 
 
+def test_total_memory_mb_from_plugin_config(tmp_path, monkeypatch):
+    """插件留空时传空字符串，按本机内存自动；填写 MB 时换算；字节写法优先。"""
+    from pixelprobe.utils.resource_budget import machine_memory_budget
+    monkeypatch.setenv("PIXELPROBE_MCP_ROOTS", str(tmp_path))
+    monkeypatch.delenv("PIXELPROBE_MCP_TOTAL_MEMORY_BYTES", raising=False)
+    monkeypatch.delenv("PIXELPROBE_MAX_MEMORY_MB", raising=False)
+    monkeypatch.setenv("PIXELPROBE_MCP_TOTAL_MEMORY_MB", "")
+    automatic = ServerConfig.from_environment().total_memory_bytes
+    assert automatic >= 256 * 1024 * 1024
+    assert abs(automatic - machine_memory_budget()) <= 64 * 1024 * 1024
+    monkeypatch.setenv("PIXELPROBE_MAX_MEMORY_MB", "600")
+    assert ServerConfig.from_environment().total_memory_bytes == 600 * 1024 * 1024
+    monkeypatch.setenv("PIXELPROBE_MCP_TOTAL_MEMORY_MB", "4096")
+    assert ServerConfig.from_environment().total_memory_bytes == 4096 * 1024 * 1024
+    monkeypatch.setenv("PIXELPROBE_MCP_TOTAL_MEMORY_BYTES", str(1024 * 1024 * 1024))
+    assert ServerConfig.from_environment().total_memory_bytes == 1024 * 1024 * 1024
+
+
 def test_mcp_arguments_are_applied_before_server_import(tmp_path, monkeypatch):
     import pixelprobe_mcp.entry as entry
     monkeypatch.setenv("PIXELPROBE_MCP_ROOTS", "missing")

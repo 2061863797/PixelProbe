@@ -214,11 +214,12 @@ async def pixelprobe_overview(
     options: dict[str, Any] | None = None,
     offset: int = 0,
     limit: int = 50,
+    no_index: bool = False,
     wait: bool = True,
 ) -> Annotated[CallToolResult, ToolEnvelope]:
     return await _capability(
         _OVERVIEW[detail], media_path=media_path, at=at, options=options,
-        offset=offset, limit=limit, wait=wait,
+        offset=offset, limit=limit, no_index=no_index, wait=wait,
     )
 
 
@@ -289,6 +290,7 @@ async def pixelprobe_measure(
         "at 只写时间范围；返回 match1… 编号。"
         "kind=changes：相邻帧变化与事件分段（at 中可写时间范围与 point/rect/cell/grid），返回 event1…。"
         "kind=first_change：组合流程，定位第一次显著变化并写入结果包。"
+        "已建索引时自动查表，no_index=true 改为逐帧解码。"
         "结果只是按数值定义判定的候选，务必再用 pixelprobe_look 查看画面。"
     ),
     annotations=READ_ONLY,
@@ -303,6 +305,7 @@ async def pixelprobe_find(
     refs: dict[str, str] | None = None,
     offset: int = 0,
     limit: int = 50,
+    no_index: bool = False,
     wait: bool = True,
 ) -> Annotated[CallToolResult, ToolEnvelope]:
     if kind is None:
@@ -312,13 +315,13 @@ async def pixelprobe_find(
             raise ToolError("kind=query 需要 query 搜索语句")
         return await _capability(
             "find", media_path=media_path, at=at, options={**(options or {}), "query": query},
-            refs=refs, images=images, offset=offset, limit=limit, wait=wait,
+            refs=refs, images=images, offset=offset, limit=limit, no_index=no_index, wait=wait,
         )
     if query is not None:
         raise ToolError(f"query 只用于 kind=query；kind={kind} 时请去掉 query")
     return await _capability(
         kind, media_path=media_path, at=at, options=options, refs=refs, images=images,
-        offset=offset, limit=limit, wait=wait,
+        offset=offset, limit=limit, no_index=no_index, wait=wait,
     )
 
 

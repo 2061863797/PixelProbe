@@ -25,7 +25,9 @@ from pixelprobe.domain.tensor import MemoryArrayHandle, TensorField
 from pixelprobe.engine.execution import CancellationToken
 from pixelprobe.models.errors import InvalidRangeError
 from pixelprobe.operators.base import ResourcePolicy
-from pixelprobe.utils.resource_budget import ResourceBudget, budget_scope, check_active, require_memory
+from pixelprobe.utils.resource_budget import (
+    ResourceBudget, ambient_memory_budget, budget_scope, check_active, require_memory,
+)
 
 
 class WorkflowOptions(BaseModel):
@@ -154,7 +156,8 @@ def run_workflow(path: Path, *, output_path: Path, options: WorkflowOptions,
     if (reference_path is not None) != (options.workflow == "compare_media"):
         raise InvalidRangeError("仅 compare_media 必须提供第二个媒体")
     token = cancellation or CancellationToken()
-    resources = resources or ResourcePolicy(max_memory_bytes=256 * 1024**2,
+    # 未显式指定时按本机内存（MCP 工作进程内按该任务额度）给出上限
+    resources = resources or ResourcePolicy(max_memory_bytes=ambient_memory_budget(),
                                             max_temporary_bytes=512 * 1024**2)
     with budget_scope(ResourceBudget(resources.max_memory_bytes, resources.max_temporary_bytes,
                                     token.raise_if_cancelled)):

@@ -513,12 +513,18 @@ def test_mcp_generate_clamps_request_resources(
             "allow_partial": True,
         },
     }
-    envelope, _ = _service(tmp_path).run_capability(CapabilityInput(
-        capability="generate", media_path=str(target),
-        options={"requests": [request]}, output_name="resource-limited.bundle",
-    ))
+    from pixelprobe.utils.resource_budget import ResourceBudget, budget_scope
+    task_budget = 300 * 1024 * 1024
+    # 工作进程内的任务额度；客户端在 resources 里写多大都不能越过它
+    with budget_scope(ResourceBudget(task_budget, None)):
+        envelope, _ = _service(tmp_path).run_capability(CapabilityInput(
+            capability="generate", media_path=str(target),
+            options={"requests": [request]}, output_name="resource-limited.bundle",
+        ))
     assert envelope.success is True
-    assert captured["requests"][0].resources == MCP_GENERATE_RESOURCES  # type: ignore[index]
+    assert captured["requests"][0].resources == MCP_GENERATE_RESOURCES.model_copy(  # type: ignore[index]
+        update={"max_memory_bytes": task_budget},
+    )
 
 
 def test_mcp_file_identity_detects_change_after_path_validation(tmp_path: Path) -> None:

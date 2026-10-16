@@ -1,4 +1,8 @@
-"""只读取媒体头的执行预算；展示帧使用顺序解码成本，绝不按平均帧率换算。"""
+"""只读取媒体头的执行预算；展示帧使用顺序解码成本，绝不按平均帧率换算。
+
+估算只用于事先拒绝明显做不完的任务和判断能否加大额度重试；执行期停止线是任务额度，
+估低不会导致任务被停。各系数已按 720p～4K 实测校准，不必再为精确度继续调整。
+"""
 from __future__ import annotations
 
 from pixelprobe.utils.resource_budget import EVIDENCE_BYTES_PER_PIXEL

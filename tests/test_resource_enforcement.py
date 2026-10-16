@@ -110,8 +110,8 @@ def test_video_decode_plan_covers_measured_1080p_peak():
 
 def test_engine_plans_follow_streaming_cost_not_full_resolution_stack():
     """回归：flow/reduce/spectrum2d 曾按"全部帧 × 每像素 32 个浮点"估算到 1～2 GiB，MCP 直接拒绝而 CLI 可跑。"""
-    from pixelprobe_mcp.jobs import CAPABILITY_DEFAULT_RESOURCES
-    limit = CAPABILITY_DEFAULT_RESOURCES["flow"][0]
+    from pixelprobe_mcp.jobs import MEDIA_DEFAULT_MEMORY
+    limit = MEDIA_DEFAULT_MEMORY
     video_1080 = SimpleNamespace(width=1920, height=1080, media_type="video", frame_count=30)
     video_720 = SimpleNamespace(width=1280, height=720, media_type="video", frame_count=30)
     photo = SimpleNamespace(width=1086, height=1448, media_type="image", frame_count=1)
@@ -136,14 +136,57 @@ def test_sequential_scan_plan_covers_measured_peak(width, height, measured_mib):
     assert plan["memory_bytes"] >= measured_mib * MIB * 1.05
 
 
-def test_capability_default_reservations_include_runtime_allowance():
+def test_media_default_reservation_includes_runtime_allowance():
     """回归：引擎类能力默认只预留 256 MiB，扣掉 128 MiB 运行时余量后分析内存只剩一半。"""
-    from pixelprobe_mcp.jobs import CAPABILITY_DEFAULT_RESOURCES, estimate_operation_resources
+    from pixelprobe.capabilities import all_capabilities
+    from pixelprobe_mcp.jobs import estimate_operation_resources
     from pixelprobe_mcp.resource_plan import RUNTIME_BYTES
-    for name, (memory, _) in CAPABILITY_DEFAULT_RESOURCES.items():
-        assert memory - RUNTIME_BYTES >= 256 * MIB, name
-    memory, _ = estimate_operation_resources("capability", {"capability": "frame", "media_path": "x"})
-    assert memory - RUNTIME_BYTES >= 256 * MIB
+    for item in all_capabilities():
+        if not item.needs_media:
+            continue
+        memory, _ = estimate_operation_resources(
+            "capability", {"capability": item.name, "media_path": "x"},
+        )
+        assert memory - RUNTIME_BYTES >= 384 * MIB, item.name
+
+
+def test_plan_beyond_total_budget_is_not_retried():
+    """估算超出整份总预算时加大额度也做不完，不进入独占重试（否则白等其他任务结束）。"""
+    from pixelprobe_mcp.jobs import is_memory_failure
+    from pixelprobe_mcp.worker import PLAN_EXCEEDS_TOTAL
+    assert is_memory_failure("MCP_RESOURCE_LIMIT：实际执行计划超过任务预算；请缩小范围或提高总预算")
+    assert not is_memory_failure(f"MCP_RESOURCE_LIMIT：{PLAN_EXCEEDS_TOTAL}；请缩小范围或提高总预算")
+    assert not is_memory_failure("UNSUPPORTED_MEDIA：无法识别的图片格式，或文件已损坏")
+
+
+def test_real_worker_rejects_plan_beyond_total_without_retry(tmp_path):
+    """真实工作进程：估算超过总预算时报 PLAN_EXCEEDS_TOTAL，调度器只执行一次。"""
+    import pixelprobe_mcp.jobs as jobs
+    from pixelprobe_mcp.worker import PLAN_EXCEEDS_TOTAL
+    source = tmp_path / "big.png"
+    Image.new("RGB", (4000, 3000), (10, 20, 30)).save(source)
+    # 任务额度 512 MiB 小于总预算 600 MiB，旧逻辑会进入独占重试；估算约 1 GiB 超过总预算
+    config = ServerConfig((tmp_path,), tmp_path / "out", workers=2, total_memory_bytes=600 * MIB)
+    manager = jobs.JobManager(config)
+    calls = []
+    original = jobs.run_operation_sync
+
+    def counted(*args, **kwargs):
+        calls.append(kwargs["memory_limit_bytes"])
+        return original(*args, **kwargs)
+
+    try:
+        jobs.run_operation_sync = counted
+        job = manager.submit("capability", {"capability": "evidence", "media_path": str(source),
+                                            "output_name": "too-big"},
+                             timeout_seconds=60, persistent=False)
+        job.future.result(60)
+        assert job.status == "failed" and PLAN_EXCEEDS_TOTAL in (job.error or "")
+        assert len(calls) == 1 and job.memory_retry is None
+    finally:
+        jobs.run_operation_sync = original
+        manager.shutdown(wait=True)
+        shutdown_worker_pools()
 
 
 def test_crop_cannot_bypass_decode_budget(tmp_path):

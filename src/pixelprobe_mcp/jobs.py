@@ -20,8 +20,9 @@ from pydantic import BaseModel
 from pixelprobe_mcp.config import ServerConfig, PathAccessError, _is_reparse_point
 from pixelprobe_mcp.diagnostics import actionable_error, record_diagnostic
 from pixelprobe_mcp.models import ToolEnvelope
-from pixelprobe_mcp.resource_plan import RUNTIME_BYTES
-from pixelprobe_mcp.worker import WorkerError, run_operation_sync
+from pixelprobe.utils.resource_budget import system_available_memory_bytes, system_low_memory_bytes
+from pixelprobe_mcp.resource_plan import LIGHT_CAPABILITIES, RUNTIME_BYTES
+from pixelprobe_mcp.worker import PLAN_EXCEEDS_TOTAL, WorkerError, run_operation_sync
 
 
 class QueueFullError(RuntimeError):
@@ -42,26 +43,17 @@ OPERATION_DEFAULT_RESOURCES: dict[str, tuple[int, int]] = {
     "list_artifacts": (32 * MIB, 0),
     "read_artifact": (64 * MIB, 0),
 }
-# 写结果包的能力预留临时空间；生成正式表示需要较大的共享帧存储
-# 工作进程的预算计划 = 运行时余量（RUNTIME_BYTES）+ 分析内存；CLI 的分析预算为 256 MiB，
-# 这里必须额外预留运行时余量，否则 100 万像素以上的图片会在预检阶段被误拒
-_ANALYSIS_MIB = 256
-_WORKFLOW_MEMORY = (_ANALYSIS_MIB + RUNTIME_BYTES // MIB) * MIB
-# 媒体任务的通用预留：与 CLI 相同的 256 MiB 分析预算 + 运行时余量
-MEDIA_DEFAULT_MEMORY = _WORKFLOW_MEMORY
-# 引擎类能力还要映射共享帧存储（时间聚合会回读全部帧），多留 128 MiB；
-# 预留只在工作进程报回计划前生效，之后按计划收缩，不会长期占住总预算
-_ENGINE_MEMORY = _WORKFLOW_MEMORY + 128 * MIB
-CAPABILITY_DEFAULT_RESOURCES: dict[str, tuple[int, int]] = {
-    "generate": (_ENGINE_MEMORY, 2048 * MIB),
-    "evidence": (_WORKFLOW_MEMORY, 512 * MIB),
-    # 组合流程 1080p 计划约 400 MiB，预留与引擎类相同（报回计划后收缩）
-    "first_change": (_ENGINE_MEMORY, 512 * MIB),
-    "compare_media": (_ENGINE_MEMORY, 512 * MIB),
-    "quality_overview": (_ENGINE_MEMORY, 512 * MIB),
-    # 走引擎的能力：解码帧存放在共享帧存储中，需要临时空间
-    **{name: (_ENGINE_MEMORY, 2048 * MIB) for name in (
-        "timeline", "xt", "yt", "reduce", "spectrum", "spectrum2d", "flow",
+# 媒体任务的最低预留（运行时余量 + 384 MiB 分析内存）。提交时实际预留取它与
+# "总预算 ÷ 工作进程数"中较大者，且预留就是执行期硬上限、不随估算收缩；
+# 按本机自动预算时份额通常远大于它，它只在总预算被设得很小时起作用
+MEDIA_DEFAULT_MEMORY = RUNTIME_BYTES + 384 * MIB
+# 写结果包的能力预留临时空间；走引擎的能力把解码帧放在共享帧存储，需要更大的临时空间
+CAPABILITY_DEFAULT_TEMPORARY: dict[str, int] = {
+    **{name: 512 * MIB for name in (
+        "evidence", "first_change", "compare_media", "quality_overview",
+    )},
+    **{name: 2048 * MIB for name in (
+        "generate", "timeline", "xt", "yt", "reduce", "spectrum", "spectrum2d", "flow",
     )},
 }
 
@@ -70,9 +62,8 @@ def estimate_operation_resources(
     operation: str, payload: dict[str, Any] | None = None,
 ) -> tuple[int, int]:
     if operation == "capability" and isinstance(payload, dict):
-        default_mem, default_temp = CAPABILITY_DEFAULT_RESOURCES.get(
-            str(payload.get("capability")), (64 * MIB, 0),
-        )
+        default_mem = 64 * MIB
+        default_temp = CAPABILITY_DEFAULT_TEMPORARY.get(str(payload.get("capability")), 0)
     else:
         default_mem, default_temp = OPERATION_DEFAULT_RESOURCES.get(operation, (64 * MIB, 0))
     if payload and isinstance(payload, dict):
@@ -90,15 +81,23 @@ def estimate_operation_resources(
 
 
 def is_memory_failure(message: str) -> bool:
-    """超出任务额度、内存分配失败、整机内存过低，或引擎单步内存上限不足。"""
-    return message.startswith(("MCP_RESOURCE_LIMIT", "MATERIALIZATION_LIMIT_EXCEEDED"))
+    """可以靠加大额度解决的内存失败：超出任务额度、内存分配失败、整机内存过低、引擎单步上限不足。
+
+    估算超出整份总预算的不算：加大到总预算也做不完，重试只会白等。
+    """
+    return (message.startswith(("MCP_RESOURCE_LIMIT", "MATERIALIZATION_LIMIT_EXCEEDED"))
+            and PLAN_EXCEEDS_TOTAL not in message)
 
 
 def _system_has_room(operation: str, payload: dict[str, Any]) -> bool:
-    """整机空闲内存是否够启动该任务：保底余量 + 该类任务的默认预留。"""
-    from pixelprobe_mcp.worker import _system_available_bytes, system_low_memory_bytes
+    """整机空闲内存是否够启动该任务：保底余量 + 该类任务的默认预留。
+
+    只读元数据的轻任务和结果包读取不检查，内存紧张时也能查看信息与任务状态。
+    """
+    if operation != "capability" or payload.get("capability") in LIGHT_CAPABILITIES:
+        return True
     need, _ = estimate_operation_resources(operation, payload)
-    return _system_available_bytes() >= system_low_memory_bytes() + need
+    return system_available_memory_bytes() >= system_low_memory_bytes() + need
 
 
 _JOB_IMAGE = re.compile(r"[0-9a-f]{32}\.\d{1,3}\.png")

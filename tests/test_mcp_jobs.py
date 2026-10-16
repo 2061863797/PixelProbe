@@ -452,6 +452,15 @@ def test_non_memory_failure_and_second_memory_failure_are_not_retried(tmp_path, 
         manager.shutdown(wait=True)
 
 
+def test_light_tasks_skip_free_memory_wait(monkeypatch):
+    """整机内存紧张时，只读信息的轻任务和结果包读取仍可执行，重任务才等待。"""
+    import pixelprobe_mcp.jobs as jobs
+    monkeypatch.setattr(jobs, "system_available_memory_bytes", lambda: 0)
+    assert jobs._system_has_room("capability", {"capability": "info", "media_path": "x"})
+    assert jobs._system_has_room("read_artifact", {"bundle_path": "b"})
+    assert not jobs._system_has_room("capability", {"capability": "scan", "media_path": "x"})
+
+
 def test_memory_retry_waits_for_exclusive_budget(tmp_path, monkeypatch):
     """重试要等其他任务结束、独占整份预算，避免两个大任务同时重试再次一起超限。"""
     import pixelprobe_mcp.jobs as jobs

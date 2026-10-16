@@ -47,6 +47,25 @@ def machine_memory_budget() -> int:
     return max(MIN_MEMORY_BUDGET_BYTES, int(value))
 
 
+def system_available_memory_bytes() -> int:
+    """整机当前空闲内存；读不到时视为充足，不因监测失败而阻塞任务。"""
+    try:
+        import psutil
+        return int(psutil.virtual_memory().available)
+    except Exception:
+        return 1 << 62
+
+
+def system_low_memory_bytes() -> int:
+    """整机空闲内存低于此值即视为紧张：物理内存的 5%，至少 256 MiB。"""
+    try:
+        import psutil
+        total = int(psutil.virtual_memory().total)
+    except Exception:
+        return MIN_MEMORY_BUDGET_BYTES
+    return max(MIN_MEMORY_BUDGET_BYTES, total // 20)
+
+
 def ambient_memory_budget() -> int:
     """当前作用域的内存上限：MCP 工作进程内为该任务分到的额度，否则为本机预算。"""
     budget = current_budget()

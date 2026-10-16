@@ -36,7 +36,8 @@ def info(
 ) -> None:
     """读取图片或视频的基本信息（尺寸、帧率、总帧数、编码等）。
 
-    图片另给出通道语义、调色板与透明度分析和提示标志；视频另给出索引状态。
+    图片另给出通道语义、调色板与透明度分析和提示标志（需完整读取一次图片，
+    超大图片会慢一些）；视频另给出索引状态。
     """
     ctx = CliContext(json_mode, quiet, verbose, no_progress)
     with cli_guard("info", ctx):

@@ -5,10 +5,14 @@
 本节优先于下方历史检查点。
 
 - 版本号 2.0.0；新增 `docs/migration-2.0.md`；README 中英文更新定位与 2.0 新增；安装与 uvx 文档固定 v2.0.0。
-- 本地候选：`build/release-2.0.0-20261016/`
-  - `pixelprobe-2.0.0-py3-none-any.whl` SHA256 `dbeee062abbaae6fe5be8ed6730b6563ec073bee2e0e33c308e93c5fd08f019b`
-  - `pixelprobe-2.0.0.tar.gz` SHA256 `df53d4e3705098371e41f5a16c2acb7a5285e22198fcab4eeee6cded75a75c18`
-- 验证（Windows，Python 3.12）：
+- 代码审核修复（b604e6f）后重新构建并重做全部本地检查，当前候选：`build/release-2.0.0-20261016b/`
+  - `pixelprobe-2.0.0-py3-none-any.whl` SHA256 `d3db2dd60e928d7cd6ccf5928c0ab694848e671b747a5e7361ade4d5f6d4bdf8`
+  - `pixelprobe-2.0.0.tar.gz` SHA256 `2a51a53878e031d631441212a2e38c6b1b6e6176634ddc1b223f025252e1e160`
+  - twine 通过；干净环境安装（版本、find、差分自适应切片、doctor）通过；uvx 离线发行测试 4 passed；
+    v1.1.0 → 2.0.0 → v1.1.0 升级回滚通过。
+  - GitHub CI（PR #1，b604e6f）：Linux Python 3.11/3.12/3.13 各 557 passed、0 skipped；wheel 隔离安装通过。
+- 修复前的首个候选 `build/release-2.0.0-20261016/`（wheel SHA256 `dbeee062…f019b`）已过时，不得发布。
+- 首个候选的验证（Windows，Python 3.12）：
   - wheel 内含全部 2.0 新模块、不含已删除的 compat；`twine check` 两个包均 PASSED；
   - 干净虚拟环境安装完整 extra：`pixelprobe --version` 为 2.0.0，`find` 结果正确，`doctor` healthy 且无异常项；
   - uvx 使用本地 wheel 预热后 `--offline` 运行 `tests/test_distribution.py`：4 passed（强制超时回收、

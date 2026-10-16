@@ -53,13 +53,25 @@ async def verify(args):
             async with stdio_client(StdioServerParameters(**selected, env=env)) as (reader, writer):
                 async with ClientSession(reader, writer) as session:
                     await session.initialize()
-                    result = await session.call_tool("pixelprobe_read_pixels", {
-                        "media_path": str(source), "points": [{"x": 0, "y": 0}],
-                    })
-                    assert not result.isError, result.content
-                    assert result.structuredContent["data"]["pixels"][0]["stored_sample"] == [17, 83, 201]
+                    tools = {tool.name for tool in (await session.list_tools()).tools}
+                    # 1.x 用 pixelprobe_read_pixels；2.0 起改为 pixelprobe_measure（读取同一原生样本）
+                    if "pixelprobe_read_pixels" in tools:
+                        result = await session.call_tool("pixelprobe_read_pixels", {
+                            "media_path": str(source), "points": [{"x": 0, "y": 0}],
+                        })
+                        assert not result.isError, result.content
+                        sample = result.structuredContent["data"]["pixels"][0]["stored_sample"]
+                    else:
+                        result = await session.call_tool("pixelprobe_measure", {
+                            "media_path": str(source), "what": "pixel", "at": "point(0,0)",
+                            "options": {"sample": "native"},
+                        })
+                        assert not result.isError, result.content
+                        sample = result.structuredContent["data"]["pixels"][0]["values"]
+                    assert sample == [17, 83, 201], sample
             # stdio 上下文退出后才切换下一个版本，避免覆盖或复用运行中的进程。
-            reports.append({"phase": phase, "version": expected, "mcp_pixel_verified": True})
+            reports.append({"phase": phase, "version": expected, "mcp_pixel_verified": True,
+                            "tool_count": len(tools)})
 
         warm(old, identities[0]["version"])
         await activate(old, identities[0]["version"], "before_upgrade")

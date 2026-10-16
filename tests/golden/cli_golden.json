@@ -1,0 +1,1955 @@
+{
+ "changes_grid": {
+  "data": {
+   "end_frame": 29,
+   "event_threshold_used": 0.587427,
+   "events": [
+    {
+     "end_frame": 16,
+     "end_time": 0.533,
+     "mean_normalized": 0.992188,
+     "peak_frame": 15,
+     "peak_normalized": 0.994792,
+     "peak_score": 253.6719,
+     "peak_time": 0.5,
+     "record_count": 2,
+     "start_frame": 14,
+     "start_time": 0.5
+    }
+   ],
+   "frames_analyzed": 30,
+   "grid": {
+    "height": 32,
+    "step": 4,
+    "width": 32,
+    "x": 0,
+    "y": 0
+   },
+   "mode": "grid",
+   "point": null,
+   "rect": null,
+   "sample_every": 1,
+   "start_frame": 0,
+   "top": [
+    {
+     "frame": 15,
+     "normalized_score": 0.994792,
+     "previous_frame": 14,
+     "score": 253.6719,
+     "time_ms": 500.0,
+     "time_seconds": 0.5
+    },
+    {
+     "frame": 16,
+     "normalized_score": 0.989583,
+     "previous_frame": 15,
+     "score": 252.3438,
+     "time_ms": 533.0,
+     "time_seconds": 0.533
+    }
+   ]
+  },
+  "exit_code": 0,
+  "files": {}
+ },
+ "changes_point": {
+  "data": {
+   "end_frame": 29,
+   "event_threshold_used": 0.394963,
+   "events": [
+    {
+     "end_frame": 16,
+     "end_time": 0.533,
+     "mean_normalized": 0.666667,
+     "peak_frame": 15,
+     "peak_normalized": 0.666667,
+     "peak_score": 510.0,
+     "peak_time": 0.5,
+     "record_count": 2,
+     "start_frame": 14,
+     "start_time": 0.5
+    }
+   ],
+   "frames_analyzed": 30,
+   "grid": null,
+   "mode": "point",
+   "point": {
+    "x": 24,
+    "y": 16
+   },
+   "rect": null,
+   "sample_every": 1,
+   "start_frame": 0,
+   "top": [
+    {
+     "frame": 15,
+     "normalized_score": 0.666667,
+     "previous_frame": 14,
+     "score": 510.0,
+     "time_ms": 500.0,
+     "time_seconds": 0.5
+    },
+    {
+     "frame": 16,
+     "normalized_score": 0.666667,
+     "previous_frame": 15,
+     "score": 510.0,
+     "time_ms": 533.0,
+     "time_seconds": 0.533
+    }
+   ]
+  },
+  "exit_code": 0,
+  "files": {}
+ },
+ "changes_range": {
+  "data": {
+   "end_frame": 10,
+   "event_threshold_used": 0.0,
+   "events": [],
+   "frames_analyzed": 11,
+   "grid": null,
+   "mode": "point",
+   "point": {
+    "x": 24,
+    "y": 16
+   },
+   "rect": null,
+   "sample_every": 1,
+   "start_frame": 0,
+   "top": [
+    {
+     "frame": 1,
+     "normalized_score": 0.0,
+     "previous_frame": 0,
+     "score": 0.0,
+     "time_ms": 33.0,
+     "time_seconds": 0.033
+    },
+    {
+     "frame": 2,
+     "normalized_score": 0.0,
+     "previous_frame": 1,
+     "score": 0.0,
+     "time_ms": 67.0,
+     "time_seconds": 0.067
+    },
+    {
+     "frame": 3,
+     "normalized_score": 0.0,
+     "previous_frame": 2,
+     "score": 0.0,
+     "time_ms": 100.0,
+     "time_seconds": 0.1
+    },
+    {
+     "frame": 4,
+     "normalized_score": 0.0,
+     "previous_frame": 3,
+     "score": 0.0,
+     "time_ms": 133.0,
+     "time_seconds": 0.133
+    },
+    {
+     "frame": 5,
+     "normalized_score": 0.0,
+     "previous_frame": 4,
+     "score": 0.0,
+     "time_ms": 167.0,
+     "time_seconds": 0.167
+    },
+    {
+     "frame": 6,
+     "normalized_score": 0.0,
+     "previous_frame": 5,
+     "score": 0.0,
+     "time_ms": 200.0,
+     "time_seconds": 0.2
+    },
+    {
+     "frame": 7,
+     "normalized_score": 0.0,
+     "previous_frame": 6,
+     "score": 0.0,
+     "time_ms": 233.0,
+     "time_seconds": 0.233
+    },
+    {
+     "frame": 8,
+     "normalized_score": 0.0,
+     "previous_frame": 7,
+     "score": 0.0,
+     "time_ms": 267.0,
+     "time_seconds": 0.267
+    },
+    {
+     "frame": 9,
+     "normalized_score": 0.0,
+     "previous_frame": 8,
+     "score": 0.0,
+     "time_ms": 300.0,
+     "time_seconds": 0.3
+    },
+    {
+     "frame": 10,
+     "normalized_score": 0.0,
+     "previous_frame": 9,
+     "score": 0.0,
+     "time_ms": 333.0,
+     "time_seconds": 0.333
+    }
+   ]
+  },
+  "exit_code": 0,
+  "files": {
+   "changes.csv": "f3e5aed9501654ff1c92debbba5352d7b834622e0df57adb39d89a27311f8d5e"
+  }
+ },
+ "changes_rect": {
+  "data": {
+   "end_frame": 29,
+   "event_threshold_used": 0.592162,
+   "events": [
+    {
+     "end_frame": 16,
+     "end_time": 0.533,
+     "mean_normalized": 0.999081,
+     "peak_frame": 15,
+     "peak_normalized": 0.999099,
+     "peak_score": 254.7702,
+     "peak_time": 0.5,
+     "record_count": 2,
+     "start_frame": 14,
+     "start_time": 0.5
+    }
+   ],
+   "frames_analyzed": 30,
+   "grid": null,
+   "mode": "rect",
+   "point": null,
+   "rect": {
+    "height": 32,
+    "width": 32,
+    "x": 0,
+    "y": 0
+   },
+   "sample_every": 1,
+   "start_frame": 0,
+   "top": [
+    {
+     "frame": 15,
+     "normalized_score": 0.999099,
+     "previous_frame": 14,
+     "score": 254.7702,
+     "time_ms": 500.0,
+     "time_seconds": 0.5
+    },
+    {
+     "frame": 16,
+     "normalized_score": 0.999063,
+     "previous_frame": 15,
+     "score": 254.7611,
+     "time_ms": 533.0,
+     "time_seconds": 0.533
+    },
+    {
+     "frame": 1,
+     "normalized_score": 0.000669,
+     "previous_frame": 0,
+     "score": 0.1706,
+     "time_ms": 33.0,
+     "time_seconds": 0.033
+    }
+   ]
+  },
+  "exit_code": 0,
+  "files": {}
+ },
+ "compare": {
+  "data": {
+   "bbox": {
+    "height": 21,
+    "width": 6,
+    "x": 0,
+    "y": 8
+   },
+   "changed_pixels": 3,
+   "changed_ratio": 0.00293,
+   "frame_a": 0,
+   "frame_b": 5,
+   "max_abs_diff": 255,
+   "mean_abs_diff": 0.1888,
+   "rect": null,
+   "threshold": 10,
+   "time_a": 0.0,
+   "time_b": 0.167
+  },
+  "exit_code": 0,
+  "files": {
+   "diff.png": "png:RGB:32x32:565fe8eca3eae8203e72e12a5092eec5ed2afb913dd71887f309851ee706cceb"
+  }
+ },
+ "evidence_image": {
+  "data": {
+   "artifact_count": 13,
+   "automatic_authenticity_conclusion": null,
+   "c2pa": {
+    "active_manifest": null,
+    "automatic_authenticity_conclusion": null,
+    "policy": {
+     "ocsp_fetch": false,
+     "remote_manifest_fetch": false,
+     "revocation_scope": "embedded_only_no_online_check",
+     "trust_anchors_sha256": null,
+     "trust_source": "sdk_defaults"
+    },
+    "sdk_version": "0.37.10",
+    "status": "completed",
+    "verification_state": "no_credentials"
+   },
+   "edge_candidates": {
+    "block_size": 32,
+    "candidate_regions": [
+     {
+      "height": 16,
+      "score": 11.399706,
+      "width": 16,
+      "x": 0,
+      "y": 0
+     }
+    ],
+    "limitations": [
+     "自然物体轮廓、文字和高对比纹理会产生强边缘",
+     "该热力图定位边缘异常候选，不直接识别拼接"
+    ],
+    "mean_gradient": 11.285359,
+    "status": "completed"
+   },
+   "ela": {
+    "reason": "ELA 仅适用于 JPEG 来源",
+    "status": "not_applicable"
+   },
+   "metadata": {
+    "exif": {},
+    "exif_entry_count": 0,
+    "file_size_bytes": 91,
+    "format": "PNG",
+    "height": 16,
+    "icc_profile_present": false,
+    "mode": "RGB",
+    "status": "completed",
+    "width": 16,
+    "xmp_present": false
+   },
+   "noise_consistency": {
+    "block_size": 32,
+    "candidate_regions": [
+     {
+      "height": 16,
+      "score": 1.365498,
+      "width": 16,
+      "x": 0,
+      "y": 0
+     }
+    ],
+    "limitations": [
+     "纹理、锐化、降噪、景深和局部压缩都会改变噪声残差",
+     "候选区域需要结合原图、元数据和其他证据复核"
+    ],
+    "mean_residual": 0.651042,
+    "status": "completed",
+    "std_residual": 1.200303
+   },
+   "schema_version": "0.1.0"
+  },
+  "exit_code": 0,
+  "files": {}
+ },
+ "flow_accumulate": {
+  "data": {
+   "accumulated": true,
+   "compensated": false,
+   "dominant_angle_deg": -0.0,
+   "frame_a": 0,
+   "frame_b": 5,
+   "frames_analyzed": 6,
+   "global_motion": {
+    "dx": 0.0001,
+    "dy": 0.0,
+    "matrix": [
+     [
+      0.999999,
+      -0.0,
+      5.8e-05
+     ],
+     [
+      0.0,
+      0.999999,
+      6e-06
+     ]
+    ],
+    "rotation_deg": 0.0,
+    "scale": 0.999999
+   },
+   "mag_threshold": 1.0,
+   "max_magnitude": 10.0,
+   "mean_magnitude": 1.744,
+   "motion_bbox": {
+    "height": 30,
+    "width": 30,
+    "x": 0,
+    "y": 17
+   },
+   "p95_magnitude": 10.0
+  },
+  "exit_code": 0,
+  "files": {}
+ },
+ "flow_compensated": {
+  "data": {
+   "accumulated": false,
+   "compensated": true,
+   "dominant_angle_deg": -0.0,
+   "frame_a": 0,
+   "frame_b": 4,
+   "frames_analyzed": 2,
+   "global_motion": {
+    "dx": 0.0011,
+    "dy": 0.0004,
+    "matrix": [
+     [
+      0.99999,
+      5e-06,
+      0.00107
+     ],
+     [
+      -5e-06,
+      0.99999,
+      0.000434
+     ]
+    ],
+    "rotation_deg": -0.0003,
+    "scale": 0.99999
+   },
+   "mag_threshold": 0.5,
+   "max_magnitude": 7.999,
+   "mean_magnitude": 1.2029,
+   "motion_bbox": {
+    "height": 30,
+    "width": 23,
+    "x": 0,
+    "y": 17
+   },
+   "p95_magnitude": 7.9989
+  },
+  "exit_code": 0,
+  "files": {
+   "flow_c.png": "png:RGB:64x64:6a86d547dc3afb478d572c739a02d383f2f24540bbaad58de046a3b7c000f799",
+   "mag_c.png": "png:RGB:64x64:3e4293465b169626e989b147512ad86b0bcc6c0fb8b4adf456ec8d05d40d8543"
+  }
+ },
+ "flow_pair": {
+  "data": {
+   "accumulated": false,
+   "compensated": false,
+   "dominant_angle_deg": -0.0,
+   "frame_a": 0,
+   "frame_b": 1,
+   "frames_analyzed": 2,
+   "global_motion": {
+    "dx": 0.4688,
+    "dy": 0.2813,
+    "matrix": [
+     [
+      0.991629,
+      0.001674,
+      0.468755
+     ],
+     [
+      -0.001674,
+      0.991629,
+      0.28125
+     ]
+    ],
+    "rotation_deg": -0.0967,
+    "scale": 0.991631
+   },
+   "mag_threshold": 1.0,
+   "max_magnitude": 2.0,
+   "mean_magnitude": 0.3005,
+   "motion_bbox": {
+    "height": 28,
+    "width": 22,
+    "x": 0,
+    "y": 18
+   },
+   "p95_magnitude": 2.0
+  },
+  "exit_code": 0,
+  "files": {
+   "flow.png": "png:RGB:64x64:da00152a04f4e939beff32a4e4a52f851a815f3acfdd8dac4f6be6877fbdf32f",
+   "mag.png": "png:RGB:64x64:adb2f9e92b2201352a7de8c13953578fcee02d5cbac1c3ff3c9589d6327119f1"
+  }
+ },
+ "frame_crop": {
+  "data": {
+   "crop": {
+    "height": 8,
+    "width": 8,
+    "x": 8,
+    "y": 6
+   },
+   "frame": 10,
+   "height": 8,
+   "media_type": "video",
+   "output_height": 8,
+   "output_width": 8,
+   "source_height": 32,
+   "source_width": 32,
+   "time_ms": 333.0,
+   "time_seconds": 0.333,
+   "width": 8
+  },
+  "exit_code": 0,
+  "files": {
+   "crop.png": "png:RGB:8x8:553cc0944d046840fbeffb877219e29d1f77df9be99f60aaec0715fc9ac1a195"
+  }
+ },
+ "frame_index": {
+  "data": {
+   "crop": null,
+   "frame": 7,
+   "height": 32,
+   "media_type": "video",
+   "output_height": 32,
+   "output_width": 32,
+   "source_height": 32,
+   "source_width": 32,
+   "time_ms": 233.0,
+   "time_seconds": 0.233,
+   "width": 32
+  },
+  "exit_code": 0,
+  "files": {
+   "frame7.png": "png:RGB:32x32:0dfd501f44cd4ae0753b33330a10dd142f243003bcce01bdb348fec6e2460345"
+  }
+ },
+ "frame_time": {
+  "data": {
+   "crop": null,
+   "frame": 15,
+   "height": 32,
+   "media_type": "video",
+   "output_height": 32,
+   "output_width": 32,
+   "source_height": 32,
+   "source_width": 32,
+   "time_ms": 500.0,
+   "time_seconds": 0.5,
+   "width": 32
+  },
+  "exit_code": 0,
+  "files": {
+   "frame_t.png": "png:RGB:32x32:1a7493ff2f2bde5f78405d46eb01abfeaea9b0a95fa5b6cec211b05faa0cf1d3"
+  }
+ },
+ "frame_vfr_time": {
+  "data": {
+   "crop": null,
+   "frame": 6,
+   "height": 32,
+   "media_type": "video",
+   "output_height": 32,
+   "output_width": 32,
+   "source_height": 32,
+   "source_width": 32,
+   "time_ms": 300.0,
+   "time_seconds": 0.3,
+   "width": 32
+  },
+  "exit_code": 0,
+  "files": {
+   "vfr.png": "png:RGB:32x32:b9513a8998770f0ac4eb88d387ea5eeface84d1a582b95a7305adde0f5108977"
+  }
+ },
+ "info_image": {
+  "data": {
+   "channels": 3,
+   "codec": "png",
+   "color_mode": "RGB",
+   "duration_seconds": null,
+   "file_size_bytes": 91,
+   "fps": null,
+   "frame_count": null,
+   "frame_count_estimated": false,
+   "height": 16,
+   "is_vfr": null,
+   "media_type": "image",
+   "pixel_format": null,
+   "time_base": null,
+   "width": 16
+  },
+  "exit_code": 0,
+  "files": {}
+ },
+ "info_vfr": {
+  "data": {
+   "channels": 3,
+   "codec": "h264",
+   "color_mode": null,
+   "duration_seconds": 0.966,
+   "file_size_bytes": 18888,
+   "fps": 30.0,
+   "frame_count": 29,
+   "frame_count_estimated": true,
+   "height": 32,
+   "is_vfr": false,
+   "media_type": "video",
+   "pixel_format": "gbrp",
+   "time_base": "1/1000",
+   "width": 32
+  },
+  "exit_code": 0,
+  "files": {}
+ },
+ "info_video": {
+  "data": {
+   "channels": 3,
+   "codec": "h264",
+   "color_mode": null,
+   "duration_seconds": 1.0,
+   "file_size_bytes": 2652,
+   "fps": 30.0,
+   "frame_count": 30,
+   "frame_count_estimated": true,
+   "height": 32,
+   "is_vfr": false,
+   "media_type": "video",
+   "pixel_format": "gbrp",
+   "time_base": "1/1000",
+   "width": 32
+  },
+  "exit_code": 0,
+  "files": {}
+ },
+ "pixel_image": {
+  "data": {
+   "frame": null,
+   "height": 16,
+   "media_type": "image",
+   "pixels": [
+    {
+     "frame": null,
+     "hex": "#000000",
+     "hsv": {
+      "h": 0.0,
+      "s": 0.0,
+      "v": 0.0
+     },
+     "lab": {
+      "a": 0.0,
+      "b": 0.0,
+      "l": 0.0
+     },
+     "luminance": 0.0,
+     "luminance_linear": 0.0,
+     "pixel_id": 0,
+     "rgb": {
+      "b": 0,
+      "g": 0,
+      "r": 0
+     },
+     "time_ms": null,
+     "time_seconds": null,
+     "x": 0,
+     "y": 0
+    },
+    {
+     "frame": null,
+     "hex": "#F0F0F0",
+     "hsv": {
+      "h": 0.0,
+      "s": 0.0,
+      "v": 94.12
+     },
+     "lab": {
+      "a": -0.0,
+      "b": 0.0,
+      "l": 94.8
+     },
+     "luminance": 240.0,
+     "luminance_linear": 222.2,
+     "pixel_id": 255,
+     "rgb": {
+      "b": 240,
+      "g": 240,
+      "r": 240
+     },
+     "time_ms": null,
+     "time_seconds": null,
+     "x": 15,
+     "y": 15
+    },
+    {
+     "frame": null,
+     "hex": "#305040",
+     "hsv": {
+      "h": 150.0,
+      "s": 40.0,
+      "v": 31.37
+     },
+     "lab": {
+      "a": -15.93,
+      "b": 5.75,
+      "l": 31.2
+     },
+     "luminance": 72.04,
+     "luminance_linear": 17.18,
+     "pixel_id": 83,
+     "rgb": {
+      "b": 64,
+      "g": 80,
+      "r": 48
+     },
+     "time_ms": null,
+     "time_seconds": null,
+     "x": 3,
+     "y": 5
+    }
+   ],
+   "time_ms": null,
+   "time_seconds": null,
+   "width": 16
+  },
+  "exit_code": 0,
+  "files": {}
+ },
+ "pixel_image_native": {
+  "data": {
+   "height": 16,
+   "media_type": "image",
+   "native_image": {
+    "alpha_representation": "none",
+    "bands": [
+     "R",
+     "G",
+     "B"
+    ],
+    "bits_per_sample": 8,
+    "dtype": "uint8",
+    "has_alpha": false,
+    "mode": "RGB",
+    "shape": [
+     16,
+     16,
+     3
+    ],
+    "source_format": "png"
+   },
+   "pixels": [
+    {
+     "channels": [
+      "R",
+      "G",
+      "B"
+     ],
+     "dtype": "uint8",
+     "pixel_id": 0,
+     "sample_semantics": "stored_sample",
+     "values": [
+      0,
+      0,
+      0
+     ],
+     "x": 0,
+     "y": 0
+    }
+   ],
+   "sample_semantics": "stored_sample",
+   "width": 16
+  },
+  "exit_code": 0,
+  "files": {}
+ },
+ "pixel_video": {
+  "data": {
+   "frame": 12,
+   "height": 32,
+   "media_type": "video",
+   "pixels": [
+    {
+     "frame": 12,
+     "hex": "#FF0000",
+     "hsv": {
+      "h": 0.0,
+      "s": 100.0,
+      "v": 100.0
+     },
+     "lab": {
+      "a": 80.09,
+      "b": 67.2,
+      "l": 53.24
+     },
+     "luminance": 54.21,
+     "luminance_linear": 54.23,
+     "pixel_id": 268,
+     "rgb": {
+      "b": 0,
+      "g": 0,
+      "r": 255
+     },
+     "time_ms": 400.0,
+     "time_seconds": 0.4,
+     "x": 12,
+     "y": 8
+    },
+    {
+     "frame": 12,
+     "hex": "#00FF00",
+     "hsv": {
+      "h": 120.0,
+      "s": 100.0,
+      "v": 100.0
+     },
+     "lab": {
+      "a": -86.18,
+      "b": 83.18,
+      "l": 87.73
+     },
+     "luminance": 182.38,
+     "luminance_linear": 182.36,
+     "pixel_id": 536,
+     "rgb": {
+      "b": 0,
+      "g": 255,
+      "r": 0
+     },
+     "time_ms": 400.0,
+     "time_seconds": 0.4,
+     "x": 24,
+     "y": 16
+    }
+   ],
+   "time_ms": 400.0,
+   "time_seconds": 0.4,
+   "width": 32
+  },
+  "exit_code": 0,
+  "files": {}
+ },
+ "reduce_diff_rect": {
+  "data": {
+   "destripe": true,
+   "end_frame": 29,
+   "frames_analyzed": 30,
+   "image_height": 10,
+   "image_width": 12,
+   "op": "diff",
+   "p_high": 95.0,
+   "p_low": 5.0,
+   "rect": {
+    "height": 10,
+    "width": 12,
+    "x": 3,
+    "y": 4
+   },
+   "sample_every": 1,
+   "smooth": 3,
+   "start_frame": 0,
+   "stat_max": [
+    35.1724,
+    17.5862,
+    17.5862
+   ],
+   "stat_mean": [
+    19.1983,
+    17.5862,
+    17.5862
+   ],
+   "stat_min": [
+    17.5862,
+    17.5862,
+    17.5862
+   ],
+   "stretch_domain": "detrended_residual+smoothed",
+   "stretch_high_value": 0.342,
+   "stretch_low_value": -0.1466
+  },
+  "exit_code": 0,
+  "files": {
+   "diff_rect.png": "png:RGB:12x10:ce84f7f5010cebd5d95c9e825a0d1b13f0a11f2c79853be11bac589045e9bc44"
+  }
+ },
+ "reduce_mean": {
+  "data": {
+   "destripe": false,
+   "end_frame": 29,
+   "frames_analyzed": 30,
+   "image_height": 32,
+   "image_width": 32,
+   "op": "mean",
+   "p_high": 99.0,
+   "p_low": 1.0,
+   "rect": null,
+   "sample_every": 1,
+   "smooth": 0,
+   "start_frame": 0,
+   "stat_max": [
+    120.5,
+    255.0,
+    36.5
+   ],
+   "stat_mean": [
+    8.8501,
+    8.7954,
+    8.5273
+   ],
+   "stat_min": [
+    8.5,
+    8.5,
+    8.5
+   ],
+   "stretch_domain": "raw",
+   "stretch_high_value": 17.0,
+   "stretch_low_value": 8.5
+  },
+  "exit_code": 0,
+  "files": {
+   "mean.png": "png:RGB:32x32:55bef551039f57565c36c21e250629727651320e3d973003989dd90519d37cee"
+  }
+ },
+ "reduce_median_range": {
+  "data": {
+   "destripe": false,
+   "end_frame": 20,
+   "frames_analyzed": 10,
+   "image_height": 64,
+   "image_width": 64,
+   "op": "median",
+   "p_high": 99.0,
+   "p_low": 1.0,
+   "rect": null,
+   "sample_every": 2,
+   "smooth": 0,
+   "start_frame": 2,
+   "stat_max": [
+    234.0,
+    228.0,
+    233.5
+   ],
+   "stat_mean": [
+    126.4619,
+    127.9126,
+    127.3765
+   ],
+   "stat_min": [
+    28.0,
+    16.0,
+    30.0
+   ],
+   "stretch_domain": "raw",
+   "stretch_high_value": 203.0,
+   "stretch_low_value": 49.0
+  },
+  "exit_code": 0,
+  "files": {
+   "median.png": "png:RGB:64x64:5df65bf7716d2f8eaae6883ff698e9e3a649969e7e36095da1f41aa3b2434f67"
+  }
+ },
+ "reduce_std": {
+  "data": {
+   "destripe": false,
+   "end_frame": 39,
+   "frames_analyzed": 40,
+   "image_height": 64,
+   "image_width": 64,
+   "op": "std",
+   "p_high": 99.0,
+   "p_low": 1.0,
+   "rect": null,
+   "sample_every": 1,
+   "smooth": 0,
+   "start_frame": 0,
+   "stat_max": [
+    91.1362,
+    89.1533,
+    90.7918
+   ],
+   "stat_mean": [
+    70.573,
+    70.6203,
+    70.524
+   ],
+   "stat_min": [
+    28.6954,
+    28.1078,
+    28.1369
+   ],
+   "stretch_domain": "raw",
+   "stretch_high_value": 84.6952,
+   "stretch_low_value": 33.7441
+  },
+  "exit_code": 0,
+  "files": {
+   "std.png": "png:RGB:64x64:3043e6280738ebe4a30d01824e76fa0a782453eab82d672fff92a14de85eb7c3"
+  }
+ },
+ "region_image": {
+  "data": {
+   "frame": null,
+   "media_type": "image",
+   "statistics": {
+    "max_rgb": {
+     "b": 112.0,
+     "g": 112.0,
+     "r": 112.0
+    },
+    "mean_hsv": {
+     "h": 210.0,
+     "s": 54.69,
+     "v": 30.2
+    },
+    "mean_lab": {
+     "a": 1.05,
+     "b": 2.81,
+     "l": 25.23
+    },
+    "mean_luminance": 56.0,
+    "mean_rgb": {
+     "b": 56.0,
+     "g": 56.0,
+     "r": 56.0
+    },
+    "median_rgb": {
+     "b": 56.0,
+     "g": 56.0,
+     "r": 56.0
+    },
+    "min_rgb": {
+     "b": 0.0,
+     "g": 0.0,
+     "r": 0.0
+    },
+    "pixel_count": 64,
+    "rect": {
+     "height": 8,
+     "width": 8,
+     "x": 0,
+     "y": 0
+    },
+    "std_luminance": 29.013,
+    "std_rgb": {
+     "b": 25.923,
+     "g": 36.6606,
+     "r": 36.6606
+    }
+   },
+   "time_ms": null,
+   "time_seconds": null
+  },
+  "exit_code": 0,
+  "files": {}
+ },
+ "region_video": {
+  "data": {
+   "frame": 15,
+   "media_type": "video",
+   "statistics": {
+    "max_rgb": {
+     "b": 255.0,
+     "g": 255.0,
+     "r": 255.0
+    },
+    "mean_hsv": {
+     "h": 0.0,
+     "s": 0.0,
+     "v": 100.0
+    },
+    "mean_lab": {
+     "a": -0.0,
+     "b": 0.0,
+     "l": 100.0
+    },
+    "mean_luminance": 255.0,
+    "mean_rgb": {
+     "b": 255.0,
+     "g": 255.0,
+     "r": 255.0
+    },
+    "median_rgb": {
+     "b": 255.0,
+     "g": 255.0,
+     "r": 255.0
+    },
+    "min_rgb": {
+     "b": 255.0,
+     "g": 255.0,
+     "r": 255.0
+    },
+    "pixel_count": 100,
+    "rect": {
+     "height": 10,
+     "width": 10,
+     "x": 4,
+     "y": 4
+    },
+    "std_luminance": 0.0,
+    "std_rgb": {
+     "b": 0.0,
+     "g": 0.0,
+     "r": 0.0
+    }
+   },
+   "time_ms": 500.0,
+   "time_seconds": 0.5
+  },
+  "exit_code": 0,
+  "files": {}
+ },
+ "scan": {
+  "data": {
+   "anomalies": [
+    {
+     "frame": 15,
+     "time_seconds": 0.5,
+     "type": "white",
+     "value": 255.0
+    },
+    {
+     "frame": 15,
+     "time_seconds": 0.5,
+     "type": "flash",
+     "value": 0.999099
+    }
+   ],
+   "anomalies_truncated": false,
+   "effective_sample_every": 1,
+   "event_threshold_used": 0.592162,
+   "events": [
+    {
+     "end_frame": 16,
+     "end_time": 0.533,
+     "mean_normalized": 0.999081,
+     "peak_frame": 15,
+     "peak_normalized": 0.999099,
+     "peak_score": 254.7702,
+     "peak_time": 0.5,
+     "record_count": 2,
+     "start_frame": 14,
+     "start_time": 0.5
+    }
+   ],
+   "frames_analyzed": 30,
+   "info": {
+    "channels": 3,
+    "codec": "h264",
+    "color_mode": null,
+    "duration_seconds": 1.0,
+    "file_size_bytes": 2652,
+    "fps": 30.0,
+    "frame_count": 30,
+    "frame_count_estimated": true,
+    "height": 32,
+    "is_vfr": false,
+    "media_type": "video",
+    "pixel_format": "gbrp",
+    "time_base": "1/1000",
+    "width": 32
+   },
+   "sheet_frames": [
+    0,
+    10,
+    19,
+    29
+   ]
+  },
+  "exit_code": 0,
+  "files": {
+   "scan_curve.png": "png:RGB:768x256:7e567d661a24720c0fd6cbce9ab7bf15e3f02438a418b3427f931a303426c911",
+   "scan_sheet.png": "png:RGB:66x94:eeaeb47a724c33f43569dd0a6e324d4871f55ab48ae3e5ff915becc407d13e24"
+  }
+ },
+ "sheet": {
+  "data": {
+   "cols": 2,
+   "frames": [
+    0,
+    10,
+    19,
+    29
+   ],
+   "rows": 2,
+   "sheet_height": 94,
+   "sheet_width": 66,
+   "tile_height": 32,
+   "tile_width": 32,
+   "times": [
+    0.0,
+    0.333,
+    0.633,
+    0.967
+   ]
+  },
+  "exit_code": 0,
+  "files": {
+   "sheet.png": "png:RGB:66x94:eeaeb47a724c33f43569dd0a6e324d4871f55ab48ae3e5ff915becc407d13e24"
+  }
+ },
+ "spectrum2d": {
+  "data": {
+   "frame": 0,
+   "height": 32,
+   "peaks": [
+    {
+     "angle_deg": 0.0,
+     "magnitude": 3897.45,
+     "period_px": 10.67,
+     "u": 3,
+     "v": 0
+    },
+    {
+     "angle_deg": -90.0,
+     "magnitude": 3897.45,
+     "period_px": 10.67,
+     "u": 0,
+     "v": -3
+    },
+    {
+     "angle_deg": -108.43,
+     "magnitude": 3514.58,
+     "period_px": 10.12,
+     "u": -1,
+     "v": -3
+    },
+    {
+     "angle_deg": -71.57,
+     "magnitude": 3514.58,
+     "period_px": 10.12,
+     "u": 1,
+     "v": -3
+    },
+    {
+     "angle_deg": -18.43,
+     "magnitude": 3514.58,
+     "period_px": 10.12,
+     "u": 3,
+     "v": -1
+    }
+   ],
+   "time_seconds": 0.0,
+   "width": 32
+  },
+  "exit_code": 0,
+  "files": {
+   "fft2.png": "png:RGB:32x32:0fe95755694aac10d76022021df254141dabf217acfe937bff18f251d518c1c1"
+  }
+ },
+ "spectrum2d_rect": {
+  "data": {
+   "frame": 15,
+   "height": 16,
+   "peaks": [],
+   "time_seconds": 0.5,
+   "width": 16
+  },
+  "exit_code": 0,
+  "files": {
+   "fft2_rect.png": "png:RGB:16x16:ef115a0e0c15cdc41958ca46b5b14b456115f4baec5e3ca68599d2a8f435e3b8"
+  }
+ },
+ "spectrum_luma": {
+  "data": {
+   "dominant_freq_hz": 4.9992,
+   "effective_fps": 29.9949,
+   "nyquist_hz": 14.9975,
+   "peak_ratio": 0.8,
+   "period_frames": 6.0,
+   "period_seconds": 0.2,
+   "samples": 60,
+   "source": "luma",
+   "top_peaks": [
+    {
+     "freq_hz": 4.9992,
+     "magnitude": 250.0,
+     "period_frames": 6.0,
+     "period_seconds": 0.2
+    },
+    {
+     "freq_hz": 14.9975,
+     "magnitude": 62.5,
+     "period_frames": 2.0,
+     "period_seconds": 0.0667
+    },
+    {
+     "freq_hz": 12.4979,
+     "magnitude": 0.0,
+     "period_frames": 2.4,
+     "period_seconds": 0.08
+    },
+    {
+     "freq_hz": 9.9983,
+     "magnitude": 0.0,
+     "period_frames": 3.0,
+     "period_seconds": 0.1
+    },
+    {
+     "freq_hz": 2.4996,
+     "magnitude": 0.0,
+     "period_frames": 12.0,
+     "period_seconds": 0.4001
+    }
+   ],
+   "vfr_warning": false
+  },
+  "exit_code": 0,
+  "files": {}
+ },
+ "spectrum_point": {
+  "data": {
+   "dominant_freq_hz": 4.9992,
+   "effective_fps": 29.9949,
+   "nyquist_hz": 14.9975,
+   "peak_ratio": 0.8,
+   "period_frames": 6.0,
+   "period_seconds": 0.2,
+   "samples": 60,
+   "source": "luma",
+   "top_peaks": [
+    {
+     "freq_hz": 4.9992,
+     "magnitude": 4000.0,
+     "period_frames": 6.0,
+     "period_seconds": 0.2
+    },
+    {
+     "freq_hz": 14.9975,
+     "magnitude": 1000.0,
+     "period_frames": 2.0,
+     "period_seconds": 0.0667
+    },
+    {
+     "freq_hz": 12.4979,
+     "magnitude": 0.0,
+     "period_frames": 2.4,
+     "period_seconds": 0.08
+    },
+    {
+     "freq_hz": 9.9983,
+     "magnitude": 0.0,
+     "period_frames": 3.0,
+     "period_seconds": 0.1
+    },
+    {
+     "freq_hz": 0.9998,
+     "magnitude": 0.0,
+     "period_frames": 30.01,
+     "period_seconds": 1.0002
+    }
+   ],
+   "vfr_warning": false
+  },
+  "exit_code": 0,
+  "files": {}
+ },
+ "spectrum_rect": {
+  "data": {
+   "dominant_freq_hz": 4.9992,
+   "effective_fps": 29.9949,
+   "nyquist_hz": 14.9975,
+   "peak_ratio": 0.8,
+   "period_frames": 6.0,
+   "period_seconds": 0.2,
+   "samples": 60,
+   "source": "luma",
+   "top_peaks": [
+    {
+     "freq_hz": 4.9992,
+     "magnitude": 4000.0,
+     "period_frames": 6.0,
+     "period_seconds": 0.2
+    },
+    {
+     "freq_hz": 14.9975,
+     "magnitude": 1000.0,
+     "period_frames": 2.0,
+     "period_seconds": 0.0667
+    },
+    {
+     "freq_hz": 12.4979,
+     "magnitude": 0.0,
+     "period_frames": 2.4,
+     "period_seconds": 0.08
+    },
+    {
+     "freq_hz": 9.9983,
+     "magnitude": 0.0,
+     "period_frames": 3.0,
+     "period_seconds": 0.1
+    },
+    {
+     "freq_hz": 0.9998,
+     "magnitude": 0.0,
+     "period_frames": 30.01,
+     "period_seconds": 1.0002
+    }
+   ],
+   "vfr_warning": false
+  },
+  "exit_code": 0,
+  "files": {}
+ },
+ "timeline_block_grid": {
+  "data": {
+   "block_size": 8,
+   "end_frame": 29,
+   "frame_count": 30,
+   "frames": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    17,
+    18,
+    19,
+    20,
+    21,
+    22,
+    23,
+    24,
+    25,
+    26,
+    27,
+    28,
+    29
+   ],
+   "orientation": "horizontal",
+   "points": [
+    {
+     "pixel_id": 0,
+     "x": 0,
+     "y": 0
+    },
+    {
+     "pixel_id": 8,
+     "x": 8,
+     "y": 0
+    },
+    {
+     "pixel_id": 16,
+     "x": 16,
+     "y": 0
+    },
+    {
+     "pixel_id": 24,
+     "x": 24,
+     "y": 0
+    },
+    {
+     "pixel_id": 256,
+     "x": 0,
+     "y": 8
+    },
+    {
+     "pixel_id": 264,
+     "x": 8,
+     "y": 8
+    },
+    {
+     "pixel_id": 272,
+     "x": 16,
+     "y": 8
+    },
+    {
+     "pixel_id": 280,
+     "x": 24,
+     "y": 8
+    },
+    {
+     "pixel_id": 512,
+     "x": 0,
+     "y": 16
+    },
+    {
+     "pixel_id": 520,
+     "x": 8,
+     "y": 16
+    },
+    {
+     "pixel_id": 528,
+     "x": 16,
+     "y": 16
+    },
+    {
+     "pixel_id": 536,
+     "x": 24,
+     "y": 16
+    },
+    {
+     "pixel_id": 768,
+     "x": 0,
+     "y": 24
+    },
+    {
+     "pixel_id": 776,
+     "x": 8,
+     "y": 24
+    },
+    {
+     "pixel_id": 784,
+     "x": 16,
+     "y": 24
+    },
+    {
+     "pixel_id": 792,
+     "x": 24,
+     "y": 24
+    }
+   ],
+   "raw_height": 16,
+   "raw_width": 30,
+   "sample_every": 1,
+   "sample_type": "block_mean",
+   "scale": 1,
+   "sort": "yx",
+   "start_frame": 0,
+   "times": [
+    0.0,
+    0.033,
+    0.067,
+    0.1,
+    0.133,
+    0.167,
+    0.2,
+    0.233,
+    0.267,
+    0.3,
+    0.333,
+    0.367,
+    0.4,
+    0.433,
+    0.467,
+    0.5,
+    0.533,
+    0.567,
+    0.6,
+    0.633,
+    0.667,
+    0.7,
+    0.733,
+    0.767,
+    0.8,
+    0.833,
+    0.867,
+    0.9,
+    0.933,
+    0.967
+   ]
+  },
+  "exit_code": 0,
+  "files": {
+   "block.csv": "a224e3706a52038aad3500094adbd448cfae8c56369d5da7dfab7130bdef9126"
+  }
+ },
+ "timeline_points": {
+  "data": {
+   "block_size": null,
+   "end_frame": 29,
+   "frame_count": 30,
+   "frames": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    17,
+    18,
+    19,
+    20,
+    21,
+    22,
+    23,
+    24,
+    25,
+    26,
+    27,
+    28,
+    29
+   ],
+   "orientation": "horizontal",
+   "points": [
+    {
+     "pixel_id": 536,
+     "x": 24,
+     "y": 16
+    },
+    {
+     "pixel_id": 898,
+     "x": 2,
+     "y": 28
+    }
+   ],
+   "raw_height": 2,
+   "raw_width": 30,
+   "sample_every": 1,
+   "sample_type": "point",
+   "scale": 1,
+   "sort": "selection",
+   "start_frame": 0,
+   "times": [
+    0.0,
+    0.033,
+    0.067,
+    0.1,
+    0.133,
+    0.167,
+    0.2,
+    0.233,
+    0.267,
+    0.3,
+    0.333,
+    0.367,
+    0.4,
+    0.433,
+    0.467,
+    0.5,
+    0.533,
+    0.567,
+    0.6,
+    0.633,
+    0.667,
+    0.7,
+    0.733,
+    0.767,
+    0.8,
+    0.833,
+    0.867,
+    0.9,
+    0.933,
+    0.967
+   ]
+  },
+  "exit_code": 0,
+  "files": {
+   "timeline.csv": "5a2b06f2925ba8551de8f2d0f25a320025049a5c48e1e5de87ef39f7da68cc8a",
+   "timeline.png": "png:RGB:30x2:fcd165c09ace15af29e755189f191dca3e40fd3453ffaa48233793469fe8dde5"
+  }
+ },
+ "workflow_quality": {
+  "data": {
+   "automatic_authenticity_conclusion": null,
+   "comparison_alignment": "consecutive_selected_frames",
+   "comparison_pairs": 29,
+   "coverage": [
+    {
+     "eof_confirmed": true,
+     "first_returned_frame": 0,
+     "frames_analyzed": 30,
+     "frames_converted": 30,
+     "last_analyzed_frame": 29,
+     "last_returned_frame": 29,
+     "metadata_count_is_estimate": true,
+     "requested_end_frame_inclusive": 1799,
+     "requested_start_frame": 0,
+     "sample_every": 1,
+     "sampling_gaps": false,
+     "selected_frames_returned": 30,
+     "source_frame_count_metadata": 30,
+     "source_frames_decoded": 30,
+     "timestamp_flags": {}
+    }
+   ],
+   "difference_artifact_pair": {
+    "changed_bbox": [
+     0,
+     0,
+     32,
+     32
+    ],
+    "changed_ratio": 1.0,
+    "frame": 15,
+    "mean_abs_difference": 254.770182292,
+    "reference_frame": 14,
+    "reference_time_seconds": 0.467,
+    "time_seconds": 0.5
+   },
+   "difference_selection": "largest_mean_difference",
+   "first_change": {
+    "changed_bbox": [
+     0,
+     8,
+     2,
+     1
+    ],
+    "changed_ratio": 0.001953125,
+    "frame": 1,
+    "mean_abs_difference": 0.170572917,
+    "reference_frame": 0,
+    "reference_time_seconds": 0.0,
+    "time_seconds": 0.033
+   },
+   "limitations": [
+    "仅覆盖所列范围和采样帧；范围外、采样间隙及未配对尾部未检查",
+    "首次变化指所检帧对中首个超阈值候选；sample_every > 1 时不能精确到间隙内首帧",
+    "数值基于解码 RGB8，不比较音频、原生高位深、Alpha 或语义内容",
+    "图片仅分析首张或首帧，不展开动图或多页图片",
+    "按展示帧号比较不表示时间同步；时间戳异常保留标记，不用平均帧率重新对齐",
+    "亮度与纯色候选可能是正常画面；不输出主观质量分或真伪判定",
+    "输入完整性哈希需完整读取源文件两次，局部解码不消除该 I/O 成本"
+   ],
+   "max_pair_time_delta_seconds": null,
+   "parameters": {
+    "end_frame": 1799,
+    "min_changed_ratio": 0.0,
+    "sample_every": 1,
+    "start_frame": 0,
+    "threshold": 10,
+    "workflow": "quality_overview"
+   },
+   "quality_candidates": {
+    "black_candidates": 0,
+    "flat_candidates": 1,
+    "white_candidates": 1
+   },
+   "quality_source": "source_0",
+   "records": 30,
+   "schema_version": "0.1.0",
+   "stop_reason": "selection_exhausted",
+   "workflow": "quality_overview"
+  },
+  "exit_code": 0,
+  "files": {}
+ },
+ "xt": {
+  "data": {
+   "end_frame": 29,
+   "fixed_coordinate": 8,
+   "frame_count": 30,
+   "frames": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    17,
+    18,
+    19,
+    20,
+    21,
+    22,
+    23,
+    24,
+    25,
+    26,
+    27,
+    28,
+    29
+   ],
+   "height": 30,
+   "sample_every": 1,
+   "scale_space": 1,
+   "scale_t": 1,
+   "slice_type": "xt",
+   "space_axis": "original_x",
+   "start_frame": 0,
+   "time_axis": "vertical",
+   "times": [
+    0.0,
+    0.033,
+    0.067,
+    0.1,
+    0.133,
+    0.167,
+    0.2,
+    0.233,
+    0.267,
+    0.3,
+    0.333,
+    0.367,
+    0.4,
+    0.433,
+    0.467,
+    0.5,
+    0.533,
+    0.567,
+    0.6,
+    0.633,
+    0.667,
+    0.7,
+    0.733,
+    0.767,
+    0.8,
+    0.833,
+    0.867,
+    0.9,
+    0.933,
+    0.967
+   ],
+   "width": 32
+  },
+  "exit_code": 0,
+  "files": {
+   "xt.png": "png:RGB:32x30:d98ae7c4ceb78aee0f9643ed305fb1e4dc52a79111ba4fe571a6e3aeea69689b"
+  }
+ },
+ "xt_range_sampled": {
+  "data": {
+   "end_frame": 24,
+   "fixed_coordinate": 8,
+   "frame_count": 8,
+   "frames": [
+    3,
+    6,
+    9,
+    12,
+    15,
+    18,
+    21,
+    24
+   ],
+   "height": 8,
+   "sample_every": 3,
+   "scale_space": 1,
+   "scale_t": 1,
+   "slice_type": "xt",
+   "space_axis": "original_x",
+   "start_frame": 3,
+   "time_axis": "vertical",
+   "times": [
+    0.1,
+    0.2,
+    0.3,
+    0.4,
+    0.5,
+    0.6,
+    0.7,
+    0.8
+   ],
+   "width": 32
+  },
+  "exit_code": 0,
+  "files": {
+   "xt_range.png": "png:RGB:32x8:2a00254d265ffae4b935d210b576b4bdc85e57eb7e2fd3c7c01a0e0543384751"
+  }
+ },
+ "yt": {
+  "data": {
+   "end_frame": 29,
+   "fixed_coordinate": 24,
+   "frame_count": 30,
+   "frames": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    17,
+    18,
+    19,
+    20,
+    21,
+    22,
+    23,
+    24,
+    25,
+    26,
+    27,
+    28,
+    29
+   ],
+   "height": 30,
+   "sample_every": 1,
+   "scale_space": 1,
+   "scale_t": 1,
+   "slice_type": "yt",
+   "space_axis": "original_y",
+   "start_frame": 0,
+   "time_axis": "vertical",
+   "times": [
+    0.0,
+    0.033,
+    0.067,
+    0.1,
+    0.133,
+    0.167,
+    0.2,
+    0.233,
+    0.267,
+    0.3,
+    0.333,
+    0.367,
+    0.4,
+    0.433,
+    0.467,
+    0.5,
+    0.533,
+    0.567,
+    0.6,
+    0.633,
+    0.667,
+    0.7,
+    0.733,
+    0.767,
+    0.8,
+    0.833,
+    0.867,
+    0.9,
+    0.933,
+    0.967
+   ],
+   "width": 32
+  },
+  "exit_code": 0,
+  "files": {
+   "yt.png": "png:RGB:32x30:f3507068bee17c8f46903ac6d75ea1f74dfc3b5f0d1a85c0ba1d86f5bbc2a883"
+  }
+ }
+}

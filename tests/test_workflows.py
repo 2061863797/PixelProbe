@@ -172,13 +172,12 @@ def test_workflow_spawn_and_two_input_plan(tmp_path):
     Image.new("RGB", (8, 8), "black").save(one)
     Image.new("RGB", (8, 8), "white").save(two)
     config = ServerConfig((tmp_path,), tmp_path / "artifacts")
-    payload = {"media_path": str(one), "reference_path": str(two),
-               "options": {"workflow": "compare_media"}}
-    plan = plan_operation(config, "workflow", payload)
+    payload = {"capability": "compare_media", "media_path": str(one), "reference_path": str(two)}
+    plan = plan_operation(config, "capability", payload)
     assert plan["source_count"] == 2
     assert plan["decoded_frames_upper_bound"] == 2
-    result = run_operation_sync(config, "workflow", payload, timeout_seconds=30)
-    assert result.data["first_change"]["changed_ratio"] == 1
+    envelope, _ = run_operation_sync(config, "capability", payload, timeout_seconds=30)
+    assert envelope.data["first_change"]["changed_ratio"] == 1
 
 
 def test_reference_path_has_independent_allowlist_check(tmp_path):
@@ -191,9 +190,8 @@ def test_reference_path_has_independent_allowlist_check(tmp_path):
     Image.new("RGB", (8, 8)).save(two)
     config = ServerConfig((allowed,), allowed / "artifacts")
     with pytest.raises(PathAccessError):
-        plan_operation(config, "workflow", {
-            "media_path": str(one), "reference_path": str(two),
-            "options": {"workflow": "compare_media"},
+        plan_operation(config, "capability", {
+            "capability": "compare_media", "media_path": str(one), "reference_path": str(two),
         })
     assert not config.artifact_root.exists()
 
@@ -268,12 +266,12 @@ def test_persistent_workflow_result_is_claimable(tmp_path):
     Image.new("RGB", (8, 8)).save(source)
     manager = JobManager(ServerConfig((tmp_path,), tmp_path / "artifacts"))
     try:
-        job = manager.submit("workflow", {"media_path": str(source),
-            "options": {"workflow": "quality_overview"}}, timeout_seconds=30, persistent=True)
+        job = manager.submit("capability", {"capability": "quality_overview", "media_path": str(source)},
+                             timeout_seconds=30, persistent=True)
         job.future.result(35)
-        result, image = manager.result(job.job_id)
+        result, images = manager.result(job.job_id)
         assert result["data"]["records"] == 1
-        assert image is None
+        assert images == []
         assert job.status == "succeeded"
         assert job.resource_plan["estimate_kind"] == "bounded_streaming_workflow"
     finally:

@@ -14,9 +14,11 @@ from pixelprobe.cli import (
     doctor_cmd,
     evidence_cmd,
     workflow_cmd,
+    find_cmd,
     flow_cmd,
     generate_cmd,
     frame_cmd,
+    index_cmd,
     info_cmd,
     pixel_cmd,
     reduce_cmd,
@@ -25,7 +27,9 @@ from pixelprobe.cli import (
     sheet_cmd,
     spacetime_cmd,
     spectrum_cmd,
+    streams_cmd,
     timeline_cmd,
+    track_cmd,
     usage_error_details,
     validate_cmd,
 )
@@ -38,7 +42,7 @@ app = typer.Typer(
     help=(
         "PixelProbe：本地图片与视频像素分析 CLI 工具。\n\n"
         "坐标原点在左上角（x 向右，y 向下）；帧号从 0 开始；"
-        "帧范围为闭区间（--start-frame 10 --end-frame 20 共 11 帧）；"
+        "位置统一用 --at 指定，帧范围为闭区间（--at \"f=10..20\" 共 11 帧），写法见 docs/address.md；"
         "时间单位为秒。使用 pixelprobe --mcp --help 查看 MCP 服务启动参数。"
     ),
     add_completion=False,
@@ -48,6 +52,7 @@ app = typer.Typer(
 app.command("info")(info_cmd.info)
 app.command("doctor")(doctor_cmd.doctor)
 app.command("evidence")(evidence_cmd.evidence)
+app.command("streams")(streams_cmd.streams)
 app.command("workflow")(workflow_cmd.workflow)
 app.command("frame")(frame_cmd.frame)
 app.command("pixel")(pixel_cmd.pixel)
@@ -56,6 +61,7 @@ app.command("timeline")(timeline_cmd.timeline)
 app.command("xt")(spacetime_cmd.xt)
 app.command("yt")(spacetime_cmd.yt)
 app.command("changes")(changes_cmd.changes)
+app.command("find")(find_cmd.find)
 app.command("reduce")(reduce_cmd.reduce)
 app.command("compare")(compare_cmd.compare)
 app.command("sheet")(sheet_cmd.sheet)
@@ -63,9 +69,11 @@ app.command("scan")(scan_cmd.scan)
 app.command("spectrum")(spectrum_cmd.spectrum)
 app.command("spectrum2d")(spectrum_cmd.spectrum2d)
 app.command("flow")(flow_cmd.flow)
+app.command("track")(track_cmd.track)
 app.command("generate")(generate_cmd.generate)
 app.command("validate")(validate_cmd.validate)
 app.add_typer(cache_cmd.app, name="cache")
+app.add_typer(index_cmd.app, name="index")
 
 
 def _version_callback(value: bool) -> None:

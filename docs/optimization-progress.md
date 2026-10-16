@@ -1,5 +1,214 @@
 # 优化实施检查点
 
+## 当前状态：2026-10-16 2.0 重构阶段 7：发布候选（本地验收通过，待合并、打标签与发布）
+
+本节优先于下方历史检查点。
+
+- 版本号 2.0.0；新增 `docs/migration-2.0.md`；README 中英文更新定位与 2.0 新增；安装与 uvx 文档固定 v2.0.0。
+- 代码审核修复（b604e6f）后重新构建并重做全部本地检查，当前候选：`build/release-2.0.0-20261016b/`
+  - `pixelprobe-2.0.0-py3-none-any.whl` SHA256 `d3db2dd60e928d7cd6ccf5928c0ab694848e671b747a5e7361ade4d5f6d4bdf8`
+  - `pixelprobe-2.0.0.tar.gz` SHA256 `2a51a53878e031d631441212a2e38c6b1b6e6176634ddc1b223f025252e1e160`
+  - twine 通过；干净环境安装（版本、find、差分自适应切片、doctor）通过；uvx 离线发行测试 4 passed；
+    v1.1.0 → 2.0.0 → v1.1.0 升级回滚通过。
+  - GitHub CI（PR #1，b604e6f）：Linux Python 3.11/3.12/3.13 各 557 passed、0 skipped；wheel 隔离安装通过。
+- 修复前的首个候选 `build/release-2.0.0-20261016/`（wheel SHA256 `dbeee062…f019b`）已过时，不得发布。
+- 首个候选的验证（Windows，Python 3.12）：
+  - wheel 内含全部 2.0 新模块、不含已删除的 compat；`twine check` 两个包均 PASSED；
+  - 干净虚拟环境安装完整 extra：`pixelprobe --version` 为 2.0.0，`find` 结果正确，`doctor` healthy 且无异常项；
+  - uvx 使用本地 wheel 预热后 `--offline` 运行 `tests/test_distribution.py`：4 passed（强制超时回收、
+    MCP 流程 + Zarr + 签名证据、运行中取消与恢复、CLI Zarr 往返）；
+  - 升级回滚演练：v1.1.0 → 2.0.0 → v1.1.0 离线逐阶段核对像素，通过；
+  - 源码全量 549 passed、0 skipped；数值基线 38/38。
+- 未执行：合并到 main、推送、创建 `v2.0.0` 标签与 GitHub Release（需用户确认）；远程标签上的 uvx 冷启动与插件安装；
+  macOS/Linux。本地候选与远程发行物不一定相同，远程发布后需按 SHA256 重新核对。
+
+## 历史状态：2026-10-16 2.0 重构阶段 6：Claude Code 与 Codex 插件
+
+- 先查官方文档确认格式（code.claude.com 插件清单与市场参考；developers.openai.com Codex 插件构建页、
+  openai/plugins 官方示例、agent-plugins.org MCP schema）。
+- 新增 `plugins/pixelprobe/`：Claude Code 清单 `.claude-plugin/plugin.json` + `.mcp.json`（`userConfig.media_roots`
+  传入允许目录）；Codex 便携清单 `plugin.json` + `mcp.json`，以及兼容层 `.codex-plugin/plugin.json` + `codex-mcp.json`；
+  5 个 Skill（pixelprobe-core、ui-recording、long-video、quality、forensics）。仓库根目录新增
+  `.claude-plugin/marketplace.json` 与 `.agents/plugins/marketplace.json`。启动命令固定 `v2.0.0` 标签。
+- 实测发现：Codex 0.162.1 读的是兼容层（`.codex-plugin` + 旧格式 MCP 文件），不读根目录便携 `mcp.json`；
+  且插件 MCP 服务与用户手动配置的同名服务冲突时会被整个遮住。因此 Codex 侧服务名改为 `pixelprobe-plugin`，
+  两种格式都提供。
+- 验证：`claude plugin validate` 插件与市场均通过；`claude plugin details` 识别 5 Skill + 1 MCP（常驻约 460 token）；
+  Codex 本地市场安装后会话中 5 个 Skill 与 10 个工具全部出现。测试后卸载并确认 `config.toml` 与备份一致。
+  新增 `tests/test_plugin_manifest.py`（版本、启动命令、Skill 名与工具名一致性）。全量 **549 passed、0 skipped**。
+- 未执行：`v2.0.0` 标签的 uvx 冷启动（发布时创建标签）；Claude Code 命令行会话内实际调用（本机 CLI 登录过期，
+  未代为登录）；Codex 中工具调用被测试时设置的"禁止审批"策略拦下，只验证到工具加载；macOS/Linux。
+  按项目规则，阶段 6 标记为"配置完成"，不是"验收通过"。
+
+## 历史状态：2026-10-15 2.0 重构阶段 5（一）：find 搜索语言
+
+阶段 5 按小项分别提交。
+
+- 新增 `pixelprobe.find`（解析 + 求值）与能力 `find`：CLI `pixelprobe find <视频> "<语句>"`，
+  MCP `pixelprobe_find query=...`。条件：black/white/flat、flash、cut、duplicate、freeze、gap、
+  similar、整帧与区域指标比较、区域变化（first）。说明见 `docs/find.md`。
+- 每帧体检值抽成 `index.builder.frame_metrics`，索引建立与无索引解码共用；整帧条件有索引时查表，
+  否则解码现算，两条路径逐值相同（测试覆盖三种范围）。
+- 设计取舍：切换/闪帧采用固定跳变阈值（参考 PySceneDetect），不用 changes 的自动阈值——
+  短片中多次大跳变会抬高自动阈值而漏检（测试素材中 120/255 的跳变即被漏掉）；
+  差分哈希对纯色画面恒为 0，闪帧判定同时比较前后两帧的通道均值；freeze 用整帧平均会稀释
+  小面积变化，已写入定义并指向区域条件。
+- 验证：全量 **530 passed、0 skipped**；数值基线 38/38；新增 `tests/test_find.py`（10 项）、
+  对等测试新增 find 的 CLI/MCP 逐项一致、MCP 端到端（@match1 引用、错误码 INVALID_QUERY）。
+- 未执行：真实录屏与长视频上的阈值校准（目前只用合成素材验证定义）。
+
+### 阶段 5（二）：动画时长、码流结构、块效应
+
+- find 新增 `animation in <区域>`：区域从开始变化到停稳的时长（中途静止不足 settle_seconds 合并），
+  给出毫秒值、帧间隔精度和是否停稳。录屏掉帧/卡顿由 gap、duplicate、freeze 覆盖，截图对比由 compare 覆盖。
+- 新增能力 `streams`（CLI `pixelprobe streams`，MCP `pixelprobe_evidence kind=streams`，视频扩展名自动选择）：
+  容器与流参数、关键帧间隔、B 帧推断、时间戳回退/重复/空隙、包大小与每秒字节、可选 I/P/B 统计，
+  线索附证据与局限，不做真伪结论。不分析 QP（PyAV 不提供）。说明见 `docs/streams.md`。
+- L1 新增 `blockiness`（8 像素块边界相对强度），find 可用 `frame.blockiness`；索引格式升为 v2，
+  旧索引视为未建立。整数亮度 + 隔行抽样后 1080p 每帧约 8 毫秒（初版 22 毫秒）。
+- 计划中"镜头切换写入 L2"改为由 `find "cut"` 查 L1 完成（有索引时即时返回），不另存一份。
+- 验证：全量 **538 passed、0 skipped**；数值基线 38/38。
+
+### 阶段 5（三）：新切法（阶段 5 完成）
+
+- xt / yt 新增 `source=diff`（与上一展示帧的逐通道绝对差，与先差分再切片逐值相同）和
+  `time_axis=adaptive`（权重一半按变化量、一半均匀，按累计权重取帧，用满 rows 行；有索引时查 L1）。
+  引擎的 diff 特征只接受整帧序列，因此差分在能力层由切片结果计算，数学上等价。
+- 新增能力 `track`（CLI `pixelprobe track`，MCP `pixelprobe_measure what=track`）：逐帧亮度块匹配，
+  整数像素精度，超阈值判定跟丢并停止；输出轨迹、位移、速度、跟随切片与首帧轨迹图。说明见 `docs/slices.md`。
+- 真实 stdio 进程验证中发现：单帧白闪使自适应取帧只剩 3 行（要求 12 行），已改为混合权重 + 补足间隔，
+  并补回归测试。
+- 验证：全量 **545 passed、0 skipped**；数值基线 38/38；真实 stdio 进程调用 find、@match1、
+  差分 + 自适应切片、track（含图片）、evidence 自动选 streams 全部成功。
+- 未执行：真实录屏、长视频上的阈值与跟踪效果校准。
+
+## 历史状态：2026-10-15 2.0 重构阶段 4（能力登记表、MCP 精简为 10 个工具）
+
+分两次提交：能力登记表与命令行改造（a6383d6），MCP 改造（404f9af）。
+
+- 新增 `pixelprobe.capabilities`：27 项能力各登记一次（名称、地址规则、参数模型、执行函数、
+  命令行入口、MCP 工具与选择值）。命令行命令改为薄包装；MCP 的 `capability` 操作在工作进程中
+  调用同一函数，只额外负责路径白名单、资源边界、受控输出位置、图片编码和分页。
+- MCP 由 17 个工具换成 10 个（overview / look / measure / find / compare / evidence / bundle /
+  index / job / system），不保留旧名。删除 `resume_job` 与 MCP checkpoint；1.x 留下的任务记录
+  与 checkpoint 仍可由 `system action=storage` 按期清理。对照表见 `docs/mcp-jobs.md`。
+- 新增 `pixelprobe.output.annotate`：图片四周画原始坐标刻度（切片时间轴标帧号）、可选 8×6
+  网格（与地址 `cell(...)` 同一定义），按 `max_side` 与载荷上限缩放，比例写入 `data.images`。
+- 结果编号：`find`、`overview(scan)`、已建索引时的 `overview(meta)` 返回 `refs`，服务器按媒体
+  记住，下一次可直接写 `@event1`。
+- 改造中发现并修复的问题：
+  - 改写时漏掉的三项保护已补回：Prompt 中把用户输入包成"不可信 JSON"（防提示注入）、
+    `generate` 源解码帧上限 1800、证据结果只返回 EXIF 字段名（防止响应超限）；
+  - 资源计划在图片上把组合流程当成单帧读取、预留 0 字节临时空间，导致图片的质量概览失败；
+  - MCP 自身的参数错误原先统一显示为"操作失败"，现在返回具体原因（不回显路径和能力名）；
+  - 透明或调色板图片在显示 RGB8 下读取时给出警告，提示改用 `options.sample=native`。
+- 新增对等测试 `tests/test_capability_parity.py`：每项能力都有可用的命令行命令和 MCP 入口，
+  逐个按登记的选择值调用 MCP 工具确认落到同名能力；12 个抽样（图片/视频的 info、pixel、region、
+  changes、scan、timeline、spectrum、spectrum2d、flow）命令行与 MCP 数值逐项相同。
+- 重写 MCP 相关测试（server、worker、jobs、maintenance、资源、组合流程、发行、证据、C2PA、
+  索引），删除 `test_mcp_resume.py`（7 项）。评估题集改用新工具说法并新增 2 题（@编号、网格）。
+- 验证：全量 **507 passed、0 failed、0 skipped**；数值基线 38/38 一致；真实 stdio 子进程
+  逐个调用 10 个工具全部成功（含 @event1 引用、cell 网格、索引、wait=false 后台任务）。
+- 未执行：在 Claude Code 中以 MCP 客户端实际连接本次代码（需要重启客户端加载新版本）；
+  Linux/macOS 运行。
+
+## 历史状态：2026-10-14 2.0 重构阶段 3（媒体索引、会话与常驻工作进程）
+
+分两次提交：索引与命令行接入（543ff5e），会话与常驻进程（b3857d5）。
+
+- 新增 `pixelprobe.index`：一次顺序解码生成 L0 元数据、L1 每帧体检表、L2 变化/平稳分段、
+  L3 缩略立方体（长边 64、默认总量 ≤128 MB，超出按 thumb_stride 隔帧保留）。按快速指纹
+  分目录，先写临时目录再原子提交；同指纹已有有效索引时保留旧份，损坏时在确认无活动引用后替换；
+  删除与清理复用缓存的 gate/reference/require_idle。说明见 `docs/media-index.md`。
+- 新增 `pixelprobe index build/show/remove/prune`，索引目录由 `--index-dir` 或
+  `PIXELPROBE_INDEX_DIR` 指定。`changes` 整帧逐帧、`scan` 采样间隔为 1 时直接查表，
+  与解码逐值相同（含 scan 网格图像素）；条件不满足自动退回解码，输出新增 `computed_from`。
+  计划中"其他命令自动使用索引"收窄为"仅在可保证逐值相同时使用"：逐帧差异无法推出隔帧差异，
+  长视频 scan 自动隔帧采样时仍解码。
+- 新增 `pixelprobe.session`：进程内按快速指纹缓存已加载索引（最多 4 个媒体），并为阶段 4 的
+  `@编号` 预留登记表；MCP 的 find_changes 与 standard 概览已接入。
+- MCP 工作进程改为常驻进程池：正常结束回空闲池并优先复用同一媒体的进程；超时、取消、
+  实际内存超限、监控失败、崩溃或通信异常一律回收不复用；累计 200 个任务、任务后常驻内存超过
+  总预算一半、空闲超 300 秒或空闲数达上限时退出。每任务的内存上限、临时目录、超时与协作取消
+  保持不变。实测（测试视频，连续 10 次读取）：总耗时 5.37 秒 → 0.81 秒，首次之后单次
+  约 0.514 秒 → 0.016 秒。
+- 测试：新增索引 14 项（逐值一致、失效、容量上限、并发提交、损坏替换、引用保护、CLI、
+  会话、真实工作进程）与进程池 2 项（复用同一进程、取消后不复用）；两项"请求后不得残留子进程"
+  的测试改为"超时/超限进程必须回收，关闭进程池后不残留"。测试会话与数值基线隔离到临时索引目录。
+- 验证：全量 **497 passed、0 skipped，130 秒**；数值基线 38/38 一致。
+- 过程说明：阶段 3（上）提交前的全量运行有 2 项失败，原因是测试运行期间修改了
+  `worker.py`、被测试新启动的子进程读到改了一半的文件；在该提交的独立副本上重跑相关 52 项
+  全部通过，之后的全量运行期间不再改动代码。
+- 未执行：Linux/macOS 运行；长时间（数小时）常驻进程的内存增长观测。
+
+## 历史状态：2026-10-14 2.0 重构阶段 2（统一地址写法）
+
+- 新增 `src/pixelprobe/address/`（模型、手写解析器、换算，共 733 行，无新依赖）。
+  语法：时间 `f=`/`t=`（单帧、闭区间、开放端、两帧列表、all；时间支持 s/ms/时间码）、
+  `step=`、形状 `point/pid/rect/grid(... step=n)/row/col/cell/line/path`、引用 `@名称`。
+  `str(address)` 给出规范写法并可再次解析。`cell` 默认 8×6，边界按 floor 划分、无缝拼满。
+- 新错误码 `INVALID_ADDRESS`（`InvalidRangeError` 子类，退出码 2）；错误信息给出出错位置、
+  原因和写法示例，命令不接受的写法会列出该命令可用的写法。
+- 15 个命令改用 `--at` 与 `--ref-file`，删除旧的时间/位置参数（按"直接切换"决定）。
+  语义调整：`step=` 只表示时间采样，网格间距写在 `grid(... step=n)` 内；`pixel` 的
+  point/pid 按书写顺序输出；`workflow` 只接受帧号范围；`scan` 只接受 `step=`。
+- 数值基线用例全部改用 `--at` 写法，期望值保持阶段 0 采集的结果，38/38 一致，
+  证明新写法与旧参数计算结果完全相同。
+- 新增 `docs/address.md`（含各命令接受的写法和 1.x 迁移对照表）；README 中英文、
+  `docs/workflows.md`、`docs/positioning.md` 示例同步更新。`AGENTS.md` 的 Antigravity
+  条款改为"默认父代理直接完成，用户明确要求时才委派"，与该 Skill 的触发条件一致。
+- 验证：全量 **481 passed、0 skipped，116 秒**（新增 48 项地址测试、2 项命令行测试）。
+- 未改动：MCP 工具参数（阶段 4 统一替换）；`@引用` 目前只能由 `--ref-file` 提供，
+  结果自动生成引用编号在阶段 3/4 实现。未执行：Linux/macOS 运行。
+- 过程说明：`tests/test_frame.py` 的旧参数替换使用了一段带唯一性断言的脚本，
+  不符合"用编辑工具修改"的规则；之后的文件均改用编辑工具，改动可在提交 diff 中复核。
+
+## 历史状态：2026-10-14 2.0 重构阶段 1（统一计算核心）
+
+- 实际核查修正了计划中的判断：`compat/` 主要是"CLI 参数 → 统一请求"的构造函数，
+  并非多余的来回翻译；真正多余的是 CLI/MCP 从未调用、只被测试使用的直接解码实现
+  （`core/frequency.py`、`core/temporal_reduce.py`、`core/spacetime_slice.py`、
+  `core/optical_flow.py`、`extract_timelines`，以及 `operators/sampling.py` 中的
+  `sample_xt/yt/points_t/path_t/roi_t` 与 `execute_sampling`）。
+- 删除上述实现与 `compat/` 包；请求构造函数迁入 `src/pixelprobe/request_builders.py`
+  （去掉 `legacy_` 前缀，重复六次的"闭区间→半开区间"合并为 `interval_selection`）。
+  Farneback 固定参数与灰度转换迁入 `operators/optical_flow.py`。FFT、光流算法现在只在
+  `operators/` 各有一处实现。`pixelprobe` 包由约 18,070 行降到 16,699 行。
+- 引擎文件身份改为两级（`utils/fingerprint.py`）：内存/NPY 输出用快速指纹（大小、
+  修改时间、文件标识、头尾各 1 MiB），Bundle/Zarr 输出仍用完整 SHA-256 并写入溯源；
+  溯源记录只在结果包中生成，快速指纹不会冒充 sha256。1 GiB 文件实测（已在系统缓存）：
+  每次查询的身份计算由 1.571 秒降到 0.003 秒。局限已写入模块文档：中间内容被改写而
+  大小、修改时间、头尾不变时快速指纹无法察觉。
+- 测试迁移：原先"引擎与旧实现逐值一致"的断言改为与合成素材真值比较、与不中断执行
+  比较，或改由数值基线锁定；新增 8 个基线用例（diff+destripe+smooth、median 区间、
+  光流补偿与累积、块均值网格时间线、采样 X-T、点频谱、区域二维频谱），这些期望值
+  在阶段 0 提交的代码上采集。`max_median_bytes` 只保护已删除的 Python 函数，相应测试
+  改为验证引擎的内存预算拒绝。`docs/api.md` 改为 request_builders + generate 用法。
+- 验证：全量 **431 passed、0 skipped，112 秒**（基线 429，新增快速指纹与 Bundle
+  完整哈希两项测试）；`capture_golden.py --check` 38/38 一致；CodeGraph 已同步，
+  `np.fft`/Farneback/仿射估计只出现在 `operators/frequency.py` 与
+  `operators/optical_flow.py`。
+- 未执行：Linux/macOS 运行。
+
+## 历史状态：2026-10-14 2.0 重构阶段 0（定位、规则与基线）
+
+本节优先于下方历史检查点。2.0 的定位、边界和路线图见 `docs/positioning.md`。
+
+- 新增 `docs/positioning.md`：定位为"补齐 AI 看图看视频的短板"，覆盖开发者录屏、
+  长视频辅助、质量异常、取证四类场景；CLI 与 MCP 能力对等；2.0 直接切换新接口。
+- `AGENTS.md` 的兼容条款改为以 2.0 新接口为准（Bundle 0.1 读取仍兼容），新增能力对等
+  与数值基线规则；编辑工具说明改为通用写法。本地蓝图已归档到 `docs/design/archive/`
+  （仍不入库）。
+- 新增 `scripts/capture_golden.py` 与 `tests/golden/cli_golden.json`：30 个 CLI 用例
+  覆盖 info/frame/pixel/region/timeline/xt/yt/changes/reduce/compare/sheet/scan/
+  spectrum/spectrum2d/flow/workflow/evidence，记录归一化 JSON 数值与输出文件像素摘要。
+  测试视频容器带随机 UID，源文件哈希字段不参与比对。连续两次 `--check` 全部一致。
+  基线未纳入 pytest：示意图含字体渲染，跨平台像素可能不同，只在本机重构前后比对。
+- 重构前全量基线（`.venv-test`，Python 3.14.3，含 Zarr/OpenCV/MCP/C2PA）：
+  **429 passed、0 skipped，106 秒**。系统 Python 未安装 Zarr，会有 4 个 Zarr 用例失败，
+  后续统一用 `.venv-test` 运行。
+- 未执行：CodeGraph 同步（本阶段未改源码）、Linux/macOS 运行。
+
 ## 当前状态：2026-09-20 正式发行改为 Python 包与本地打包脚本
 
 本节优先于下方历史检查点。正式发行不再包含冻结程序；Linux/macOS 的本地

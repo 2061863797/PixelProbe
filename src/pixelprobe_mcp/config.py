@@ -103,9 +103,11 @@ class ServerConfig:
         total_memory_bytes: int | None = None,
         total_temporary_bytes: int | None = None,
     ) -> "ServerConfig":
-        raw_roots = os.environ.get("PIXELPROBE_MCP_ROOTS")
+        raw_roots = (os.environ.get("PIXELPROBE_MCP_ROOTS") or "").strip()
+        # 未配置时：Claude Code 为 MCP 进程设置的项目根目录优先，其次是启动目录
+        default_root = (os.environ.get("CLAUDE_PROJECT_DIR") or "").strip() or os.getcwd()
         values = allowed_roots if allowed_roots is not None else (
-            raw_roots.split(os.pathsep) if raw_roots else [os.getcwd()]
+            raw_roots.split(os.pathsep) if raw_roots else [default_root]
         )
         roots = tuple(
             dict.fromkeys(

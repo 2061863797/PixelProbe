@@ -19,7 +19,7 @@ from pixelprobe.core import detect_changes, top_changes
 def test_flash_frame_has_max_score_rect(test_video: Path) -> None:
     # 第 15 帧闪白时变化得分最高
     data = run_json(
-        "changes", test_video, "--rect", "0,0,32,32", "--top", 3, "--json"
+        "changes", test_video, "--at", "rect(0,0,32,32)", "--top", 3, "--json"
     )["data"]
     assert data["top"][0]["frame"] == FLASH_FRAME
     assert data["top"][0]["previous_frame"] == FLASH_FRAME - 1
@@ -32,7 +32,7 @@ def test_flash_frame_has_max_score_rect(test_video: Path) -> None:
 def test_point_mode_green_pixel(test_video: Path) -> None:
     gx, gy = GREEN_POS
     data = run_json(
-        "changes", test_video, "--point", f"{gx},{gy}", "--top", 2, "--json"
+        "changes", test_video, "--at", f"point({gx},{gy})", "--top", 2, "--json"
     )["data"]
     assert data["mode"] == "point"
     # 绿→白：|255-0|+|255-255|+|255-0| = 510，归一化 510/765
@@ -58,7 +58,7 @@ def test_point_mode_counter_pixel_scores(test_video: Path) -> None:
 
 def test_grid_mode(test_video: Path) -> None:
     data = run_json(
-        "changes", test_video, "--grid", "0,0,32,32", "--step", 4,
+        "changes", test_video, "--at", "grid(0,0,32,32 step=4)",
         "--top", 1, "--json",
     )["data"]
     assert data["mode"] == "grid"
@@ -69,7 +69,7 @@ def test_grid_mode(test_video: Path) -> None:
 def test_changes_csv_export(test_video: Path, tmp_path: Path) -> None:
     out_csv = tmp_path / "变化.csv"
     data = run_json(
-        "changes", test_video, "--rect", "0,0,16,16",
+        "changes", test_video, "--at", "rect(0,0,16,16)",
         "--csv", out_csv, "--json",
     )["data"]
     assert data["csv_path"] == str(out_csv)
@@ -82,8 +82,7 @@ def test_changes_csv_export(test_video: Path, tmp_path: Path) -> None:
 
 def test_changes_range(test_video: Path) -> None:
     data = run_json(
-        "changes", test_video, "--point", "24,16",
-        "--start-frame", 0, "--end-frame", 10, "--json",
+        "changes", test_video, "--at", "f=0..10 point(24,16)", "--json",
     )["data"]
     assert data["start_frame"] == 0 and data["end_frame"] == 10
     assert data["frames_analyzed"] == 11
@@ -93,8 +92,7 @@ def test_changes_range(test_video: Path) -> None:
 
 def test_changes_needs_two_frames(test_video: Path) -> None:
     code, data = run_json_error(
-        "changes", test_video, "--point", "0,0",
-        "--start-frame", 5, "--end-frame", 5, "--json",
+        "changes", test_video, "--at", "f=5..5 point(0,0)", "--json",
     )
     assert code == 2
     assert data["error"]["code"] == "INVALID_RANGE"
@@ -102,6 +100,12 @@ def test_changes_needs_two_frames(test_video: Path) -> None:
 
 def test_changes_requires_exactly_one_target(test_video: Path) -> None:
     code, data = run_json_error(
-        "changes", test_video, "--point", "0,0", "--rect", "0,0,4,4", "--json"
+        "changes", test_video, "--at", "point(0,0) rect(0,0,4,4)", "--json"
     )
     assert code == 2
+    assert data["error"]["code"] == "INVALID_ADDRESS"
+    code, data = run_json_error(
+        "changes", test_video, "--at", "point(0,0) point(1,1)", "--json"
+    )
+    assert code == 2
+    assert "timeline" in data["error"]["message"]

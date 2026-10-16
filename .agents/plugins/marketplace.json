@@ -1,0 +1,20 @@
+{
+  "name": "pixelprobe",
+  "interface": {
+    "displayName": "PixelProbe"
+  },
+  "plugins": [
+    {
+      "name": "pixelprobe",
+      "source": {
+        "source": "local",
+        "path": "./plugins/pixelprobe"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}

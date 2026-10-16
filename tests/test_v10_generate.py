@@ -13,7 +13,7 @@ from PIL import Image
 
 import pixelprobe
 import pixelprobe.engine.executor as executor_module
-from conftest import FRAME_COUNT, RED_Y, make_frame, run_json
+from conftest import FRAME_COUNT, RED_Y, expected_xt, make_frame, run_json
 from pixelprobe import core
 from pixelprobe.domain.geometry import PathGeometry
 from pixelprobe.domain.errors import MaterializationLimitExceededError
@@ -40,10 +40,8 @@ from pixelprobe.engine.execution import LocalExecutionContext
 from pixelprobe.engine.frame_store import SharedFrameStore
 from pixelprobe.engine.operator_registry import BoundOperator, OperatorRegistry
 from pixelprobe.operators.base import OperatorSpec, ResourcePolicy
-from pixelprobe.compat.legacy_requests import (
-    legacy_flow_request,
-    legacy_reduce_request,
-)
+from pixelprobe.operators.optical_flow import reconstruct_effective_flow
+from pixelprobe.request_builders import flow_request, reduce_request
 
 
 def _source(path: Path) -> MediaSource:
@@ -204,17 +202,40 @@ def test_shared_source_is_hashed_once_per_verification_phase(
     test_video: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     requests = (_xt(test_video), _xt(test_video))
-    calls: list[Path] = []
-    real_sha256_file = executor_module.sha256_file
+    calls: list[tuple[Path, bool]] = []
+    real_identity = executor_module.source_identity
 
-    def counting_sha256(path: Path) -> str:
-        calls.append(Path(path))
-        return real_sha256_file(path)
+    def counting_identity(path: Path, *, full: bool) -> str:
+        calls.append((Path(path), full))
+        return real_identity(path, full=full)
 
-    monkeypatch.setattr(executor_module, "sha256_file", counting_sha256)
+    monkeypatch.setattr(executor_module, "source_identity", counting_identity)
     pixelprobe.generate(requests)
 
-    assert calls == [test_video.resolve(), test_video.resolve()]
+    # 内存输出：开始一次、结束复验一次，都只用快速指纹，不完整读取文件
+    assert calls == [(test_video.resolve(), False), (test_video.resolve(), False)]
+
+
+def test_bundle_output_uses_full_sha256_identity(
+    test_video: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[bool] = []
+    real_identity = executor_module.source_identity
+
+    def counting_identity(path: Path, *, full: bool) -> str:
+        calls.append(full)
+        return real_identity(path, full=full)
+
+    monkeypatch.setattr(executor_module, "source_identity", counting_identity)
+    request = _xt(
+        test_video, output=OutputRequest(format="bundle", include_preview=False),
+    )
+    result = pixelprobe.generate(request, output_path=tmp_path / "identity.bundle")
+
+    assert calls == [True, True]
+    assert result.bundle is not None
+    recorded = result.bundle.manifest.sources[0].media_identity.sha256
+    assert recorded == hashlib.sha256(test_video.read_bytes()).hexdigest()
 
 
 def test_bundle_keeps_same_named_tensors_from_distinct_dag_nodes(
@@ -597,14 +618,14 @@ def test_generate_resumes_completed_sampling_chunks_after_interruption(
     assert not any((cache_root / "partials").rglob("data.npy"))
     assert np.array_equal(
         resumed.request_tensors[0][0].data.materialize(),
-        core.create_xt_slice(test_video, RED_Y).array,
+        expected_xt(RED_Y),
     )
 
 
 def test_generate_resumes_frame_tensor_chunks_before_reduction(
     test_video: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    request = legacy_reduce_request(
+    request = reduce_request(
         test_video, operation="mean", rect=None,
     )
     cache_root = tmp_path / "cache"
@@ -627,17 +648,18 @@ def test_generate_resumes_frame_tensor_chunks_before_reduction(
     resumed = pixelprobe.generate(
         request, cache_root=cache_root, resume_from=checkpoint,
     )
-    expected = core.temporal_reduce(test_video, op="mean")
+    # 恢复后的结果必须与一次不中断的执行逐值相同
+    uninterrupted = pixelprobe.generate(request)
     assert np.array_equal(
         resumed.request_tensors[0][0].data.materialize(),
-        expected.data_tensor.data.materialize(),
+        uninterrupted.request_tensors[0][0].data.materialize(),
     )
 
 
 def test_generate_resumes_reduction_input_chunks(
     test_video: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    request = legacy_reduce_request(test_video, operation="mean", rect=None)
+    request = reduce_request(test_video, operation="mean", rect=None)
     cache_root = tmp_path / "cache"
     checkpoint = tmp_path / "reduction.checkpoint.json"
     original = LocalExecutionContext.checkpoint_to
@@ -671,10 +693,10 @@ def test_generate_resumes_reduction_input_chunks(
     resumed = pixelprobe.generate(
         request, cache_root=cache_root, resume_from=checkpoint,
     )
-    expected = core.temporal_reduce(test_video, op="mean")
+    uninterrupted = pixelprobe.generate(request)
     assert np.array_equal(
         resumed.request_tensors[0][0].data.materialize(),
-        expected.data_tensor.data.materialize(),
+        uninterrupted.request_tensors[0][0].data.materialize(),
     )
     assert not any((cache_root / "partials").rglob("data.npy"))
 
@@ -682,7 +704,7 @@ def test_generate_resumes_reduction_input_chunks(
 def test_generate_shares_one_decode_across_xt_path_reduce_and_flow(
     test_video: Path,
 ) -> None:
-    expected_xt = core.create_xt_slice(test_video, RED_Y).array
+    xt_truth = expected_xt(RED_Y)
     path_request = RepresentationRequest(
         source=_source(test_video),
         selection=TemporalSelection(mode="all"),
@@ -716,10 +738,10 @@ def test_generate_shares_one_decode_across_xt_path_reduce_and_flow(
     assert result.decode_passes == 1
     assert result.plan.decode_node_count == 1
     assert np.array_equal(
-        result.request_tensors[0][0].data.materialize(), expected_xt,
+        result.request_tensors[0][0].data.materialize(), xt_truth,
     )
     assert np.array_equal(
-        result.request_tensors[1][0].data.materialize(), expected_xt,
+        result.request_tensors[1][0].data.materialize(), xt_truth,
     )
     reduction = result.request_tensors[2][0].data.materialize()
     assert reduction.shape == (32, 32, 3) and reduction.dtype == np.float64
@@ -728,20 +750,12 @@ def test_generate_shares_one_decode_across_xt_path_reduce_and_flow(
     assert len(result.events) == 4
 
 
-def test_unified_reduce_preserves_legacy_diff_rect_and_preview(
+def test_reduce_diff_rect_keeps_data_exact_and_preview_derived(
     test_video: Path,
 ) -> None:
+    # 精确数值由 scripts/capture_golden.py 的 reduce_diff_rect 用例锁定
     rect = (3, 4, 12, 10)
-    legacy = core.temporal_reduce(
-        test_video,
-        op="diff",
-        rect=rect,
-        p_low=5.0,
-        p_high=95.0,
-        destripe=True,
-        smooth=3,
-    )
-    request = legacy_reduce_request(
+    request = reduce_request(
         test_video,
         operation="diff",
         rect=rect,
@@ -752,10 +766,13 @@ def test_unified_reduce_preserves_legacy_diff_rect_and_preview(
     )
     result = pixelprobe.generate(request)
     data, preview = result.request_tensors[0]
-    assert np.array_equal(data.data.materialize(), legacy.data_tensor.data.materialize())
-    assert np.array_equal(preview.data.materialize(), legacy.image)
-    assert preview.attributes["stretch_low_value"] == legacy.stretch_low_value
-    assert preview.attributes["stretch_high_value"] == legacy.stretch_high_value
+    values = data.data.materialize()
+    image = preview.data.materialize()
+    assert values.shape == (10, 12, 3) and values.dtype == np.float64
+    assert image.shape == (10, 12, 3) and image.dtype == np.uint8
+    assert data.attributes["artifact_role"] == "data"
+    assert preview.attributes["artifact_role"] == "preview"
+    assert preview.attributes["stretch_low_value"] <= preview.attributes["stretch_high_value"]
 
 
 def test_unified_reduce_supports_exact_rms_and_percentile(test_video: Path) -> None:
@@ -797,18 +814,12 @@ def test_reduction_request_rejects_unsupported_axes_and_missing_percentile() -> 
         ReductionRequest(name="percentile", axes=("time",))
 
 
-def test_unified_flow_preserves_legacy_compensation_stats_and_previews(
+def test_flow_compensation_subtracts_recorded_global_motion(
     motion_video: Path,
 ) -> None:
+    # 精确数值由 scripts/capture_golden.py 的 flow_compensated 用例锁定
     pytest.importorskip("cv2")
-    legacy = core.compute_flow(
-        motion_video,
-        frame_a=0,
-        frame_b=4,
-        compensate_global=True,
-        mag_threshold=0.5,
-    )
-    request = legacy_flow_request(
+    request = flow_request(
         motion_video,
         frame_a=0,
         frame_b=4,
@@ -817,13 +828,20 @@ def test_unified_flow_preserves_legacy_compensation_stats_and_previews(
     )
     result = pixelprobe.generate(request)
     raw, flow, magnitude, flow_preview, magnitude_preview = result.request_tensors[0]
-    assert np.array_equal(raw.data.materialize(), legacy.raw_flow_tensor.data.materialize())
-    assert np.array_equal(flow.data.materialize(), legacy.flow_tensor.data.materialize())
-    assert np.array_equal(magnitude.data.materialize(), legacy.magnitude_tensor.data.materialize())
-    assert np.array_equal(flow_preview.data.materialize(), legacy.flow_image)
-    assert np.array_equal(magnitude_preview.data.materialize(), legacy.magnitude_image)
-    assert magnitude.attributes["global_motion"] == legacy.global_motion
-    assert magnitude.attributes["motion_bbox"] == legacy.motion_bbox
+    global_motion = magnitude.attributes["global_motion"]
+    assert isinstance(global_motion, dict)
+    expected_flow = reconstruct_effective_flow(
+        raw.data.materialize(), compensated=True, global_motion=global_motion,
+    )
+    assert np.allclose(flow.data.materialize(), expected_flow, atol=1e-5)
+    assert np.allclose(
+        magnitude.data.materialize(),
+        np.hypot(expected_flow[..., 0], expected_flow[..., 1]),
+        atol=1e-4,
+    )
+    assert "motion_bbox" in magnitude.attributes
+    assert flow_preview.attributes["artifact_role"] == "preview"
+    assert magnitude_preview.attributes["artifact_role"] == "preview"
 
 
 def test_generate_bundle_records_request_and_exact_data(
@@ -850,7 +868,7 @@ def test_generate_bundle_records_request_and_exact_data(
     # generate() 的内部临时目录此时已清理，返回句柄必须指向 Bundle 持久数据。
     assert np.array_equal(
         result.request_tensors[0][0].data.materialize(),
-        core.create_xt_slice(test_video, RED_Y).array,
+        expected_xt(RED_Y),
     )
     data_record = next(
         item for item in result.bundle.manifest.artifacts if item.kind == "data"
@@ -884,7 +902,7 @@ def test_generate_bundle_records_request_and_exact_data(
     try:
         assert restored.data.shape == (FRAME_COUNT, 32, 3)
         assert np.array_equal(
-            restored.data.materialize(), core.create_xt_slice(test_video, RED_Y).array,
+            restored.data.materialize(), expected_xt(RED_Y),
         )
     finally:
         restored.data.close()  # type: ignore[attr-defined]
@@ -943,7 +961,25 @@ def test_source_change_detection_uses_content_not_only_size_or_mtime(
     os.utime(source, ns=(stat.st_atime_ns, stat.st_mtime_ns))
 
     with pytest.raises(MediaChangedDuringAnalysisError):
-        LocalExecutor._verify_sources_unchanged({source: expected})
+        LocalExecutor._verify_sources_unchanged({source: expected}, full=True)
+
+
+def test_quick_fingerprint_detects_edge_content_change_with_same_stat(
+    tmp_path: Path,
+) -> None:
+    import os
+    from pixelprobe.utils.fingerprint import quick_fingerprint
+
+    source = tmp_path / "same-stat-quick.bin"
+    source.write_bytes(b"abc")
+    stat = source.stat()
+    expected = quick_fingerprint(source)
+    source.write_bytes(b"abd")
+    os.utime(source, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+
+    assert quick_fingerprint(source) != expected
+    with pytest.raises(MediaChangedDuringAnalysisError):
+        LocalExecutor._verify_sources_unchanged({source: expected}, full=False)
 
 
 def test_generate_memory_output_fails_loud_when_exact_result_exceeds_budget(

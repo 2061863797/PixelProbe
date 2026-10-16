@@ -16,6 +16,15 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
+# 测试会话使用独立的媒体索引目录（子进程 CLI 继承该环境变量），不读写本机真实索引
+import atexit  # noqa: E402
+import shutil  # noqa: E402
+import tempfile  # noqa: E402
+
+_TEST_INDEX_DIR = tempfile.mkdtemp(prefix="pixelprobe-test-index-")
+os.environ["PIXELPROBE_INDEX_DIR"] = _TEST_INDEX_DIR
+atexit.register(shutil.rmtree, _TEST_INDEX_DIR, ignore_errors=True)
+
 from generate_test_image import generate_test_image, make_image_array  # noqa: E402
 from generate_test_video import (  # noqa: E402
     BLINK_FRAME_COUNT,
@@ -118,6 +127,72 @@ def blink_video(assets_dir: Path) -> Path:
 def motion_video(assets_dir: Path) -> Path:
     """匀速右移白块视频：光流主方向约 0°。"""
     return generate_motion_video(assets_dir / "运动视频.mkv")
+
+
+def engine_tensors(request):
+    """经统一引擎在内存中执行单个请求，返回该请求的全部输出 Tensor。"""
+    import pixelprobe
+    return pixelprobe.generate(request).request_tensors[0]
+
+
+def engine_xt(video: Path, y: int):
+    """经引擎生成整段视频在第 y 行的 X-T 切片 Tensor。"""
+    from pixelprobe.request_builders import spacetime_request
+    return engine_tensors(spacetime_request(video, "xt", y))[0]
+
+
+def engine_reduce(video: Path, op: str, rect=None):
+    """经引擎做时间域合成，返回 (Data Tensor, Preview Tensor)。"""
+    from pixelprobe.request_builders import reduce_request
+    data, preview = engine_tensors(reduce_request(video, operation=op, rect=rect))
+    return data, preview
+
+
+def engine_slice(video: Path, kind: str, fixed_coordinate: int, **range_options):
+    """经引擎生成 X-T/Y-T 切片，返回与 CLI 一致读取的 array/frames/times。"""
+    from types import SimpleNamespace
+    from pixelprobe.request_builders import spacetime_request
+    tensor = engine_tensors(
+        spacetime_request(video, kind, fixed_coordinate, **range_options)
+    )[0]
+    return SimpleNamespace(
+        array=tensor.data.materialize(),
+        frames=list(tensor.attributes["presentation_indices"]),
+        times=list(tensor.attributes["timeline_timestamps_seconds"]),
+        tensor=tensor,
+    )
+
+
+def engine_timeline(video: Path, **options):
+    """经引擎提取像素时间线，按 CLI 的方式组装 matrix[K,T,3]、点、帧与时间。"""
+    from types import SimpleNamespace
+    import numpy as np
+    from pixelprobe.models.pixel import PixelCoordinate
+    from pixelprobe.request_builders import timeline_matrix, timeline_request
+    from pixelprobe.utils.coordinates import pixel_id_from_xy
+    request, ordered, width, _ = timeline_request(video, **options)
+    tensor = engine_tensors(request)[0]
+    matrix = timeline_matrix(tensor)
+    block_size = options.get("block_size")
+    if block_size is not None:
+        matrix = np.round(matrix).astype(np.uint8)
+    return SimpleNamespace(
+        matrix=matrix,
+        points=[
+            PixelCoordinate(x=x, y=y, pixel_id=pixel_id_from_xy(x, y, width))
+            for x, y in ordered
+        ],
+        frames=list(tensor.attributes["presentation_indices"]),
+        times=list(tensor.attributes["timeline_timestamps_seconds"]),
+        sample_type="point" if block_size is None else "block_mean",
+        tensor=tensor,
+    )
+
+
+def expected_xt(y: int):
+    """测试视频按无损编码校验，X-T 切片的真值直接由生成函数得到。"""
+    import numpy as np
+    return np.stack([make_frame(t)[y] for t in range(FRAME_COUNT)])
 
 
 def run_cli(

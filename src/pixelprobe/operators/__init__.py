@@ -16,23 +16,14 @@ from pixelprobe.operators.base import (
 __all__ = [
     "HaloSpec", "Operator", "OperatorPlan", "OperatorSpec", "ResourcePolicy",
     "RuntimeInvocation",
-    "SamplingConfig", "SamplingOutput", "SamplingPlan", "TensorChunk",
-    "TensorDescriptor",
-    "execute_sampling", "resample_polyline", "sample_path_t", "sample_points_t",
-    "sample_roi_t", "sample_xt", "sample_yt",
+    "SamplingConfig", "SamplingPlan", "TensorChunk",
+    "TensorDescriptor", "resample_polyline",
 ]
 
 _SAMPLING_EXPORTS = {
     "SamplingConfig",
-    "SamplingOutput",
     "SamplingPlan",
-    "execute_sampling",
     "resample_polyline",
-    "sample_path_t",
-    "sample_points_t",
-    "sample_roi_t",
-    "sample_xt",
-    "sample_yt",
 }
 
 

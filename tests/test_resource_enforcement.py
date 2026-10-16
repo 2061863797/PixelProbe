@@ -19,9 +19,13 @@ from pixelprobe.operators.base import ResourcePolicy
 from pixelprobe.utils.resource_budget import ResourceBudget, budget_scope
 from pixelprobe_mcp.config import ServerConfig
 from pixelprobe_mcp.resource_plan import media_plan, plan_operation
-from pixelprobe_mcp.worker import run_operation_sync, WorkerError
+from pixelprobe_mcp.worker import run_operation_sync, shutdown_worker_pools, WorkerError
 
 MIB = 1024 * 1024
+
+
+def _pixel_payload(source):
+    return {"capability": "pixel", "media_path": str(source), "at": "point(0,0)", "images": False}
 
 
 def request(selection=None):
@@ -44,7 +48,7 @@ def test_plan_reads_header_without_loading_pixels(tmp_path, monkeypatch):
     Image.new("RGB", (64, 32)).save(source)
     monkeypatch.setattr(PngImageFile, "load", lambda *_: pytest.fail("预算阶段不得解码"))
     result = plan_operation(ServerConfig((tmp_path,), tmp_path / "out"),
-                            "evidence", {"media_path": str(source)})
+                            "capability", {"capability": "evidence", "media_path": str(source)})
     assert result["full_resolution_pixels"] == 2048
     assert result["analysis_memory_bytes"] == 2048 * 128
 
@@ -77,13 +81,14 @@ def test_time_selection_reports_full_scan_without_fps_mapping():
 
 
 def test_crop_cannot_bypass_decode_budget(tmp_path):
+    from pixelprobe.address import parse_address
+    from pixelprobe.capabilities import capability
     from pixelprobe_mcp.service import PixelProbeService, McpResourceLimitError
-    from pixelprobe_mcp.models import RectInput
     service = PixelProbeService(ServerConfig((tmp_path,), tmp_path / "out"))
-    with pytest.raises(McpResourceLimitError):
-        service._ensure_frame_budget(SimpleNamespace(width=20000, height=20000),
-                                     RectInput(x=0, y=0, width=1, height=1),
-                                     include_image_payload=True)
+    info = SimpleNamespace(width=20000, height=20000, media_type="image", frame_count=1)
+    # rect(...) 只裁剪返回内容，不减少完整解码开销
+    with pytest.raises(McpResourceLimitError, match="rect"):
+        service._ensure_budget(capability("frame"), info, parse_address("rect(0,0,1,1)"), {}, None)
 
 
 def test_decode_budget_checked_before_image_load(tmp_path, monkeypatch):
@@ -197,14 +202,17 @@ def test_real_worker_memory_limit_reaps_then_next_request_succeeds(tmp_path):
     source = tmp_path / "memory.png"
     Image.new("RGB", (16, 16), (7, 8, 9)).save(source)
     config = ServerConfig((tmp_path,), tmp_path / "out")
-    payload = {"media_path": str(source), "points": [{"x": 0, "y": 0}]}
+    payload = _pixel_payload(source)
+    shutdown_worker_pools()
     before = {p.pid for p in multiprocessing.active_children()}
     with pytest.raises(WorkerError, match="MCP_RESOURCE_LIMIT"):
-        run_operation_sync(config, "read_pixels", payload, timeout_seconds=10,
+        run_operation_sync(config, "capability", payload, timeout_seconds=10,
                            memory_limit_bytes=1)
+    # 超出内存预算的工作进程必须被回收，不能复用
     assert {p.pid for p in multiprocessing.active_children()} == before
-    result = run_operation_sync(config, "read_pixels", payload, timeout_seconds=10)
-    assert result.data["pixels"][0]["rgb"] == {"r": 7, "g": 8, "b": 9}
+    envelope, _ = run_operation_sync(config, "capability", payload, timeout_seconds=10)
+    assert envelope.data["pixels"][0]["rgb"] == {"r": 7, "g": 8, "b": 9}
+    shutdown_worker_pools()
     assert {p.pid for p in multiprocessing.active_children()} == before
 
 
@@ -219,16 +227,15 @@ def test_real_job_resource_failure_is_not_claimable_and_releases(tmp_path, monke
         return original(*args, **kwargs)
     monkeypatch.setattr(jobs, "run_operation_sync", limited)
     try:
-        job = manager.submit("read_pixels", {"media_path": str(source),
-                             "points": [{"x": 0, "y": 0}]}, timeout_seconds=10, persistent=True)
+        job = manager.submit("capability", _pixel_payload(source), timeout_seconds=10, persistent=True)
         job.future.result(15)
         assert job.status == "failed" and job.error_code == "MCP_RESOURCE_LIMIT"
         with pytest.raises(WorkerError, match="MCP_JOB_NOT_READY"):
             manager.result(job.job_id)
         assert manager.allocated_memory_bytes == manager.allocated_temporary_bytes == 0
         monkeypatch.setattr(jobs, "run_operation_sync", original)
-        following = manager.submit("read_pixels", {"media_path": str(source),
-                                   "points": [{"x": 0, "y": 0}]}, timeout_seconds=10, persistent=True)
+        following = manager.submit("capability", _pixel_payload(source),
+                                   timeout_seconds=10, persistent=True)
         following.future.result(15)
         assert following.status == "succeeded"
         assert following.resource_plan["full_resolution_pixels"] == 256
@@ -275,7 +282,7 @@ def test_parent_result_quota_does_not_publish_oversized_payload(tmp_path, monkey
     manager = jobs.JobManager(ServerConfig((tmp_path,), tmp_path / "out"))
     monkeypatch.setattr(jobs, "run_operation_sync", lambda *args, **kwargs: {"data": "x" * (5 * MIB)})
     try:
-        job = manager.submit("read_pixels", {}, timeout_seconds=10, persistent=True)
+        job = manager.submit("capability", {}, timeout_seconds=10, persistent=True)
         job.future.result(10)
         assert job.status == "failed" and not job.result_ready
         assert not (tmp_path / "out" / ".jobs" / (job.job_id + ".result.json")).exists()
@@ -291,8 +298,7 @@ def test_two_real_workers_never_reserve_more_than_total(tmp_path):
     config = ServerConfig((tmp_path,), tmp_path / "out", workers=2)
     manager = JobManager(config)
     try:
-        jobs = [manager.submit("read_pixels", {"media_path": str(source),
-                               "points": [{"x": 0, "y": 0}]},
+        jobs = [manager.submit("capability", _pixel_payload(source),
                                timeout_seconds=10, persistent=True) for _ in range(2)]
         with manager._lock:
             assert manager.allocated_memory_bytes <= config.total_memory_bytes
@@ -355,11 +361,11 @@ def test_real_long_video_partial_mcp_job_uses_five_decodes(tmp_path):
     _write_lossless_video(source, 2001)
     manager = JobManager(ServerConfig((tmp_path,), tmp_path / "out",
                                      total_temporary_bytes=32 * MIB))
-    payload = {"media_path": str(source), "request": request({
+    payload = {"capability": "generate", "media_path": str(source), "options": {"requests": [request({
         "mode": "frame_interval", "requested_start_frame": 1,
-        "requested_end_frame_exclusive": 5, "sample_every": 2})}
+        "requested_end_frame_exclusive": 5, "sample_every": 2})]}}
     try:
-        job = manager.submit("generate_representation", payload, timeout_seconds=20, persistent=True)
+        job = manager.submit("capability", payload, timeout_seconds=20, persistent=True)
         job.future.result(25)
         assert job.status == "succeeded", job.error
         result, _ = manager.result(job.job_id)

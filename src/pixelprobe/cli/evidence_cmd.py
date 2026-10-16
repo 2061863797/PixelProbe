@@ -5,8 +5,9 @@ from typing import Optional
 
 import typer
 
-from pixelprobe.cli import JSON_OPT, QUIET_OPT, VERBOSE_OPT, NO_PROGRESS_OPT, CliContext, cli_guard
-from pixelprobe.evidence import analyze_evidence
+from pixelprobe.cli import (
+    JSON_OPT, QUIET_OPT, VERBOSE_OPT, NO_PROGRESS_OPT, CliContext, cli_guard, run_capability,
+)
 from pixelprobe.output import json_writer
 from pixelprobe.output.console import out_console, print_kv, progress_bar
 
@@ -43,24 +44,26 @@ def evidence(
             trust_pem = raw.decode("utf-8")
         target = output or media.with_name(f"{media.stem}.evidence.bundle")
         with progress_bar("证据分析", 1, ctx.progress_disabled) as update:
-            result = analyze_evidence(
-                media, output_path=target, jpeg_quality=jpeg_quality,
-                block_size=block_size,
-                c2pa_trust_anchors_pem=trust_pem,
+            outcome = run_capability(
+                "evidence", media, None, None,
+                {"jpeg_quality": jpeg_quality, "block_size": block_size,
+                 "c2pa_trust_anchors_pem": trust_pem},
+                output_path=target, progress=update,
             )
-            update(1, 1)
+        report = outcome.data
         if ctx.json_mode:
-            json_writer.print_success("evidence", result.report)
+            json_writer.print_success("evidence", report)
             return
+        bundle = outcome.artifacts["bundle"]
         if ctx.quiet:
-            out_console.print(str(result.bundle.root), highlight=False)
+            out_console.print(str(bundle.root), highlight=False)
             return
         print_kv("证据分析", [
-            ("结果包", result.bundle.root),
-            ("EXIF 条目", result.report["metadata"].get("exif_entry_count", 0)),
-            ("C2PA", result.report["c2pa"]["verification_state"]),
-            ("ELA", result.report["ela"]["status"]),
-            ("噪声一致性", result.report["noise_consistency"]["status"]),
-            ("边缘候选", result.report["edge_candidates"]["status"]),
+            ("结果包", bundle.root),
+            ("EXIF 条目", report["metadata"].get("exif_entry_count", 0)),
+            ("C2PA", report["c2pa"]["verification_state"]),
+            ("ELA", report["ela"]["status"]),
+            ("噪声一致性", report["noise_consistency"]["status"]),
+            ("边缘候选", report["edge_candidates"]["status"]),
             ("结论", "未自动判定真伪，请结合原图与多项证据复核"),
         ])

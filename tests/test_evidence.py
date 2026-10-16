@@ -49,7 +49,7 @@ def test_evidence_marks_ela_not_applicable_for_png(tmp_path: Path) -> None:
 @pytest.mark.parametrize("reason", ["远程凭证未获取", "C2PA 原生依赖无法加载"])
 def test_mcp_evidence_reports_actual_unavailable_reason(tmp_path, monkeypatch, reason):
     from pixelprobe_mcp.config import ServerConfig
-    from pixelprobe_mcp.models import EvidenceInput
+    from pixelprobe_mcp.models import CapabilityInput
     from pixelprobe_mcp.service import PixelProbeService
     source = tmp_path / "input.png"
     Image.new("RGB", (16, 16)).save(source)
@@ -57,9 +57,10 @@ def test_mcp_evidence_reports_actual_unavailable_reason(tmp_path, monkeypatch, r
         "status": "unavailable", "verification_state": "not_checked", "reason": reason,
     })
     service = PixelProbeService(ServerConfig((tmp_path,), tmp_path / "artifacts"))
-    result = service.evidence(EvidenceInput(media_path=str(source)))
+    result, _ = service.run_capability(CapabilityInput(capability="evidence", media_path=str(source)))
     assert any(reason in warning for warning in result.warnings)
     assert all("未安装" not in warning for warning in result.warnings)
+    assert "exif" not in result.data["metadata"] and "exif_fields" in result.data["metadata"]
 
 
 def test_c2pa_adapter_separates_validation_failure_from_unknown_trust(

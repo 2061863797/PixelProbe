@@ -1,12 +1,15 @@
-"""PixelProbe MCP 的输入、输出与分页模型。"""
+"""PixelProbe MCP 的输入、输出与分页模型（2.0）。
+
+媒体分析统一走 CapabilityInput：能力名 + 媒体路径 + 地址文字 + 计算参数。
+地址写法与命令行 --at 相同（见 docs/address.md）。路径一律经服务器白名单解析，
+输出位置只由服务器决定，参数中不接受任何输出路径。
+"""
 
 from __future__ import annotations
 
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
-
-from pixelprobe.workflows import WorkflowOptions
 
 
 class StrictModel(BaseModel):
@@ -15,141 +18,31 @@ class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
 
-class PointInput(StrictModel):
-    x: int = Field(description="原始媒体存储坐标 x，从 0 开始", ge=0)
-    y: int = Field(description="原始媒体存储坐标 y，从 0 开始", ge=0)
-
-
-class RectInput(StrictModel):
-    x: int = Field(description="矩形左上角 x", ge=0)
-    y: int = Field(description="矩形左上角 y", ge=0)
-    width: int = Field(description="矩形宽度，采用半开区间", ge=1)
-    height: int = Field(description="矩形高度，采用半开区间", ge=1)
-
-    def as_tuple(self) -> tuple[int, int, int, int]:
-        return self.x, self.y, self.width, self.height
-
-
-class FrameSelector(StrictModel):
-    frame: int | None = Field(default=None, description="显示顺序帧号，从 0 开始", ge=0)
-    time_seconds: float | None = Field(
-        default=None, description="归一化时间轴上的秒数", ge=0,
+class CapabilityInput(StrictModel):
+    capability: str = Field(min_length=1, max_length=40, description="能力名，见 pixelprobe_system capabilities")
+    media_path: str | None = Field(
+        default=None, min_length=1, description="允许读取根目录内的图片、视频或结果包路径",
     )
-
-    @model_validator(mode="after")
-    def validate_exclusive(self) -> "FrameSelector":
-        if self.frame is not None and self.time_seconds is not None:
-            raise ValueError("frame 与 time_seconds 不能同时提供")
-        return self
-
-
-class InspectInput(StrictModel):
-    media_path: str = Field(description="允许读取根目录内的本地图片或视频路径", min_length=1)
-    detail: Literal["quick", "standard"] = Field(
-        default="quick",
-        description="quick 只读基础信息；standard 对受限长度视频增加代表帧、变化和异常扫描",
+    reference_path: str | None = Field(
+        default=None, min_length=1, description="版本比较的第二个媒体（仅 compare_media）",
     )
-    offset: int = Field(default=0, description="事件和异常列表分页偏移", ge=0)
-    limit: int = Field(default=20, description="每类最多返回多少项", ge=1, le=100)
-
-
-class FrameInput(FrameSelector):
-    media_path: str = Field(description="允许读取根目录内的本地图片或视频路径", min_length=1)
-    crop: RectInput | None = Field(
-        default=None, description="可选原始分辨率裁剪；不会缩放或插值",
+    at: str | None = Field(
+        default=None, max_length=2000,
+        description='地址：时间 + 空间，如 "f=120 rect(400,200,200,150)"、"t=1s..3s step=2"、"cell(C4)"、"@event1"',
     )
-
-
-class PixelInput(FrameSelector):
-    media_path: str = Field(description="允许读取根目录内的本地图片或视频路径", min_length=1)
-    points: list[PointInput] = Field(
-        description="需要精确读取的原始像素坐标", min_length=1, max_length=256,
+    refs: dict[str, str] = Field(
+        default_factory=dict, description="附加引用表：名称 → 地址文字，供 at 中的 @名称 使用",
     )
-
-
-class RegionInput(FrameSelector):
-    media_path: str = Field(description="允许读取根目录内的本地图片或视频路径", min_length=1)
-    rect: RectInput = Field(description="要统计的原始分辨率矩形")
-
-
-class ChangesInput(StrictModel):
-    media_path: str = Field(description="允许读取根目录内的本地视频路径", min_length=1)
-    point: PointInput | None = Field(default=None, description="单像素变化源")
-    rect: RectInput | None = Field(default=None, description="矩形区域变化源")
-    grid: RectInput | None = Field(default=None, description="网格采样范围")
-    grid_step: int | None = Field(default=None, description="网格采样间隔", ge=1)
-    start_frame: int | None = Field(default=None, description="闭区间起始帧", ge=0)
-    end_frame: int | None = Field(default=None, description="闭区间结束帧", ge=0)
-    start_seconds: float | None = Field(default=None, description="闭区间起始秒数", ge=0)
-    end_seconds: float | None = Field(default=None, description="闭区间结束秒数", ge=0)
-    sample_every: int = Field(default=1, description="每隔多少帧采样", ge=1)
-    offset: int = Field(default=0, description="记录分页偏移", ge=0)
-    limit: int = Field(default=50, description="本页最多记录数", ge=1, le=200)
-    sort: Literal["timeline", "score"] = Field(
-        default="score", description="按时间顺序或变化得分降序返回",
-    )
-
-    @model_validator(mode="after")
-    def validate_modes(self) -> "ChangesInput":
-        if sum(value is not None for value in (self.point, self.rect, self.grid)) > 1:
-            raise ValueError("point、rect、grid 最多提供一个")
-        if self.grid_step is not None and self.grid is None:
-            raise ValueError("grid_step 必须与 grid 一起提供")
-        uses_frames = self.start_frame is not None or self.end_frame is not None
-        uses_seconds = self.start_seconds is not None or self.end_seconds is not None
-        if uses_frames and uses_seconds:
-            raise ValueError("帧范围与时间范围不能混用")
-        return self
-
-
-class GenerateInput(StrictModel):
-    media_path: str = Field(description="允许读取根目录内的源媒体路径", min_length=1)
-    request: dict[str, Any] = Field(description="PixelProbe RepresentationRequest 对象")
+    options: dict[str, Any] = Field(default_factory=dict, description="能力的计算参数")
+    images: bool = Field(default=True, description="是否返回图片（带坐标刻度的预览）")
+    grid: bool = Field(default=False, description="在画面类图片上叠加 cell 网格（8×6，列 A～H、行 1～6）")
+    max_side: int = Field(default=1024, ge=64, le=4096, description="返回图片的最长边上限（像素）")
     output_name: str | None = Field(
-        default=None,
-        description="可选 Bundle 名称；只能包含字母、数字、点、下划线和短横线",
-        pattern=r"^[A-Za-z0-9._-]{1,80}$",
+        default=None, pattern=r"^[A-Za-z0-9._-]{1,80}$",
+        description="写结果包的能力可选的结果包名称；只能包含字母、数字、点、下划线和短横线",
     )
-
-
-class EvidenceInput(StrictModel):
-    media_path: str = Field(description="允许读取根目录内的本地图片路径", min_length=1)
-    output_name: str | None = Field(
-        default=None,
-        pattern=r"^[A-Za-z0-9._-]{1,80}$",
-        description="可选证据 Bundle 名称",
-    )
-    jpeg_quality: int = Field(default=90, ge=1, le=100)
-    block_size: int = Field(default=32, ge=8, le=512)
-    c2pa_trust_anchors_pem: str | None = Field(
-        default=None, min_length=1, max_length=65536,
-        description="可选 PEM 根证书集合，替换 SDK 默认信任锚；不等同于媒体真实性背书",
-    )
-
-
-class WorkflowInput(StrictModel):
-    media_path: str = Field(min_length=1)
-    reference_path: str | None = Field(default=None, min_length=1)
-    options: WorkflowOptions = Field(description="组合流程、闭区间帧范围、采样和阈值")
-    output_name: str | None = Field(default=None, pattern=r"^[A-Za-z0-9._-]{1,80}$")
-
-    @model_validator(mode="after")
-    def validate_workflow(self):
-        if (self.reference_path is not None) != (self.options.workflow == "compare_media"):
-            raise ValueError("仅 compare_media 必须提供 reference_path")
-        return self
-
-
-JobOperation = Literal[
-    "inspect_media", "get_frame", "read_pixels", "analyze_region",
-    "find_changes", "generate_representation", "evidence", "workflow",
-    "list_artifacts", "read_artifact",
-]
-
-
-class JobSubmitInput(StrictModel):
-    operation: JobOperation = Field(description="要异步执行的 PixelProbe 服务操作")
-    payload: dict[str, Any] = Field(description="对应操作的完整参数对象")
+    offset: int = Field(default=0, ge=0, description="列表类结果的分页偏移")
+    limit: int = Field(default=50, ge=1, le=200, description="列表类结果每页条数")
 
 
 class JobIdInput(StrictModel):

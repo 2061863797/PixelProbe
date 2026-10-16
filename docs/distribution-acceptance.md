@@ -26,7 +26,7 @@ PIXELPROBE_TEST_COMMAND 是测试启动器的 JSON 数组，不是产品配置�
 ```powershell
 $env:PIXELPROBE_TEST_COMMAND = ConvertTo-Json -Compress -InputObject @(
   "uvx", "--offline", "--python", "3.12", "--from",
-  "pixelprobe[mcp,flow,storage,evidence] @ file:///C:/候选目录/pixelprobe-1.1.0-py3-none-any.whl",
+  "pixelprobe[mcp,flow,storage,evidence] @ file:///C:/候选目录/pixelprobe-2.0.0-py3-none-any.whl",
   "pixelprobe"
 )
 python -m pytest tests/test_distribution.py
@@ -63,6 +63,10 @@ scripts/verify_uvx_upgrade.py 接收 --old、--new 两个实际版本不同的 w
 
 2026-09-20 已在 Windows 验证本地 v1.0.2 标签重建 wheel → 当前 1.0.3 候选 →
 v1.0.2。这是本地 wheel 演练，不代表远程发行物和用户实际客户端均已验收。
+
+2026-10-16 已在 Windows 验证本地 v1.1.0 标签重建 wheel（17 个 MCP 工具）→ 2.0.0 候选（10 个工具）→
+回滚 v1.1.0，三个阶段均离线读取同一原生像素。2.0 起工具名不同，脚本按服务端实际工具选择
+`pixelprobe_read_pixels`（1.x）或 `pixelprobe_measure what=pixel options.sample=native`（2.0）。
 
 ## 发行附件
 

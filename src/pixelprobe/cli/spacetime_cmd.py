@@ -11,19 +11,18 @@ from typing import Literal, Optional
 
 import typer
 
-import pixelprobe
 from pixelprobe.cli import (
+    AT_OPT,
     JSON_OPT,
     NO_PROGRESS_OPT,
     QUIET_OPT,
+    REF_FILE_OPT,
     VERBOSE_OPT,
     CliContext,
     cli_guard,
+    run_capability,
 )
 from pixelprobe.models.spacetime import SpacetimeMetadata
-from pixelprobe.compat.legacy_requests import (
-    legacy_spacetime_request,
-)
 from pixelprobe.output import json_writer
 from pixelprobe.output.console import out_console, print_kv, progress_bar
 from pixelprobe.output.image_writer import save_png, scale_nearest
@@ -33,56 +32,35 @@ from pixelprobe.utils.validation import ensure_scale
 def _run_slice(
     slice_type: Literal["xt", "yt"],
     media: Path,
-    fixed: int,
-    start_frame: Optional[int],
-    end_frame: Optional[int],
-    start: Optional[float],
-    end: Optional[float],
-    sample_every: int,
+    at: Optional[str],
+    ref_file: Optional[Path],
     scale_space: int,
     scale_t: int,
     output: Optional[Path],
     ctx: CliContext,
+    options: dict,
 ) -> None:
     with cli_guard(slice_type, ctx):
         ensure_scale(scale_space, "--scale-x" if slice_type == "xt" else "--scale-y")
         ensure_scale(scale_t, "--scale-t")
         desc = "生成 X–T 切片" if slice_type == "xt" else "生成 Y–T 切片"
-        request = legacy_spacetime_request(
-            media,
-            slice_type,
-            fixed,
-            start_frame=start_frame,
-            end_frame=end_frame,
-            start=start,
-            end=end,
-            sample_every=sample_every,
-        )
-        selection = request.selection
         with progress_bar(desc, 1, ctx.progress_disabled) as update:
-            generated = pixelprobe.generate(request)
-            update(1, 1)
-
-        tensor = generated.request_tensors[0][0]
-        array = tensor.data.materialize()
-        frames = list(tensor.attributes["presentation_indices"])
-        times = list(tensor.attributes["timeline_timestamps_seconds"])
-
+            outcome = run_capability(slice_type, media, at, ref_file, options, progress=update)
+        core_data = outcome.data
         # 规范 Tensor 形状 [T, 空间, 3]：纵轴=时间，横轴=空间。
-        img = scale_nearest(array, scale_space, scale_t)
+        img = scale_nearest(outcome.images["slice"](), scale_space, scale_t)
         output_path: str | None = None
         if output is not None:
             save_png(img, output)
             output_path = str(output)
-
         metadata = SpacetimeMetadata(
             slice_type=slice_type,
-            fixed_coordinate=fixed,
-            start_frame=frames[0],
-            end_frame=frames[-1],
-            frame_count=len(frames),
-            sample_every=selection.sample_every,
-            space_axis="original_x" if slice_type == "xt" else "original_y",
+            fixed_coordinate=core_data["fixed_coordinate"],
+            start_frame=core_data["start_frame"],
+            end_frame=core_data["end_frame"],
+            frame_count=core_data["frame_count"],
+            sample_every=core_data["sample_every"],
+            space_axis=core_data["space_axis"],
             time_axis="vertical",
             width=int(img.shape[1]),
             height=int(img.shape[0]),
@@ -91,23 +69,27 @@ def _run_slice(
             output_path=output_path,
         )
         data = metadata.model_dump()
-        data["frames"] = frames
-        data["times"] = times
+        data["frames"] = core_data["frames"]
+        data["times"] = core_data["times"]
+        for key in ("source", "time_axis_mode", "time_axis_note", "value_definition"):
+            if key in core_data:
+                data[key] = core_data[key]
         if ctx.json_mode:
             json_writer.print_success(slice_type, data)
             return
         if ctx.quiet:
-            out_console.print(output_path or f"{img.shape[1]}x{img.shape[0]}",
-                              highlight=False)
+            out_console.print(output_path or f"{img.shape[1]}x{img.shape[0]}", highlight=False)
             return
         fixed_name = "y" if slice_type == "xt" else "x"
         print_kv(
             "X–T 切片" if slice_type == "xt" else "Y–T 切片",
             [
-                (f"扫描线 {fixed_name}", fixed),
-                ("帧范围", f"{frames[0]}～{frames[-1]}"
-                          f"（每 {selection.sample_every} 帧采样）"),
-                ("帧数", len(frames)),
+                (f"扫描线 {fixed_name}", metadata.fixed_coordinate),
+                ("帧范围", f"{metadata.start_frame}～{metadata.end_frame}" + (
+                    f"（每 {metadata.sample_every} 帧采样）" if metadata.sample_every
+                    else "（自适应取帧，行间时间不均匀）")),
+                ("内容", "与上一帧的差" if core_data.get("source") == "diff" else "原始像素"),
+                ("帧数", metadata.frame_count),
                 ("空间轴", metadata.space_axis),
                 ("时间轴", "vertical（从上到下时间递增）"),
                 ("输出尺寸", f"{metadata.width}x{metadata.height}"),
@@ -116,18 +98,23 @@ def _run_slice(
         )
 
 
+SOURCE_OPT = typer.Option(
+    "frames", "--source", help="frames：原始像素；diff：与上一展示帧的逐通道绝对差（运动、闪烁更醒目）",
+)
+TIME_AXIS_OPT = typer.Option(
+    "uniform", "--time-axis",
+    help="uniform：按 step 等间隔取帧；adaptive：按画面变化量分配行数，变化多处密、静止处疏",
+)
+ROWS_OPT = typer.Option(256, "--rows", help="adaptive：输出行数上限")
+
+
 def xt(
     media: Path = typer.Argument(..., help="视频路径"),
-    y: int = typer.Option(..., "--y", help="水平扫描线的 y 坐标"),
-    start_frame: Optional[int] = typer.Option(
-        None, "--start-frame", help="起始帧（含）"
-    ),
-    end_frame: Optional[int] = typer.Option(
-        None, "--end-frame", help="结束帧（含）"
-    ),
-    start: Optional[float] = typer.Option(None, "--start", help="起始时间（秒）"),
-    end: Optional[float] = typer.Option(None, "--end", help="结束时间（秒）"),
-    sample_every: int = typer.Option(1, "--sample-every", help="每隔 N 帧采样一次"),
+    at: Optional[str] = AT_OPT,
+    ref_file: Optional[Path] = REF_FILE_OPT,
+    source: str = SOURCE_OPT,
+    time_axis: str = TIME_AXIS_OPT,
+    rows: int = ROWS_OPT,
     scale_x: int = typer.Option(1, "--scale-x", help="空间轴最近邻放大倍数"),
     scale_t: int = typer.Option(1, "--scale-t", help="时间轴最近邻放大倍数"),
     output: Optional[Path] = typer.Option(None, "--output", help="输出 PNG 路径"),
@@ -136,24 +123,19 @@ def xt(
     verbose: bool = VERBOSE_OPT,
     no_progress: bool = NO_PROGRESS_OPT,
 ) -> None:
-    """生成固定水平扫描线的 X–T 时空切片（横轴=原视频 x，纵轴=时间）。"""
+    """X–T 时空切片（横轴=原视频 x，纵轴=时间）：--at "row(120)"，可加时间范围与 step。"""
     ctx = CliContext(json_mode, quiet, verbose, no_progress)
-    _run_slice("xt", media, y, start_frame, end_frame, start, end,
-               sample_every, scale_x, scale_t, output, ctx)
+    _run_slice("xt", media, at, ref_file, scale_x, scale_t, output, ctx,
+               {"source": source, "time_axis": time_axis, "rows": rows})
 
 
 def yt(
     media: Path = typer.Argument(..., help="视频路径"),
-    x: int = typer.Option(..., "--x", help="垂直扫描线的 x 坐标"),
-    start_frame: Optional[int] = typer.Option(
-        None, "--start-frame", help="起始帧（含）"
-    ),
-    end_frame: Optional[int] = typer.Option(
-        None, "--end-frame", help="结束帧（含）"
-    ),
-    start: Optional[float] = typer.Option(None, "--start", help="起始时间（秒）"),
-    end: Optional[float] = typer.Option(None, "--end", help="结束时间（秒）"),
-    sample_every: int = typer.Option(1, "--sample-every", help="每隔 N 帧采样一次"),
+    at: Optional[str] = AT_OPT,
+    ref_file: Optional[Path] = REF_FILE_OPT,
+    source: str = SOURCE_OPT,
+    time_axis: str = TIME_AXIS_OPT,
+    rows: int = ROWS_OPT,
     scale_y: int = typer.Option(1, "--scale-y", help="空间轴最近邻放大倍数"),
     scale_t: int = typer.Option(1, "--scale-t", help="时间轴最近邻放大倍数"),
     output: Optional[Path] = typer.Option(None, "--output", help="输出 PNG 路径"),
@@ -162,7 +144,7 @@ def yt(
     verbose: bool = VERBOSE_OPT,
     no_progress: bool = NO_PROGRESS_OPT,
 ) -> None:
-    """生成固定垂直扫描线的 Y–T 时空切片（横轴=原视频 y，纵轴=时间）。"""
+    """Y–T 时空切片（横轴=原视频 y，纵轴=时间）：--at "col(40)"，可加时间范围与 step。"""
     ctx = CliContext(json_mode, quiet, verbose, no_progress)
-    _run_slice("yt", media, x, start_frame, end_frame, start, end,
-               sample_every, scale_y, scale_t, output, ctx)
+    _run_slice("yt", media, at, ref_file, scale_y, scale_t, output, ctx,
+               {"source": source, "time_axis": time_axis, "rows": rows})

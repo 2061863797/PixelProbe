@@ -15,12 +15,12 @@ from pathlib import Path
 
 import numpy as np
 
-from pixelprobe.artifacts import Bundle, BundleWriter, sha256_file
+from pixelprobe.artifacts import Bundle, BundleWriter
+from pixelprobe.utils.fingerprint import source_identity
 from pixelprobe.artifacts.array_io import NpyArrayHandle, save_array_handle_npy
 from pixelprobe.artifacts.models import SourceRecord
 from pixelprobe.core.frame_selector import FrameRange
 from pixelprobe.core.media_reader import detect_actual_format
-from pixelprobe.core.optical_flow import _farneback, _gray
 from pixelprobe.domain.accuracy import AccuracyInfo, AccuracyLevel
 from pixelprobe.domain.axes import AxisKind, AxisMapping, AxisSpec, ChannelSpec
 from pixelprobe.domain.coordinates import CoordinateSpace, CoordinateSpaceKind
@@ -60,7 +60,9 @@ from pixelprobe.models.errors import InvalidRangeError
 from pixelprobe.operators.common import memory_array_ref
 from pixelprobe.operators.optical_flow import (
     build_flow_tensors,
+    farneback,
     flow_direction_preview,
+    flow_gray,
     flow_magnitude_preview,
     reconstruct_effective_flow,
 )
@@ -716,8 +718,13 @@ class LocalExecutor:
             )
             for path in source_paths
         }
+        # 只有正式结果包需要完整 SHA-256 作为证据身份；内存/NPY 输出使用快速指纹，
+        # 避免每次查询都完整读取大文件两遍（开始一遍、结束复验一遍）。
+        has_bundle_output = any(
+            request.output.format in {"bundle", "zarr"} for request in requests
+        )
         source_sha_by_path = {
-            path: sha256_file(path) for path in source_paths
+            path: source_identity(path, full=has_bundle_output) for path in source_paths
         }
         request_sha256 = hashlib.sha256(canonical_json([
             request.model_dump(mode="json") for request in requests
@@ -781,9 +788,6 @@ class LocalExecutor:
                 raise InvalidRangeError(
                     f"同一来源 {request.source.source_id} 的 metadata_policy 冲突"
                 )
-        has_bundle_output = any(
-            request.output.format in {"bundle", "zarr"} for request in requests
-        )
         npy_output_indexes = tuple(
             index for index, request in enumerate(requests)
             if request.output.format == "npy"
@@ -807,19 +811,21 @@ class LocalExecutor:
                     stat = path.stat()
                     source_sha256 = source_sha_by_path[path]
                     content_hashes[node.node_id] = source_sha256
-                    source_records.append(SourceRecord(
-                        source_id=source_id,
-                        media_identity=MediaIdentity(
-                            source_id=source_id, size_bytes=stat.st_size,
-                            sha256=source_sha256, modified_time_ns=stat.st_mtime_ns,
-                            file_id=f"{stat.st_dev:x}:{stat.st_ino:x}",
-                            actual_format=detect_actual_format(path),
-                        ),
-                        original_uri=(
-                            str(path) if source_policies[source_id] == "full" else None
-                        ),
-                        metadata_policy=source_policies[source_id],
-                    ))
+                    # 溯源记录只写入结果包；快速指纹不能冒充 sha256 身份。
+                    if has_bundle_output:
+                        source_records.append(SourceRecord(
+                            source_id=source_id,
+                            media_identity=MediaIdentity(
+                                source_id=source_id, size_bytes=stat.st_size,
+                                sha256=source_sha256, modified_time_ns=stat.st_mtime_ns,
+                                file_id=f"{stat.st_dev:x}:{stat.st_ino:x}",
+                                actual_format=detect_actual_format(path),
+                            ),
+                            original_uri=(
+                                str(path) if source_policies[source_id] == "full" else None
+                            ),
+                            metadata_policy=source_policies[source_id],
+                        ))
                 elif node.node_type == "decode":
                     path = inputs[0]
                     assert isinstance(path, Path)
@@ -927,7 +933,7 @@ class LocalExecutor:
                 unique.setdefault((node_id, tensor.tensor_id), tensor)
             bundle = None
             result_plan = plan
-            self._verify_sources_unchanged(source_sha_by_path)
+            self._verify_sources_unchanged(source_sha_by_path, full=has_bundle_output)
             if npy_output_indexes:
                 assert output_path is not None
                 request_index = npy_output_indexes[0]
@@ -1606,10 +1612,12 @@ class LocalExecutor:
         return hashlib.sha256("\0".join(values).encode("ascii")).hexdigest()
 
     @staticmethod
-    def _verify_sources_unchanged(source_sha_by_path: dict[Path, str]) -> None:
+    def _verify_sources_unchanged(
+        source_sha_by_path: dict[Path, str], *, full: bool,
+    ) -> None:
         for path, expected_sha256 in source_sha_by_path.items():
             try:
-                actual_sha256 = sha256_file(path)
+                actual_sha256 = source_identity(path, full=full)
             except OSError as exc:
                 raise MediaChangedDuringAnalysisError(
                     f"分析期间媒体文件不可再读取：{path}"
@@ -1903,15 +1911,15 @@ class LocalExecutor:
             raise InvalidRangeError(
                 f"Farneback 请求的展示帧不在输入 Tensor 中：{exc.args[0]}"
             ) from exc
-        previous = _gray(tensor.data.read((
+        previous = flow_gray(tensor.data.read((
             flow_positions[0], slice(None), slice(None), slice(None),
         )))
         flow: np.ndarray | None = None
         for position in flow_positions[1:]:
-            current = _gray(tensor.data.read((
+            current = flow_gray(tensor.data.read((
                 position, slice(None), slice(None), slice(None),
             )))
-            pair = _farneback(cv2, previous, current)
+            pair = farneback(cv2, previous, current)
             flow = pair if flow is None else flow + pair
             previous = current
             if not accumulate:

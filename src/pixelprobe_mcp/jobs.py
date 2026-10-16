@@ -7,7 +7,6 @@ import threading
 import time
 import uuid
 import re
-import math
 from hashlib import sha256
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -37,26 +36,34 @@ class JobNotFoundError(KeyError):
     pass
 
 
+MIB = 1024 * 1024
 OPERATION_DEFAULT_RESOURCES: dict[str, tuple[int, int]] = {
-    "generate_representation": (256 * 1024 * 1024, 2 * 1024 * 1024 * 1024),
-    "evidence": (256 * 1024 * 1024, 512 * 1024 * 1024),
-    "workflow": (256 * 1024 * 1024, 512 * 1024 * 1024),
-    "find_changes": (256 * 1024 * 1024, 0),
-    "get_frame": (256 * 1024 * 1024, 0),
-    "inspect_media": (64 * 1024 * 1024, 0),
-    "read_pixels": (64 * 1024 * 1024, 0),
-    "analyze_region": (64 * 1024 * 1024, 0),
-    "list_artifacts": (32 * 1024 * 1024, 0),
-    "read_artifact": (64 * 1024 * 1024, 0),
+    "list_artifacts": (32 * MIB, 0),
+    "read_artifact": (64 * MIB, 0),
+}
+# 写结果包的能力预留临时空间；生成正式表示需要较大的共享帧存储
+CAPABILITY_DEFAULT_RESOURCES: dict[str, tuple[int, int]] = {
+    "generate": (256 * MIB, 2048 * MIB),
+    "evidence": (256 * MIB, 512 * MIB),
+    "first_change": (256 * MIB, 512 * MIB),
+    "compare_media": (256 * MIB, 512 * MIB),
+    "quality_overview": (256 * MIB, 512 * MIB),
+    # 走引擎的能力：解码帧存放在共享帧存储中，需要临时空间
+    **{name: (256 * MIB, 2048 * MIB) for name in (
+        "timeline", "xt", "yt", "reduce", "spectrum", "spectrum2d", "flow",
+    )},
 }
 
 
 def estimate_operation_resources(
     operation: str, payload: dict[str, Any] | None = None,
 ) -> tuple[int, int]:
-    default_mem, default_temp = OPERATION_DEFAULT_RESOURCES.get(
-        operation, (64 * 1024 * 1024, 0),
-    )
+    if operation == "capability" and isinstance(payload, dict):
+        default_mem, default_temp = CAPABILITY_DEFAULT_RESOURCES.get(
+            str(payload.get("capability")), (64 * MIB, 0),
+        )
+    else:
+        default_mem, default_temp = OPERATION_DEFAULT_RESOURCES.get(operation, (64 * MIB, 0))
     if payload and isinstance(payload, dict):
         if "media_path" in payload or "bundle_path" in payload:
             # 引擎、NumPy、原生库及 Python 本身也消耗内存；实际计划在受限子进程内细化。
@@ -69,6 +76,19 @@ def estimate_operation_resources(
         if custom_temp is not None:
             default_temp = max(default_temp, int(custom_temp))
     return default_mem, default_temp
+
+
+_JOB_IMAGE = re.compile(r"[0-9a-f]{32}\.\d{1,3}\.png")
+
+
+def job_files(root: Path, job_id: str) -> list[Path]:
+    """某个任务的全部已知文件：记录、结果与按序号保存的图片（不做宽泛通配删除）。"""
+    files = [root / f"{job_id}{suffix}" for suffix in (".json", ".request.json", ".result.json", ".png")]
+    files.extend(
+        path for path in root.glob(f"{job_id}.*.png")
+        if _JOB_IMAGE.fullmatch(path.name) and path.name.startswith(job_id)
+    )
+    return files
 
 
 def _now() -> str:
@@ -100,8 +120,6 @@ class Job:
     required_memory_bytes: int = 0
     required_temporary_bytes: int = 0
     resource_reserved: bool = False
-    checkpoint_id: str | None = None
-    resumed_from: str | None = None
     resource_plan: dict[str, Any] | None = None
     resource_usage: dict[str, Any] | None = None
 
@@ -114,8 +132,7 @@ class Job:
             "retryable": self.retryable,
             "suggested_action": self.suggested_action,
             "diagnostic_id": self.diagnostic_id,
-            "checkpoint_id": self.checkpoint_id,
-            "resumed_from": self.resumed_from,
+            "capability": self.payload.get("capability"),
             "resource_plan": self.resource_plan,
             "resource_usage": self.resource_usage,
         }
@@ -186,8 +203,7 @@ class JobManager:
         budget = ResourceBudget(self.config.total_memory_bytes,
                                 min(CONTROL_BYTES, self.config.total_temporary_bytes))
         identity = target.name.split(".")[0]
-        for suffix in (".json", ".request.json", ".result.json", ".png"):
-            existing = target.parent / (identity + suffix)
+        for existing in job_files(target.parent, identity):
             if existing.is_file():
                 budget.reserve(existing, existing.stat().st_size)
         budget.reserve(temporary, size)
@@ -235,7 +251,7 @@ class JobManager:
 
     def submit(
         self, operation: str, payload: dict[str, Any], *, timeout_seconds: float,
-        persistent: bool, _resume_from: Job | dict[str, Any] | None = None,
+        persistent: bool,
     ) -> Job:
         with self._lock:
             if self._closed:
@@ -253,23 +269,11 @@ class JobManager:
             if self._outstanding >= capacity:
                 raise QueueFullError("MCP_QUEUE_FULL：等待队列已满；请稍后重试")
             job = Job(uuid.uuid4().hex, operation, payload, timeout_seconds, persistent)
-            if persistent and operation == "generate_representation":
-                previous = _resume_from.public() if isinstance(_resume_from, Job) else _resume_from
-                job.checkpoint_id = previous["checkpoint_id"] if previous else job.job_id
-                job.resumed_from = previous["job_id"] if previous else None
-                job.payload = dict(payload)
-                job.payload["_checkpoint_id"] = job.checkpoint_id
-                job.payload["_resume"] = previous is not None
             job.required_memory_bytes = memory
             job.required_temporary_bytes = temporary
             self._jobs[job.job_id] = job
             self._outstanding += 1
             try:
-                if job.checkpoint_id:
-                    self._write_json(self._ensure_store() / f"{job.job_id}.request.json", {
-                        "schema_version": 1, "payload": payload,
-                        "timeout_seconds": timeout_seconds,
-                    })
                 self._persist(job)
                 job.future = self._executor.submit(self._run, job)
             except Exception:
@@ -464,18 +468,21 @@ class JobManager:
             diagnostic_id=diagnostic_id,
         )
 
+    @staticmethod
+    def split_result(value: Any) -> tuple[Any, list[tuple[str, bytes]]]:
+        """工作进程结果可能是 (响应, [(图片名, PNG 字节), ...]) 或单独的响应。"""
+        if isinstance(value, tuple) and len(value) == 2 and isinstance(value[1], list):
+            return value[0], value[1]
+        return value, []
+
     def _save_result(self, job: Job) -> None:
         root = self._ensure_store()
-        result, image = job.result, None
-        if isinstance(result, tuple) and len(result) == 2 and isinstance(result[1], bytes):
-            result, image = result
+        result, images = self.split_result(job.result)
         if isinstance(result, BaseModel):
             result = result.model_dump(mode="json")
-        self._write_json(root / f"{job.job_id}.result.json", {
-            "result": result, "image_sha256": sha256(image).hexdigest() if image is not None else None,
-        })
-        if image is not None:
-            target = root / f"{job.job_id}.png"
+        # 先写图片，再写引用它们的结果记录；结果记录写成功才算提交
+        for number, (_, image) in enumerate(images):
+            target = root / f"{job.job_id}.{number}.png"
             temporary = target.with_suffix(f".tmp-{uuid.uuid4().hex}")
             self._check_record_write(target, temporary, len(image))
             try:
@@ -486,6 +493,12 @@ class JobManager:
                 os.replace(temporary, target)
             finally:
                 temporary.unlink(missing_ok=True)
+        self._write_json(root / f"{job.job_id}.result.json", {
+            "result": result,
+            "images": [
+                {"name": name, "sha256": sha256(image).hexdigest()} for name, image in images
+            ],
+        })
 
     async def wait(self, job: Job) -> Any:
         try:
@@ -512,40 +525,6 @@ class JobManager:
         if not path.is_file():
             raise JobNotFoundError(job_id)
         return json.loads(path.read_text(encoding="utf-8"))
-
-    def resume(self, job_id: str) -> Job:
-        """显式新建恢复任务，保留原任务终态与结果。"""
-        from pixelprobe_mcp.models import GenerateInput
-        with self._lock:
-            value = self.get(job_id)
-            record = value.public() if isinstance(value, Job) else value
-            if (record.get("operation") != "generate_representation"
-                    or record.get("status") not in {"interrupted", "cancelled", "timeout", "failed"}
-                    or not record.get("checkpoint_id")):
-                raise WorkerError("MCP_RESUME_UNAVAILABLE：该任务不支持 checkpoint 恢复")
-            checkpoint_id = record["checkpoint_id"]
-            if any(item.checkpoint_id == checkpoint_id and item.status in {"queued", "running"}
-                   for item in self._jobs.values()):
-                raise WorkerError("MCP_RESUME_BUSY：该 checkpoint 已有活动任务")
-            try:
-                root = self.config.checkpoint_directory(checkpoint_id)
-                checkpoint = root / "checkpoint.json"
-                if checkpoint.is_symlink() or _is_reparse_point(checkpoint) or not checkpoint.is_file():
-                    raise ValueError("checkpoint 不存在或不是普通文件")
-                request_path = self._ensure_store() / f"{job_id}.request.json"
-                if request_path.is_symlink() or _is_reparse_point(request_path):
-                    raise ValueError("恢复请求不能是链接")
-                request = json.loads(request_path.read_text(encoding="utf-8"))
-                if request.get("schema_version") != 1:
-                    raise ValueError("恢复请求版本不支持")
-                payload = GenerateInput.model_validate(request["payload"]).model_dump(mode="json")
-                timeout = float(request["timeout_seconds"])
-                if not math.isfinite(timeout) or timeout <= 0:
-                    raise ValueError("恢复任务时限无效")
-            except (OSError, ValueError, KeyError, TypeError) as exc:
-                raise WorkerError("MCP_RESUME_UNAVAILABLE：恢复信息缺失或无效，请重新提交任务") from exc
-            return self.submit("generate_representation", payload, timeout_seconds=timeout,
-                               persistent=True, _resume_from=value)
 
     def cancel(self, job_id: str) -> dict[str, Any]:
         with self._lock:
@@ -575,28 +554,36 @@ class JobManager:
             with StorageLease(root / ".maintenance.lock"):
                 return maintain(self, dry_run=dry_run)
 
-    def result(self, job_id: str) -> tuple[dict[str, Any], bytes | None]:
+    def result(self, job_id: str) -> tuple[dict[str, Any], list[tuple[str, bytes]]]:
         with self._lock:
             return self._result(job_id)
 
-    def _result(self, job_id: str) -> tuple[dict[str, Any], bytes | None]:
+    def _result(self, job_id: str) -> tuple[dict[str, Any], list[tuple[str, bytes]]]:
         value = self.get(job_id)
         public = value.public() if isinstance(value, Job) else value
         if public["status"] != "succeeded" or not public["result_ready"]:
             raise WorkerError("MCP_JOB_NOT_READY：任务尚未成功完成")
+        if isinstance(value, Job) and not value.persistent:
+            result, images = self.split_result(value.result)
+            if isinstance(result, BaseModel):
+                result = result.model_dump(mode="json")
+            return result, images
         root = self._ensure_store()
         result_path = root / f"{job_id}.result.json"
-        image_path = root / f"{job_id}.png"
         try:
-            for path in (result_path, image_path):
+            if result_path.is_symlink() or _is_reparse_point(result_path):
+                raise ValueError("结果文件不能是链接")
+            stored = json.loads(result_path.read_text(encoding="utf-8"))
+            images: list[tuple[str, bytes]] = []
+            for number, record in enumerate(stored.get("images", [])):
+                path = root / f"{job_id}.{number}.png"
                 if path.is_symlink() or _is_reparse_point(path):
                     raise ValueError("结果文件不能是链接")
-            stored = json.loads(result_path.read_text(encoding="utf-8"))
-            image = image_path.read_bytes() if image_path.is_file() else None
-            expected = stored.get("image_sha256")
-            if expected is not None and (image is None or sha256(image).hexdigest() != expected):
-                raise ValueError("图片结果校验失败")
-            return stored["result"], image
+                image = path.read_bytes()
+                if sha256(image).hexdigest() != record["sha256"]:
+                    raise ValueError("图片结果校验失败")
+                images.append((str(record["name"]), image))
+            return stored["result"], images
         except (OSError, ValueError, KeyError, TypeError) as exc:
             raise WorkerError("MCP_RESULT_INVALID：结果缺失或损坏，请重新提交任务") from exc
 

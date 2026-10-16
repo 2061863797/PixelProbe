@@ -56,7 +56,7 @@ def test_threshold_range_validated(test_video: Path) -> None:
 def test_cli_compare_export(test_video: Path, tmp_path: Path) -> None:
     out = tmp_path / "差异.png"
     data = run_json(
-        "compare", test_video, "--frame-a", 0, "--frame-b", 5,
+        "compare", test_video, "--at", "f=0,5",
         "--output", out, "--json",
     )["data"]
     assert data["changed_pixels"] == 3
@@ -68,7 +68,8 @@ def test_cli_compare_export(test_video: Path, tmp_path: Path) -> None:
 
 def test_cli_compare_missing_selector(test_video: Path) -> None:
     code, data = run_json_error(
-        "compare", test_video, "--frame-a", 0, "--json"
+        "compare", test_video, "--at", "f=0", "--json"
     )
     assert code == 2
-    assert data["error"]["code"] == "INVALID_RANGE"
+    assert data["error"]["code"] == "INVALID_ADDRESS"
+    assert "f=0,5" in data["error"]["message"]

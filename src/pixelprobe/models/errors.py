@@ -63,6 +63,18 @@ class InvalidRangeError(PixelProbeError):
     exit_code = 2
 
 
+class AddressError(InvalidRangeError):
+    """`--at` 地址写法有误，或与当前命令不匹配。"""
+
+    code = "INVALID_ADDRESS"
+
+
+class QueryError(InvalidRangeError):
+    """`find` 搜索语句写法有误。"""
+
+    code = "INVALID_QUERY"
+
+
 class OutputWriteError(PixelProbeError):
     code = "OUTPUT_WRITE_FAILED"
     exit_code = 8

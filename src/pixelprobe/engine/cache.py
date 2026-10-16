@@ -284,7 +284,7 @@ class LocalArrayCache:
         root = self.root.resolve()
         if any(parent.name == ".checkpoints" for parent in root.parents):
             from pixelprobe.models.errors import InvalidRangeError
-            raise InvalidRangeError("MCP checkpoint 缓存请通过 pixelprobe_maintain_storage 清理")
+            raise InvalidRangeError("MCP checkpoint 缓存请通过 pixelprobe_system action=storage 清理")
         return self.maintain(dry_run=False)["removed_entries"]
 
     def maintain(self, *, dry_run: bool = True, max_age_seconds: float = 0) -> dict:
@@ -293,7 +293,7 @@ class LocalArrayCache:
             raise ValueError("缓存保留时间必须是非负有限数")
         if any(parent.name == ".checkpoints" for parent in self.root.parents):
             from pixelprobe.models.errors import InvalidRangeError
-            raise InvalidRangeError("MCP checkpoint 缓存请通过 pixelprobe_maintain_storage 清理")
+            raise InvalidRangeError("MCP checkpoint 缓存请通过 pixelprobe_system action=storage 清理")
         report = {"dry_run": dry_run, "entries": 0, "bytes": 0, "eligible_entries": 0,
                   "reclaimable_bytes": 0, "removed_entries": 0, "skipped": 0}
         with gate(self.root):

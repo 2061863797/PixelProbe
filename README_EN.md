@@ -4,7 +4,18 @@
 
 **Analyze images and videos with frame-, time-, coordinate-, and pixel-level precision.**
 
-PixelProbe is a local command-line tool for image and video analysis. It can locate key changes in a video, extract exact frames, read pixel colors, calculate regional statistics, and turn long videos into timelines, spatiotemporal slices, and statistical images. Media files are always processed locally.
+PixelProbe fills the gaps in how AI analyzes images and videos: the AI understands what the picture shows, while PixelProbe measures, locates, and gathers forensic clues, returning verifiable frame numbers, timestamps, coordinates, pixel values, change intervals, and stream-structure evidence. It is also a complete local command-line tool, and it is available to AI assistants through MCP and Claude Code / Codex plugins. Media files are always processed locally.
+
+> **Upgrading from 1.x?** 2.0 uses a single `--at` option for time and location, and MCP is reduced to 10 tools; old options and tool names were removed. See the mapping tables in [docs/migration-2.0.md](docs/migration-2.0.md) (Chinese).
+
+## New in 2.0
+
+- **Unified addresses**: `--at "t=3s..5s rect(400,200,200,150)"`, `cell(C4)`, `@event1`, identical in the CLI and MCP ([docs/address.md](docs/address.md)).
+- **Query search**: `find "black | flash | freeze >= 0.5s | gap"`, and `"animation in rect(...)"` to time UI animations ([docs/find.md](docs/find.md)).
+- **Media index**: decode a long video once into a per-frame table, then answer whole-frame questions by lookup ([docs/media-index.md](docs/media-index.md)).
+- **New slices**: difference slices, adaptive time axes, point tracking with follow slices ([docs/slices.md](docs/slices.md)).
+- **Stream structure**: container tags, keyframe intervals, timestamp gaps, and bytes per second as forensic and quality clues ([docs/streams.md](docs/streams.md)).
+- **AI-oriented output**: images carry coordinate rulers and grids, results carry reusable names, and the plugin ships four scenario Skills ([docs/plugins.md](docs/plugins.md)).
 
 ## Features
 
@@ -27,7 +38,7 @@ PixelProbe is a local command-line tool for image and video analysis. It can loc
 Official releases contain the Python wheel and source archive only. They do not publish a standalone executable containing third-party native libraries such as FFmpeg. Install a pinned release with Python 3.11 or later:
 
 ```bash
-python -m pip install "pixelprobe[mcp,flow,storage,evidence] @ git+https://github.com/2061863797/PixelProbe.git@v1.1.0"
+python -m pip install "pixelprobe[mcp,flow,storage,evidence] @ git+https://github.com/2061863797/PixelProbe.git@v2.0.0"
 pixelprobe --version
 ```
 
@@ -44,39 +55,47 @@ See the [installation guide](https://github.com/2061863797/PixelProbe/blob/main/
 
 ## Quick Examples
 
+Time and position are given with a single `--at` option, for example
+`"f=120 rect(400,200,200,150)"`, `"t=1s..3s step=2"`, or `"cell(C4)"`.
+See the [address syntax](docs/address.md) for the full grammar.
+
 ```bash
 # Show media information
 pixelprobe info input.mp4
 
 # Extract frame 120
-pixelprobe frame input.mp4 --frame 120 --output frame120.png
+pixelprobe frame input.mp4 --at "f=120" --output frame120.png
 
 # Extract and crop the frame at 3.5 seconds
-pixelprobe frame input.mp4 --time 3.5 --crop 400,200,300,300 --output crop.png
+pixelprobe frame input.mp4 --at "t=3.5s rect(400,200,300,300)" --output crop.png
 
 # Inspect two pixels
-pixelprobe pixel input.mp4 --frame 120 --point 520,340 --point 600,400
+pixelprobe pixel input.mp4 --at "f=120 point(520,340) point(600,400)"
 
 # Read native image samples, including alpha, palette indexes, or 16-bit values
-pixelprobe pixel input.png --sample native --point 520,340 --json
+pixelprobe pixel input.png --sample native --at "point(520,340)" --json
 
-# Analyze a rectangular region
-pixelprobe region input.mp4 --frame 120 --rect 400,200,200,150
+# Analyze a rectangular region, or one cell of an 8-column x 6-row grid
+pixelprobe region input.mp4 --at "f=120 rect(400,200,200,150)"
+pixelprobe region input.mp4 --at "f=120 cell(C4)"
 
 # Export a pixel-color timeline
-pixelprobe timeline input.mp4 --point 520,340 --output timeline.png --csv timeline.csv
+pixelprobe timeline input.mp4 --at "point(520,340)" --output timeline.png --csv timeline.csv
 
-# Find the 10 strongest changes in a region
-pixelprobe changes input.mp4 --rect 400,200,200,150 --top 10
+# Find the 10 strongest changes in a region between 10 s and 20 s
+pixelprobe changes input.mp4 --at "t=10s..20s rect(400,200,200,150)" --top 10
 
 # Generate a representative-frame sheet, change events, and anomalous-frame findings
 pixelprobe scan input.mp4 --sheet-output overview.png
+
+# Index a long video once; full-frame change detection then reads the index with identical results
+pixelprobe index build input.mp4
 
 # Create a temporal standard-deviation image
 pixelprobe reduce input.mp4 --op std --output temporal-std.png
 
 # Compare two frames and locate the changed region
-pixelprobe compare input.mp4 --frame-a 100 --frame-b 101 --output diff.png
+pixelprobe compare input.mp4 --at "f=100,101" --output diff.png
 
 # Sample 9 evenly spaced frames into a contact sheet
 pixelprobe sheet input.mp4 --count 9 --output sheet.png
@@ -85,7 +104,7 @@ pixelprobe sheet input.mp4 --count 9 --output sheet.png
 pixelprobe spectrum input.mp4 --source luma
 
 # Calculate dense optical flow
-pixelprobe flow input.mp4 --frame-a 100 --frame-b 101 --flow-output flow.png
+pixelprobe flow input.mp4 --at "f=100,101" --flow-output flow.png
 ```
 
 ## Example Result
@@ -145,6 +164,8 @@ pixelprobe generate input.mp4 --request request.json --output result.bundle \
 
 ## Connecting an AI Agent through MCP
 
+**The easiest way is the plugin**: both Claude Code and Codex can install it straight from this repository. It bundles the MCP server with five scenario Skills (UI recordings, long videos, quality, forensics, and the general workflow); see [docs/plugins.md](docs/plugins.md). Manual configuration follows.
+
 PixelProbe MCP is a thin adapter over the existing Python core; it neither copies nor changes the analysis algorithms. It communicates locally over `stdio`. The agent interprets people, objects, text, scenes, and composition, while PixelProbe verifies frame numbers, timestamps, coordinates, pixels, regional statistics, change candidates, and exact numeric representations.
 
 Add the local server to an MCP-compatible agent:
@@ -164,11 +185,11 @@ Add the local server to an MCP-compatible agent:
 
 The client starts `pixelprobe-mcp` automatically; do not run it manually in a regular terminal. Separate multiple allowed directories in `PIXELPROBE_MCP_ROOTS` with a semicolon on Windows or a colon on macOS and Linux. The server rejects paths outside those roots. Formal Bundles are written by default to `.pixelprobe-mcp/artifacts/` under the first allowed root. `PIXELPROBE_MCP_ARTIFACT_ROOT` can select another directory within an allowed root.
 
-After connecting, the agent should call `pixelprobe_inspect_media` first, then use `pixelprobe_get_frame` to inspect the original frame with its own vision, and finally call precise pixel, region, change, or Artifact tools as needed. MCP also exposes the `pixelprobe_analyze_media` Prompt and the `pixelprobe://guidance` Resource, which reinforce the principle that visual understanding is primary and deterministic data is supporting evidence.
+MCP provides 10 tools that together cover every CLI feature (see the mapping in [MCP tools and jobs](docs/mcp-jobs.md)). Work coarse to fine: `pixelprobe_overview` for the big picture → `pixelprobe_find` to locate moments → `pixelprobe_look` to view annotated images → `pixelprobe_measure` for exact values. Locations go in the `at` parameter using the same syntax as the CLI `--at`; returned names such as `event1` or `seg3` can be reused in a later call as `at="@event1"`. MCP also exposes the `pixelprobe_analyze_media` Prompt and the `pixelprobe://guidance` Resource, which reinforce the principle that visual understanding is primary and deterministic data is supporting evidence.
 
 For images, the response separately describes stored sample channels, the RGB channels used for deterministic analysis, and the visual PNG channels. It also reports palette usage, complete alpha statistics, and candidates for regular high-frequency textures. A texture candidate includes the analyzed coverage, period, and correlation evidence. It is only a prompt for agent review and is never presented as confirmed compression, corruption, or manipulation.
 
-`pixelprobe_get_frame` does not resize the image. If the original PNG exceeds the client's payload limit, the call fails explicitly and recommends cropping or tiled inspection; it never silently returns a thumbnail. Representation generation is the only write operation. It can write only to the controlled Artifact directory and never overwrites an existing result. All other tools are read-only.
+Images returned to the agent carry original-coordinate rulers, can overlay an 8×6 grid (`grid=true`; cell names can be used directly as `cell(C4)`), and are scaled to `max_side`; the scale factors are included in the response. Previews are for locating things only — read exact values with `pixelprobe_measure`. Operations that write Bundles (evidence, workflows, representation generation) write only to the controlled Artifact directory and never overwrite an existing result.
 
 ### Updating MCP
 
@@ -185,7 +206,7 @@ For a direct GitHub installation, replace `<release-tag-or-commit-hash>` with th
 python -m pip install --upgrade --force-reinstall "pixelprobe[mcp] @ git+https://github.com/2061863797/PixelProbe.git@<release-tag-or-commit-hash>"
 ```
 
-Then restart the MCP-compatible agent or desktop client and call `pixelprobe_get_capabilities` to confirm `pixelprobe_version`.
+Then restart the MCP-compatible agent or desktop client and call `pixelprobe_system` (action=capabilities) to confirm `pixelprobe_version`.
 
 ## Command Reference
 
@@ -199,6 +220,9 @@ Then restart the MCP-compatible agent or desktop client and call `pixelprobe_get
 | `xt` | Generate an X–T slice from a horizontal scan line |
 | `yt` | Generate a Y–T slice from a vertical scan line |
 | `changes` | Locate the strongest changes and group them into events |
+| `track` | Track a point frame by frame: path, displacement, speed, and a follow slice (see [docs/slices.md](docs/slices.md)) |
+| `streams` | Video container and coding structure: tags, keyframe intervals, timestamp gaps, bytes per second, and forensic clues (see [docs/streams.md](docs/streams.md)) |
+| `find` | Search with a query for black/white frames, flashes, cuts, freezes, dropped-frame gaps, similar frames, metric conditions, and region changes (see [docs/find.md](docs/find.md)) |
 | `scan` | Generate a contact sheet, change events, and anomalous-frame findings |
 | `reduce` | Generate per-pixel mean/median/min/max/std/diff images |
 | `compare` | Compare two frames and generate a difference image |

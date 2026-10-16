@@ -4,9 +4,21 @@
 
 **把图片与视频分析精确到帧、时间、坐标和像素。**
 
-PixelProbe 是一个本地图片与视频分析命令行工具。它可以定位视频中的关键变化、
-提取指定画面、读取像素颜色、统计区域特征，并把长视频转换成时间线、时空切片
-和统计图。媒体文件始终在本机处理。
+PixelProbe 补齐 AI 分析图片和视频的短板：AI 负责看懂画面内容，PixelProbe 负责测量、定位和取证——
+给出可核实的帧号、时间、坐标、像素数值、变化区间和码流线索。它同时是一个完整的本地命令行工具，
+并通过 MCP 和 Claude Code / Codex 插件提供给 AI 助手使用。媒体文件始终在本机处理。
+
+> **从 1.x 升级？** 2.0 统一用 `--at` 写时间与位置，MCP 精简为 10 个工具，旧参数与旧工具名均已删除。
+> 对照表见 [迁移到 2.0](docs/migration-2.0.md)。
+
+## 2.0 新增
+
+- **统一地址**：`--at "t=3s..5s rect(400,200,200,150)"`、`cell(C4)`、`@event1`，命令行与 MCP 写法相同（[地址写法](docs/address.md)）。
+- **条件搜索**：`find "black | flash | freeze >= 0.5s | gap"`、`"animation in rect(...)"` 测动画时长（[条件搜索](docs/find.md)）。
+- **媒体索引**：长视频一次解码建立每帧体检表，之后整帧问题直接查表（[媒体索引](docs/media-index.md)）。
+- **新切法**：差分切片、自适应时间轴、点跟踪与跟随切片（[新切法](docs/slices.md)）。
+- **码流结构**：容器标签、关键帧间隔、时间戳空隙、每秒码率等取证与质量线索（[码流结构](docs/streams.md)）。
+- **面向 AI 的输出**：图片带坐标刻度与网格，结果带编号可直接引用；插件内置录屏、长视频、质量、取证 4 个场景 Skill（[插件安装](docs/plugins.md)）。
 
 ## 主要功能
 
@@ -38,7 +50,7 @@ MCP 用户可先参考 [uvx 启动与更新指南](docs/uvx.md)，无需手动�
 使用 Python 3.11+ 安装固定版本；需要完整能力时选择对应 extra：
 
 ```bash
-python -m pip install "pixelprobe[mcp,flow,storage,evidence] @ git+https://github.com/2061863797/PixelProbe.git@v1.1.0"
+python -m pip install "pixelprobe[mcp,flow,storage,evidence] @ git+https://github.com/2061863797/PixelProbe.git@v2.0.0"
 pixelprobe --version
 ```
 
@@ -57,39 +69,49 @@ python scripts/build_local_standalone.py --output build/local-pixelprobe
 
 ## 快速示例
 
+时间和位置统一用 `--at` 指定，例如 `"f=120 rect(400,200,200,150)"`、
+`"t=1s..3s step=2"`、`"cell(C4)"`。完整写法见[地址写法](docs/address.md)。
+
 ```bash
 # 查看媒体信息
 pixelprobe info input.mp4
 
 # 提取第 120 帧
-pixelprobe frame input.mp4 --frame 120 --output frame120.png
+pixelprobe frame input.mp4 --at "f=120" --output frame120.png
 
 # 提取 3.5 秒处的画面并裁剪
-pixelprobe frame input.mp4 --time 3.5 --crop 400,200,300,300 --output crop.png
+pixelprobe frame input.mp4 --at "t=3.5s rect(400,200,300,300)" --output crop.png
 
 # 查询两个像素
-pixelprobe pixel input.mp4 --frame 120 --point 520,340 --point 600,400
+pixelprobe pixel input.mp4 --at "f=120 point(520,340) point(600,400)"
 
 # 查询 PNG/BMP/GIF 等图片的原生通道值（含 Alpha、调色板索引或 16 位样本）
-pixelprobe pixel input.png --sample native --point 520,340 --json
+pixelprobe pixel input.png --sample native --at "point(520,340)" --json
 
-# 分析矩形区域
-pixelprobe region input.mp4 --frame 120 --rect 400,200,200,150
+# 分析矩形区域，或网格中的一格（默认 8 列 × 6 行）
+pixelprobe region input.mp4 --at "f=120 rect(400,200,200,150)"
+pixelprobe region input.mp4 --at "f=120 cell(C4)"
 
 # 导出像素颜色时间线
-pixelprobe timeline input.mp4 --point 520,340 --output timeline.png --csv timeline.csv
+pixelprobe timeline input.mp4 --at "point(520,340)" --output timeline.png --csv timeline.csv
 
-# 找出选区变化最大的 10 帧
-pixelprobe changes input.mp4 --rect 400,200,200,150 --top 10
+# 找出选区在 10～20 秒内变化最大的 10 帧
+pixelprobe changes input.mp4 --at "t=10s..20s rect(400,200,200,150)" --top 10
+
+# 按条件搜索：黑帧、闪帧和停住 0.5 秒以上的画面
+pixelprobe find input.mp4 "black | flash | freeze >= 0.5s"
 
 # 一键生成概览网格、变化事件和异常帧
 pixelprobe scan input.mp4 --sheet-output overview.png
+
+# 为长视频建立索引：之后整帧变化检测直接查表，结果与解码相同
+pixelprobe index build input.mp4
 
 # 时间域标准差合成
 pixelprobe reduce input.mp4 --op std --output temporal-std.png
 
 # 比较两帧并定位变化区域
-pixelprobe compare input.mp4 --frame-a 100 --frame-b 101 --output diff.png
+pixelprobe compare input.mp4 --at "f=100,101" --output diff.png
 
 # 等距抽取 9 帧并拼接网格
 pixelprobe sheet input.mp4 --count 9 --output sheet.png
@@ -98,7 +120,7 @@ pixelprobe sheet input.mp4 --count 9 --output sheet.png
 pixelprobe spectrum input.mp4 --source luma
 
 # 稠密光流
-pixelprobe flow input.mp4 --frame-a 100 --frame-b 101 --flow-output flow.png
+pixelprobe flow input.mp4 --at "f=100,101" --flow-output flow.png
 ```
 
 ## 示例效果
@@ -172,6 +194,9 @@ pixelprobe generate input.mp4 --request request.json --output result.bundle \
 
 ## AI Agent 接入 MCP
 
+**最简单的方式是安装插件**：Claude Code 与 Codex 都可以直接从本仓库安装，插件包含 MCP 服务和
+5 个场景 Skill（录屏 UI、长视频、质量、取证与通用打法），见 [插件安装](docs/plugins.md)。下面是手动配置方式。
+
 PixelProbe MCP 是现有 Python 核心的薄适配层，不会复制或改变分析算法。它通过
 本地 `stdio` 工作：Agent 负责理解人物、物体、文字、场景和构图；PixelProbe
 负责核实帧号、时间、坐标、像素、区域统计、变化候选和正式数值表示。
@@ -196,18 +221,21 @@ macOS/Linux 可用冒号在 `PIXELPROBE_MCP_ROOTS` 中配置多个允许目录�
 这些目录之外的路径。正式 Bundle 默认写入第一个允许目录下的
 `.pixelprobe-mcp/artifacts/`；也可用 `PIXELPROBE_MCP_ARTIFACT_ROOT` 指定其中的其他目录。
 
-接入后，Agent 应先调用 `pixelprobe_inspect_media`，再调用
-`pixelprobe_get_frame` 使用自身视觉查看原始画面，最后按需用精确像素、区域、变化和
-Artifact 工具核实。MCP 还提供 `pixelprobe_analyze_media` Prompt 和
+MCP 共 10 个工具，覆盖命令行的全部功能（对照表见 [MCP 工具与后台任务](docs/mcp-jobs.md)）。
+推荐顺序是先粗后细：`pixelprobe_overview` 了解全貌 → `pixelprobe_find` 定位时刻 →
+`pixelprobe_look` 带刻度查看 → `pixelprobe_measure` 读取精确数值。位置统一写在 `at`
+参数里，与命令行 `--at` 写法相同；返回的 `event1`、`seg3` 等编号可在下一次调用中写成
+`at="@event1"`。MCP 还提供 `pixelprobe_analyze_media` Prompt 和
 `pixelprobe://guidance` Resource，用于注入“视觉为主、确定性数据为辅助”的分析原则。
 
 检查图片时，响应会分别说明存储样本通道、确定性分析使用的 RGB 通道和视觉 PNG
 通道，并提供调色板使用量、完整 Alpha 统计及规则高频纹理候选。纹理候选附带检测范围、
 周期和相关性证据，只用于提醒 Agent 复核，不会被描述为已经确认的压缩、损坏或伪造。
 
-`pixelprobe_get_frame` 不会缩放画面。原始 PNG 超过客户端载荷限制时会明确失败并建议
-裁剪或分区查看，不会静默返回缩略图。生成表示是唯一写操作，只能写入受控 Artifact
-目录且不覆盖已有结果；其余工具均为只读操作。
+返回给 Agent 的图片四周标有原始坐标刻度，可选叠加 8×6 网格（`grid=true`，格子名可直接
+写成 `cell(C4)`），并按 `max_side` 缩放；缩放比例写在返回数据里。预览只用于定位，精确数值
+请用 `pixelprobe_measure` 读取。写结果包的操作（证据、组合流程、表示生成）只能写入受控
+Artifact 目录且不覆盖已有结果。
 
 ### 更新 MCP
 
@@ -224,7 +252,7 @@ python -m pip install -e ".[mcp]"
 python -m pip install --upgrade --force-reinstall "pixelprobe[mcp] @ git+https://github.com/2061863797/PixelProbe.git@<发布标签或提交哈希>"
 ```
 
-然后重启支持 MCP 的 Agent/桌面客户端，再调用 `pixelprobe_get_capabilities` 确认
+然后重启支持 MCP 的 Agent/桌面客户端，再调用 `pixelprobe_system`（action=capabilities）确认
 `pixelprobe_version`。
 
 ## 命令一览
@@ -239,6 +267,9 @@ python -m pip install --upgrade --force-reinstall "pixelprobe[mcp] @ git+https:/
 | `xt` | 生成水平扫描线的 X–T 切片 |
 | `yt` | 生成垂直扫描线的 Y–T 切片 |
 | `changes` | 定位变化最大的帧并分段为事件区间 |
+| `track` | 从一个点开始逐帧跟踪：轨迹、位移、速度与跟随切片（见 [新切法](docs/slices.md)） |
+| `streams` | 视频容器与编码结构：标签、关键帧间隔、时间戳空隙、每秒码率与取证线索（见 [码流结构](docs/streams.md)） |
+| `find` | 用搜索语句定位黑帧、闪帧、切换、停住、掉帧、相似帧、指标条件与区域变化（见 [条件搜索](docs/find.md)） |
 | `scan` | 生成网格图、变化事件和异常帧概览 |
 | `reduce` | 生成逐像素 mean/median/min/max/std/diff 统计图 |
 | `compare` | 比较任意两帧并生成差异图 |

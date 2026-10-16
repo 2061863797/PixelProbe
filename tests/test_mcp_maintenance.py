@@ -17,9 +17,11 @@ def _manager(tmp_path):
     return manager
 
 
-def _record(manager, job_id, *, checkpoint=None, days=8, status="failed"):
+def _record(manager, job_id, *, checkpoint=None, days=8, status="failed",
+            operation="generate_representation"):
+    """默认构造 1.x 记录：checkpoint 只存在于升级前的任务，升级后仍须能清理。"""
     root = manager._ensure_store()
-    value = {"job_id": job_id, "operation": "generate_representation",
+    value = {"job_id": job_id, "operation": operation,
              "status": status, "checkpoint_id": checkpoint, "result_ready": False,
              "finished_at": (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()}
     (root / f"{job_id}.json").write_text(json.dumps(value), encoding="utf-8")
@@ -99,7 +101,7 @@ def test_active_worker_blocks_cleanup(tmp_path, monkeypatch):
     manager = _manager(tmp_path)
     try:
         path = _record(manager, "a" * 32)
-        job = manager.submit("read_pixels", {}, timeout_seconds=5, persistent=True)
+        job = manager.submit("capability", {}, timeout_seconds=5, persistent=True)
         assert entered.wait(2)
         assert manager.maintain_storage(dry_run=False)["blocked"]
         assert path.exists()
@@ -160,12 +162,19 @@ def test_reparse_checkpoint_is_preserved(tmp_path, monkeypatch):
 def test_expiry_uses_finished_time_not_recent_mtime(tmp_path):
     manager = _manager(tmp_path)
     try:
-        path = _record(manager, "a" * 32)
+        path = _record(manager, "a" * 32, operation="capability")
+        image = manager._root / ("a" * 32 + ".0.png")
+        image.write_bytes(b"png")
         assert path.exists()
         assert manager.maintain_storage()["expired_jobs"] == 1
         _record(manager, "b" * 32, days=0)
         assert manager.maintain_storage(dry_run=False)["removed_jobs"] == 1
+        assert not image.exists()
         assert (manager._root / ("b" * 32 + ".json")).exists()
+        # 未知操作名的记录不能确定归属，保留并计入 skipped
+        _record(manager, "c" * 32, operation="unknown_operation")
+        report = manager.maintain_storage(dry_run=False)
+        assert report["skipped"] and (manager._root / ("c" * 32 + ".json")).exists()
     finally:
         manager.shutdown(wait=True)
 
@@ -178,7 +187,7 @@ def test_cli_cache_clear_cannot_bypass_checkpoint_references(tmp_path):
     data = cache.partials / "partial"
     data.mkdir()
     (data / "data.npy").write_bytes(b"preserve")
-    with pytest.raises(InvalidRangeError, match="pixelprobe_maintain_storage"):
+    with pytest.raises(InvalidRangeError, match="pixelprobe_system action=storage"):
         cache.clear()
     assert (data / "data.npy").read_bytes() == b"preserve"
 
@@ -259,11 +268,13 @@ async def test_storage_tool_defaults_to_preview(tmp_path, monkeypatch):
     monkeypatch.setattr(server, "_JOB_MANAGER", manager)
     try:
         async with create_connected_server_and_client_session(server.mcp, raise_exceptions=True) as session:
-            preview = await session.call_tool("pixelprobe_maintain_storage", {})
+            preview = await session.call_tool("pixelprobe_system", {"action": "storage"})
             assert not preview.isError
             assert preview.structuredContent["data"]["dry_run"]
             assert record.exists()
-            result = await session.call_tool("pixelprobe_maintain_storage", {"dry_run": False})
+            result = await session.call_tool(
+                "pixelprobe_system", {"action": "storage", "dry_run": False},
+            )
             assert not result.isError
             assert result.structuredContent["data"]["removed_jobs"] == 1
             assert not record.exists()

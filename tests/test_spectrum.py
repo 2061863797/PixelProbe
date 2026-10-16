@@ -9,8 +9,28 @@ import pytest
 from PIL import Image
 
 from conftest import BLINK_RECT, run_json
-from pixelprobe.core import spatial_spectrum, temporal_spectrum
+from types import SimpleNamespace
+
+import pixelprobe
 from pixelprobe.models.errors import InvalidRangeError
+from pixelprobe.request_builders import spatial_spectrum_request, temporal_spectrum_request
+
+
+def temporal_spectrum(
+    path: Path, source: str = "luma", rect=None, point=None, **range_options,
+) -> SimpleNamespace:
+    """经引擎做时间域 FFT；统计量来自 Data Tensor 属性，频谱图来自 Preview。"""
+    data, preview = pixelprobe.generate(temporal_spectrum_request(
+        path, source=source, rect=rect, point=point, **range_options,
+    )).request_tensors[0]
+    return SimpleNamespace(**data.attributes, spectrum_image=preview.data.materialize())
+
+
+def spatial_spectrum(path: Path, frame=None, time=None, rect=None) -> SimpleNamespace:
+    data, preview = pixelprobe.generate(spatial_spectrum_request(
+        path, frame=frame, time=time, rect=rect,
+    )).request_tensors[0]
+    return SimpleNamespace(**data.attributes, spectrum_image=preview.data.materialize())
 
 
 def test_blink_dominant_frequency(blink_video: Path) -> None:
@@ -94,14 +114,14 @@ def test_temporal_spectrum_reports_nyquist(blink_video: Path) -> None:
 
 def test_cli_spectrum_and_2d(blink_video: Path, tmp_path: Path) -> None:
     data = run_json(
-        "spectrum", blink_video, "--rect", ",".join(map(str, BLINK_RECT)),
+        "spectrum", blink_video, "--at", f"rect({','.join(map(str, BLINK_RECT))})",
         "--json",
     )["data"]
     assert abs(data["dominant_freq_hz"] - 5.0) < 0.3
 
     out = tmp_path / "空间谱.png"
     data2 = run_json(
-        "spectrum2d", blink_video, "--frame", 0, "--output", out, "--json"
+        "spectrum2d", blink_video, "--at", "f=0", "--output", out, "--json"
     )["data"]
     assert data2["width"] == 32
     assert out.exists()

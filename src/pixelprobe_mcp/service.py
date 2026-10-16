@@ -1,55 +1,46 @@
-"""复用 PixelProbe Python API 的 MCP 业务薄层。"""
+"""MCP 业务层（2.0）：经路径白名单与资源边界后，调用与命令行相同的能力函数。
+
+本层只负责：解析并复验输入路径、决定受控输出位置、施加 MCP 资源边界、
+把图片编码为带刻度的预览，以及控制响应大小。分析与结果组装全部在能力登记表中。
+"""
 
 from __future__ import annotations
 
-import io
 import json
 import uuid
 from pathlib import Path
 from typing import Any
 
 import numpy as np
-from PIL import Image as PILImage
 from pydantic import ValidationError
 
-import pixelprobe
 from pixelprobe import core
+from pixelprobe.address import Address, parse_address
 from pixelprobe.artifacts import BundleReader
-from pixelprobe.core.image_reader import (
-    ImageContentAnalysis,
-    ImageReader,
-    NativeImageMetadata,
-)
+from pixelprobe.capabilities import Capability, Outcome, all_capabilities, capability
+from pixelprobe.core.image_reader import ImageContentAnalysis, ImageReader, NativeImageMetadata
 from pixelprobe.core.media_reader import detect_media_type
-from pixelprobe.domain.media import MediaSource
-from pixelprobe.domain.time import TemporalSelection
-from pixelprobe.evidence import analyze_evidence
-from pixelprobe.engine.request import OutputRequest, RepresentationRequest
 from pixelprobe.models.media_info import MediaInfo
 from pixelprobe.operators.base import ResourcePolicy
+from pixelprobe.output.annotate import Axis, annotate, frame_axis
+from pixelprobe.session import media_sessions
 from pixelprobe.version import __version__
 from pixelprobe_mcp.config import FileIdentity, ServerConfig
 from pixelprobe_mcp.models import (
     ArtifactReadInput,
     BundleListInput,
-    ChangesInput,
-    EvidenceInput,
-    WorkflowInput,
-    FrameInput,
-    GenerateInput,
-    InspectInput,
+    CapabilityInput,
     NextAction,
     Pagination,
-    PixelInput,
-    RegionInput,
     ToolEnvelope,
 )
+from pixelprobe_mcp.resource_plan import MCP_INDEX_THUMB_BUDGET_BYTES
 
 CHARACTER_LIMIT = 25_000
-MCP_MAX_STANDARD_SOURCE_FRAMES = 1_800
-MCP_MAX_CHANGE_SOURCE_FRAMES = 3_600
-MCP_MAX_GRID_POINTS = 65_536
+MCP_MAX_SCAN_SOURCE_FRAMES = 1_800
+MCP_MAX_SOURCE_FRAMES = 3_600
 MCP_MAX_GENERATE_SOURCE_FRAMES = 1_800
+MCP_MAX_GRID_POINTS = 65_536
 MCP_MAX_FRAME_WORKING_BYTES = 256 * 1024 * 1024
 MCP_GENERATE_RESOURCES = ResourcePolicy(
     max_memory_bytes=256 * 1024 * 1024,
@@ -58,22 +49,53 @@ MCP_GENERATE_RESOURCES = ResourcePolicy(
     preferred_chunk_bytes=32 * 1024 * 1024,
     allow_partial=False,
 )
+SINGLE_FRAME = {"frame", "pixel", "region", "spectrum2d", "compare"}
+SEQUENTIAL = {
+    "changes", "scan", "find", "track", "sheet", "timeline", "xt", "yt", "reduce", "spectrum", "flow",
+    "first_change", "compare_media", "quality_overview",
+}
+_NO_SEMANTICS = "只是数值线索，不能单独证明具体事件、物体或内容；请先查看候选时刻前、中、后的画面"
+SEMANTIC_WARNINGS = {
+    "changes": f"变化分数{_NO_SEMANTICS}",
+    "scan": f"事件与异常候选{_NO_SEMANTICS}",
+    "spectrum": f"频谱峰值{_NO_SEMANTICS}",
+    "spectrum2d": f"空间频谱峰值{_NO_SEMANTICS}",
+    "flow": f"光流{_NO_SEMANTICS}",
+    "reduce": f"时间域合成图{_NO_SEMANTICS}",
+}
+# 列表字段按 offset/limit 分页返回，其余字段完整返回
+PAGED_LISTS = (
+    "frames", "times", "top", "events", "anomalies", "points", "pixels",
+    "sheet_frames", "top_peaks", "peaks", "segments", "records", "matches",
+)
 
 
 class McpResourceLimitError(ValueError):
     """MCP 外层资源边界拒绝执行，以免分页被误解为计算限制。"""
 
+
+class McpInputError(ValueError):
+    """调用参数组合不成立；消息不含路径，可原样返回给 Agent。"""
+
+
 AGENT_GUIDANCE = """你正在使用 PixelProbe 分析本地图片或视频。
 
 工作原则：
-1. 语义理解、人物/物体/文字/场景和构图判断，以 Agent 自身视觉能力为主。
-2. PixelProbe 是确定性辅助：用于确认帧号、时间、坐标、像素颜色、区域统计、变化候选和正式数值表示。
-3. 不要仅凭变化曲线、光流或频谱推断具体事件；先定位候选，再调用 pixelprobe_get_frame 查看前、中、后原始画面。
-4. 先调用 pixelprobe_inspect_media。图片通常随后查看原图并按需读像素/区域；视频先依据代表帧、事件和异常选择要看的帧。
-5. pixelprobe_get_frame 不会缩放。若载荷过大，应裁剪、分区查看或使用精确像素/区域工具，不得把缩略图当作原始像素。
-6. Preview 只用于视觉展示；需要数值结论时读取 DataArtifact，并保留帧号、时间、坐标与来源说明。
-7. 技术异常和内容语义必须分开陈述；PixelProbe 的候选标志不是造假、目标存在或事件发生的证明。
-8. 图片的存储通道、分析 RGB 通道和视觉 PNG 通道含义不同；P 模式样本是调色板索引，必须结合 palette、alpha 和 flags 解读。
+1. 语义理解（人物、物体、文字、场景、构图）以 Agent 自身视觉能力为主；PixelProbe 负责
+   帧号、时间、坐标、像素数值、变化定位和取证线索等确定性数据。
+2. 先粗后细：pixelprobe_overview 了解全貌 → pixelprobe_find 定位时刻 →
+   pixelprobe_look 带刻度查看 → pixelprobe_measure 读取精确数值。
+3. 位置统一写在 at 参数里，例如 "f=120 rect(400,200,200,150)"、"t=1s..3s step=2"、
+   "cell(C4)"、"@event1"。look 加 grid=true 会叠加 8×6 网格，可直接用格子名写地址。
+4. 结果中的 refs（如 event1、anomaly2、seg3）可在后续 at 中用 @名称 引用，不必抄写帧号。
+5. 返回的预览图会按 max_side 缩放并标注原始坐标刻度；需要精确数值时用 measure，
+   不要从缩放后的预览读取像素值。
+6. 不要仅凭变化分数、频谱或光流推断具体事件；先查看候选时刻前、中、后的画面再下结论。
+7. 取证工具只给出可复核的线索与局限，不能单独证明伪造、压缩或事件发生。
+8. 长视频先用 pixelprobe_index build 建立索引（wait=false 后台执行），之后整帧变化检测直接查表。
+9. Preview 只用于视觉展示；需要数值结论时读取结果包中的 DataArtifact（pixelprobe_bundle read）。
+10. 图片的存储通道、分析 RGB 通道和视觉 PNG 通道含义不同；P 模式样本是调色板索引，
+    必须结合 palette、alpha 和 flags 解读。
 """
 
 
@@ -81,10 +103,7 @@ def _page(total: int, offset: int, count: int) -> Pagination:
     next_offset = offset + count
     has_more = next_offset < total
     return Pagination(
-        total=total,
-        count=count,
-        offset=offset,
-        has_more=has_more,
+        total=total, count=count, offset=offset, has_more=has_more,
         next_offset=next_offset if has_more else None,
     )
 
@@ -96,24 +115,13 @@ def _json_size(value: object) -> int:
 def _ensure_response_size(response: ToolEnvelope) -> ToolEnvelope:
     size = _json_size(response.model_dump(mode="json"))
     if size > CHARACTER_LIMIT:
-        raise ValueError(
-            f"响应约 {size} 字符，超过 {CHARACTER_LIMIT}；请减小 limit、缩小选择范围或分页读取"
+        raise McpInputError(
+            f"响应约 {size} 字符，超过 {CHARACTER_LIMIT}；请减小 limit、缩小地址范围或分页读取"
         )
     return response
 
 
-def _rect(value: object) -> tuple[int, int, int, int] | None:
-    return value.as_tuple() if value is not None else None  # type: ignore[union-attr]
-
-
-def _encode_png(array: np.ndarray) -> bytes:
-    output = io.BytesIO()
-    PILImage.fromarray(np.ascontiguousarray(array)).save(output, format="PNG")
-    return output.getvalue()
-
-
 def _native_image_metadata_payload(metadata: NativeImageMetadata) -> dict[str, Any]:
-    """把图片原生样本的说明转成 MCP 可序列化数据。"""
     return {
         "sample_semantics": metadata.sample_semantics,
         "mode": metadata.mode,
@@ -128,7 +136,6 @@ def _native_image_metadata_payload(metadata: NativeImageMetadata) -> dict[str, A
 
 
 def _image_content_analysis_payload(analysis: ImageContentAnalysis) -> dict[str, Any]:
-    """把完整结构统计整理成便于 Agent 判断的分层字段。"""
     pattern_evidence = None
     if analysis.pattern_sample_rect is not None:
         pattern_evidence = {
@@ -143,20 +150,14 @@ def _image_content_analysis_payload(analysis: ImageContentAnalysis) -> dict[str,
         "total_pixels": analysis.total_pixels,
         "channel_semantics": {
             "stored": {
-                "mode": analysis.stored_mode,
-                "bands": list(analysis.stored_bands),
+                "mode": analysis.stored_mode, "bands": list(analysis.stored_bands),
                 "channel_count": analysis.stored_channel_count,
                 "meaning": "存储样本通道；P 模式下是调色板索引，不是灰度或 RGB",
             },
             "analysis_display": {
                 "mode": analysis.analysis_display_mode,
                 "channel_count": analysis.analysis_display_channel_count,
-                "meaning": "现有确定性颜色算子使用的显示 RGB8",
-            },
-            "visual_output": {
-                "mode": analysis.visual_output_mode,
-                "channel_count": analysis.visual_output_channel_count,
-                "meaning": "pixelprobe_get_frame 返回给 Agent 视觉的 PNG 通道",
+                "meaning": "确定性颜色算子使用的显示 RGB8",
             },
         },
         "palette": {
@@ -164,8 +165,7 @@ def _image_content_analysis_payload(analysis: ImageContentAnalysis) -> dict[str,
             "entry_count": analysis.palette_entry_count,
             "used_index_count": analysis.used_palette_index_count,
             "usage_ratio": analysis.palette_usage_ratio,
-            "accuracy": "exact",
-            "source": "pillow_palette_and_full_histogram",
+            "accuracy": "exact", "source": "pillow_palette_and_full_histogram",
         },
         "alpha": {
             "representation": analysis.transparency_kind,
@@ -176,8 +176,7 @@ def _image_content_analysis_payload(analysis: ImageContentAnalysis) -> dict[str,
             "transparent_ratio": analysis.transparent_ratio,
             "partially_transparent_ratio": analysis.partially_transparent_ratio,
             "opaque_ratio": analysis.opaque_ratio,
-            "accuracy": "exact",
-            "source": "full_alpha_histogram",
+            "accuracy": "exact", "source": "full_alpha_histogram",
         },
         "regular_pattern": {
             "assessment": analysis.pattern_assessment,
@@ -193,13 +192,10 @@ def _image_content_analysis_payload(analysis: ImageContentAnalysis) -> dict[str,
 
 
 def _image_analysis_flags(analysis: ImageContentAnalysis) -> list[dict[str, Any]]:
-    """从确定性统计生成可追溯提醒，不推断未知成因。"""
     flags: list[dict[str, Any]] = []
     if analysis.is_indexed:
         flags.append({
-            "code": "INDEXED_COLOR_IMAGE",
-            "severity": "info",
-            "accuracy": "exact",
+            "code": "INDEXED_COLOR_IMAGE", "severity": "info", "accuracy": "exact",
             "source": "pillow_mode",
             "evidence": {
                 "stored_mode": analysis.stored_mode,
@@ -208,13 +204,10 @@ def _image_analysis_flags(analysis: ImageContentAnalysis) -> list[dict[str, Any]
             },
             "coverage": "full",
             "message": "图片存储的是调色板索引；单个 P 样本不能直接当作灰度或 RGB。",
-            "recommended_tool": "pixelprobe_get_frame",
         })
     if analysis.is_indexed and analysis.transparency_kind != "none":
         flags.append({
-            "code": "PALETTE_TRANSPARENCY",
-            "severity": "info",
-            "accuracy": "exact",
+            "code": "PALETTE_TRANSPARENCY", "severity": "info", "accuracy": "exact",
             "source": "full_alpha_histogram",
             "evidence": {
                 "kind": analysis.transparency_kind,
@@ -222,28 +215,22 @@ def _image_analysis_flags(analysis: ImageContentAnalysis) -> list[dict[str, Any]
                 "partially_transparent_ratio": analysis.partially_transparent_ratio,
             },
             "coverage": "full",
-            "message": "透明度由调色板或颜色键表达，视觉输出会展开为 RGBA。",
-            "recommended_tool": "pixelprobe_get_frame",
+            "message": "透明度由调色板或颜色键表达。",
         })
     if analysis.transparent_ratio >= 0.95:
         flags.append({
             "code": (
-                "FULLY_TRANSPARENT_IMAGE"
-                if analysis.transparent_ratio == 1.0
+                "FULLY_TRANSPARENT_IMAGE" if analysis.transparent_ratio == 1.0
                 else "MOSTLY_TRANSPARENT_IMAGE"
             ),
-            "severity": "warning",
-            "accuracy": "exact",
-            "source": "full_alpha_histogram",
+            "severity": "warning", "accuracy": "exact", "source": "full_alpha_histogram",
             "evidence": {"transparent_ratio": analysis.transparent_ratio},
             "coverage": "full",
             "message": "图片绝大部分像素完全透明，视觉模型可能忽略透明区域中的内容。",
-            "recommended_tool": "pixelprobe_get_frame",
         })
     if analysis.pattern_assessment == "candidate":
         flags.append({
-            "code": "REGULAR_PATTERN_CANDIDATE",
-            "severity": "warning",
+            "code": "REGULAR_PATTERN_CANDIDATE", "severity": "warning",
             "accuracy": analysis.pattern_accuracy,
             "source": "pixelprobe_high_frequency_periodicity",
             "evidence": {
@@ -254,70 +241,35 @@ def _image_analysis_flags(analysis: ImageContentAnalysis) -> list[dict[str, Any]
                 "vertical_correlation": analysis.pattern_vertical_correlation,
             },
             "coverage": analysis.pattern_coverage,
-            "message": (
-                "检测到规则高频纹理候选，可能干扰视觉识别；该标志不等同于压缩或损坏。"
-            ),
-            "recommended_tool": "pixelprobe_get_frame",
+            "message": "检测到规则高频纹理候选，可能干扰视觉识别；该标志不等同于压缩或损坏。",
         })
     return flags
 
 
-def _native_sample_value(array: np.ndarray, x: int, y: int) -> object:
-    """返回一个图片存储样本；标量和多通道样本均可 JSON 编码。"""
-    value = np.asarray(array[y, x])
-    if value.ndim == 0:
-        return value.item()
-    return value.tolist()
-
-
-def _read_image_samples(
-    path: Path,
-) -> tuple[np.ndarray, np.ndarray, NativeImageMetadata, MediaInfo]:
-    """读取图片的显示 RGB8 与原生样本，二者绝不混为同一精度语义。"""
-    with ImageReader() as reader:
-        reader.open(path)
-        native = reader.get_native_frame()
-        metadata = reader.get_native_metadata()
-        display = reader.get_engine_frame()
-        info = reader.get_info()
-    return display, native, metadata, info
-
-
-def _read_image_metadata(path: Path) -> tuple[NativeImageMetadata, str, tuple[str, ...]]:
-    """只取得图片显示转换语义，不把视觉 PNG 误标为原生像素。"""
-    with ImageReader() as reader:
-        reader.open(path)
-        return (
-            reader.get_native_metadata(),
-            reader.engine_sample_semantics(),
-            reader.engine_conversion_flags(),
-        )
-
-
-def _read_alpha_visual_frame(
-    path: Path, crop: tuple[int, int, int, int] | None,
-) -> np.ndarray:
-    """为视觉 ImageContent 保留透明通道；统计/计算仍使用明确标记的 RGB8。"""
-    with PILImage.open(path) as image:
-        visual = image.convert("RGBA")
-        try:
-            array = np.array(visual, dtype=np.uint8, copy=True, order="C")
-        finally:
-            visual.close()
-    if crop is not None:
-        x, y, width, height = crop
-        return array[y : y + height, x : x + width, :].copy()
-    return array
+def _paginate(data: dict[str, Any], offset: int, limit: int) -> Pagination | None:
+    """对较长的列表字段分页；返回其中最长列表的分页信息。"""
+    longest: tuple[int, int] | None = None
+    for key in PAGED_LISTS:
+        value = data.get(key)
+        if isinstance(value, list) and len(value) > limit:
+            page = value[offset: offset + limit]
+            data[key] = page
+            data.setdefault("list_totals", {})[key] = len(value)
+            if longest is None or len(value) > longest[0]:
+                longest = (len(value), len(page))
+    if longest is None:
+        return None
+    return _page(longest[0], offset, longest[1])
 
 
 class PixelProbeService:
-    """只负责编排现有核心，不复制媒体分析算法。"""
+    """经白名单与资源边界后调用能力函数；不另写分析算法。"""
 
-    def __init__(self, config: ServerConfig, *, cancellation=None, checkpoint_id=None, resume=False) -> None:
-        self.checkpoint_id = checkpoint_id
-        self.resume = resume
+    def __init__(self, config: ServerConfig, *, cancellation=None) -> None:
         self.cancellation = cancellation
         self.config = config
+
+    # ---------------- 路径与边界 ----------------
 
     def _resolve_media(self, value: str) -> tuple[Path, FileIdentity]:
         identity = self.config.resolve_file_identity(value)
@@ -327,620 +279,322 @@ class PixelProbeService:
         self.config.verify_file_identity(identity)
 
     @staticmethod
-    def _require_bounded_video_frame_count(
-        info: MediaInfo, *, operation: str,
-    ) -> int:
-        if info.media_type != "video":
-            raise McpResourceLimitError(f"{operation} 仅支持视频输入")
-        if info.frame_count is None:
-            raise McpResourceLimitError(
-                f"{operation} 需要可用的总帧数；请先使用 quick 检查，"
-                "或改用带帧数元数据的短视频"
-            )
-        return info.frame_count
-
-    @classmethod
-    def _ensure_standard_budget(cls, info: MediaInfo) -> None:
-        frame_count = cls._require_bounded_video_frame_count(info, operation="standard 检查")
-        if frame_count > MCP_MAX_STANDARD_SOURCE_FRAMES:
-            raise McpResourceLimitError(
-                "standard 检查最多处理 "
-                f"{MCP_MAX_STANDARD_SOURCE_FRAMES} 个源帧，当前媒体有 {frame_count} 帧；"
-                "请先使用 quick，再针对短片段调用变化检测"
-            )
-
-    @classmethod
-    def _ensure_changes_budget(cls, info: MediaInfo, params: ChangesInput) -> None:
-        if params.grid is not None:
-            step = params.grid_step or 1
-            columns = (params.grid.width + step - 1) // step
-            rows = (params.grid.height + step - 1) // step
-            point_count = columns * rows
-            if point_count > MCP_MAX_GRID_POINTS:
-                raise McpResourceLimitError(
-                    "网格变化检测最多使用 "
-                    f"{MCP_MAX_GRID_POINTS} 个采样点，当前网格会生成 {point_count} 个；"
-                    "请缩小 grid 或增大 grid_step"
-                )
-        frame_count = cls._require_bounded_video_frame_count(info, operation="变化检测")
-        if params.start_seconds is not None or params.end_seconds is not None:
-            if frame_count > MCP_MAX_CHANGE_SOURCE_FRAMES:
-                raise McpResourceLimitError(
-                    "长视频按时间变化检测无法在 MCP 中安全估算解码量；"
-                    "请改用不超过 "
-                    f"{MCP_MAX_CHANGE_SOURCE_FRAMES} 帧的 start_frame/end_frame 范围"
-                )
-            return
-        start = params.start_frame if params.start_frame is not None else 0
-        end = params.end_frame if params.end_frame is not None else frame_count - 1
-        if end < start:
-            return
-        source_frame_count = end - start + 1
-        if source_frame_count > MCP_MAX_CHANGE_SOURCE_FRAMES:
-            raise McpResourceLimitError(
-                "变化检测最多处理 "
-                f"{MCP_MAX_CHANGE_SOURCE_FRAMES} 个源帧，当前范围包含 {source_frame_count} 帧；"
-                "分页只限制返回结果，不会限制解码，请缩小 start_frame/end_frame"
-            )
-
-    @classmethod
-    def _ensure_generation_budget(
-        cls, info: MediaInfo, selection: TemporalSelection,
-    ) -> None:
-        if info.media_type != "video":
-            return
-        if selection.mode in {"all", "time_interval"}:
-            frame_count = cls._require_bounded_video_frame_count(info, operation="表示生成")
-            # all 必须扫描完整来源；时间区间依据实际 PTS 停止，准入阶段不能
-            # 用平均帧率伪造展示帧映射，因此保守按完整来源估算。
-            source_frame_count = frame_count
-            stored_frame_count = frame_count
-            if selection.mode == "all":
-                stored_frame_count = (
-                    frame_count + selection.sample_every - 1
-                ) // selection.sample_every
-        elif selection.mode == "frame_interval":
-            assert selection.requested_start_frame is not None
-            assert selection.requested_end_frame_exclusive is not None
-            source_frame_count = selection.requested_end_frame_exclusive
-            length = (
-                selection.requested_end_frame_exclusive
-                - selection.requested_start_frame
-            )
-            stored_frame_count = (
-                length + selection.sample_every - 1
-            ) // selection.sample_every
-        else:
-            selected = selection.requested_indices[::selection.sample_every]
-            source_frame_count = selection.requested_indices[-1] + 1
-            stored_frame_count = len(selected)
-        if source_frame_count > MCP_MAX_GENERATE_SOURCE_FRAMES:
-            raise McpResourceLimitError(
-                "表示生成最多处理 "
-                f"{MCP_MAX_GENERATE_SOURCE_FRAMES} 个源解码帧，当前执行计划最多需要 "
-                f"{source_frame_count} 帧；请缩小选择范围的末端"
-            )
-        frame_bytes = info.width * info.height * 3
-        temporary_bytes = stored_frame_count * frame_bytes
-        temporary_limit = MCP_GENERATE_RESOURCES.max_temporary_bytes
-        if temporary_limit is not None and temporary_bytes > temporary_limit:
-            raise McpResourceLimitError(
-                f"选择帧的共享存储预计需要 {temporary_bytes} 字节，超过 MCP 临时空间限制 "
-                f"{temporary_limit} 字节；请减少选中帧数"
-            )
-
-    def _ensure_frame_budget(
-        self,
-        info: MediaInfo,
-        crop: object | None = None,
-        *,
-        include_image_payload: bool,
-    ) -> None:
-        source_rgb_bytes = info.width * info.height * 3
-        # 裁剪只减少返回载荷，完整源帧仍需要解码，不能绕过内存准入。
-        working_bytes = source_rgb_bytes * 4
+    def _ensure_frame_budget(info: MediaInfo) -> None:
+        working_bytes = info.width * info.height * 3 * 4
         if working_bytes > MCP_MAX_FRAME_WORKING_BYTES:
             raise McpResourceLimitError(
-                "原始全帧解码工作集约 "
-                f"{working_bytes} 字节，超过 MCP 限制 {MCP_MAX_FRAME_WORKING_BYTES} 字节；"
-                "请使用较小的源媒体；crop 不减少完整解码开销"
-            )
-        if not include_image_payload:
-            return
-        rect = _rect(crop)
-        width = rect[2] if rect is not None else info.width
-        height = rect[3] if rect is not None else info.height
-        # PNG 对不可压缩 RGB 的编码量接近 4 字节/像素；预检避免先构造巨大 BytesIO。
-        estimated_png_bytes = width * height * 4 + 65_536
-        estimated_base64_bytes = ((estimated_png_bytes + 2) // 3) * 4
-        if estimated_base64_bytes > self.config.max_image_bytes:
-            crop_hint = (
-                "请提供更小的 crop"
-                if rect is not None
-                else "请提供 crop 分区查看"
-            )
-            raise McpResourceLimitError(
-                "预计 MCP 图片载荷约 "
-                f"{estimated_base64_bytes} 字节，超过限制 {self.config.max_image_bytes} 字节；"
-                f"{crop_hint}。服务不会缩放原始画面"
+                f"原始全帧解码工作集约 {working_bytes} 字节，超过 MCP 限制 "
+                f"{MCP_MAX_FRAME_WORKING_BYTES} 字节；rect(...) 不减少完整解码开销"
             )
 
+    @staticmethod
+    def _source_frames(address: Address, info: MediaInfo) -> int | None:
+        spec = address.time
+        if spec is not None and spec.kind == "frame" and spec.mode != "all":
+            values = [value for value in spec.values if value is not None]
+            if spec.mode == "range" and spec.values[1] is None:
+                return info.frame_count
+            if values:
+                return int(max(values)) + 1
+        return info.frame_count
+
+    @staticmethod
+    def _ensure_generation_budget(info: MediaInfo, requests: list) -> None:
+        """按执行计划估算每个请求需要顺序解码的源帧数；全片选择按总帧数计。"""
+        if info.media_type != "video":
+            return
+        from pixelprobe_mcp.resource_plan import media_plan
+        for raw in requests:
+            plan = media_plan("generate_representation", info, {"request": raw})
+            frames = plan.get("decoded_frames_per_pass_estimate")
+            if frames is None or frames > MCP_MAX_GENERATE_SOURCE_FRAMES:
+                raise McpResourceLimitError(
+                    f"表示生成最多处理 {MCP_MAX_GENERATE_SOURCE_FRAMES} 个源解码帧，当前执行计划需要 "
+                    f"{frames if frames is not None else '未知数量'} 帧；请缩小选择范围的末端"
+                )
+
+    def _ensure_budget(
+        self, item: Capability, info: MediaInfo, address: Address, options: dict, index,
+    ) -> None:
+        if item.name in SINGLE_FRAME or item.name in SEQUENTIAL:
+            self._ensure_frame_budget(info)
+        if item.name == "changes":
+            from pixelprobe.address import grid_of
+            grid = grid_of(address)
+            if grid is not None:
+                step = grid.step or 1
+                count = ((grid.width + step - 1) // step) * ((grid.height + step - 1) // step)
+                if count > MCP_MAX_GRID_POINTS:
+                    raise McpResourceLimitError(
+                        f"网格最多 {MCP_MAX_GRID_POINTS} 个采样点，当前 {count} 个；请缩小 grid 或增大 step"
+                    )
+        if item.name == "generate":
+            self._ensure_frame_budget(info)
+            self._ensure_generation_budget(info, options.get("requests") or [])
+            return
+        if info.media_type != "video" or item.name not in SEQUENTIAL:
+            return
+        served_by_index = (
+            index is not None and item.name in {"changes", "scan"}
+            and not address.shapes and (address.step or 1) == 1
+        )
+        if index is not None and item.name == "find":
+            from pixelprobe.find import needs_decode, parse_query
+            served_by_index = not needs_decode(parse_query(str(options.get("query", ""))))
+        if served_by_index:
+            return
+        limit = MCP_MAX_SCAN_SOURCE_FRAMES if item.name == "scan" else MCP_MAX_SOURCE_FRAMES
+        frames = self._source_frames(address, info)
+        if frames is None:
+            raise McpResourceLimitError(
+                f"{item.name} 需要可用的总帧数才能估算解码量；请用 f=a..b 指定帧范围"
+            )
+        if frames > limit:
+            raise McpResourceLimitError(
+                f"{item.name} 最多顺序解码 {limit} 帧，当前地址需要 {frames} 帧；"
+                "请用 f=a..b 缩小范围，或先用 pixelprobe_index build 建立索引后做整帧变化检测"
+            )
+
+    # ---------------- 能力调用 ----------------
+
     def capabilities(self) -> ToolEnvelope:
-        data = {
+        items = [
+            {
+                "name": item.name, "summary": item.summary,
+                "tool": item.mcp_tool, "selector": item.mcp_selector,
+                "cli": f"pixelprobe {item.cli}",
+                "at": {
+                    "time": sorted(item.address.time_modes),
+                    "shapes": sorted(item.address.shapes),
+                    "step": item.address.step,
+                },
+                "options": item.options.model_json_schema().get("properties", {}),
+                "images": list(item.image_names),
+                "writes_bundle": item.writes_bundle,
+            }
+            for item in all_capabilities()
+        ]
+        return ToolEnvelope(data={
             "server": "pixelprobe_mcp",
-            "pixelprobe_version": __version__,
             "transport": "stdio",
+            "pixelprobe_version": __version__,
             "principle": "Agent 原生视觉为主，PixelProbe 确定性数据为辅助",
+            "address_syntax": "docs/address.md；与命令行 --at 相同",
             "allowed_roots": [str(root) for root in self.config.allowed_roots],
             "artifact_root": str(self.config.artifact_root),
             "limits": {
-                "max_points_per_call": 256,
-                "max_artifact_values_per_call": 4096,
                 "max_image_payload_bytes": self.config.max_image_bytes,
                 "max_text_characters": CHARACTER_LIMIT,
-                "max_standard_source_frames": MCP_MAX_STANDARD_SOURCE_FRAMES,
-                "max_workflow_records": 10000,
-                "max_change_source_frames": MCP_MAX_CHANGE_SOURCE_FRAMES,
-                "max_grid_points": MCP_MAX_GRID_POINTS,
+                "max_source_frames": MCP_MAX_SOURCE_FRAMES,
+                "max_scan_source_frames": MCP_MAX_SCAN_SOURCE_FRAMES,
                 "max_generate_source_frames": MCP_MAX_GENERATE_SOURCE_FRAMES,
-                "max_frame_working_bytes": MCP_MAX_FRAME_WORKING_BYTES,
                 "generate_resources": MCP_GENERATE_RESOURCES.model_dump(mode="json"),
+                "max_grid_points": MCP_MAX_GRID_POINTS,
+                "max_frame_working_bytes": MCP_MAX_FRAME_WORKING_BYTES,
                 "total_memory_bytes": self.config.total_memory_bytes,
                 "total_temporary_bytes": self.config.total_temporary_bytes,
-                "worker_memory_monitor": "rss_sampled_20ms",
-                "disk_budget": "shared_pre_write_accounting",
-                "job_control_storage_bytes": 4 * 1024 * 1024,
                 "workers": self.config.workers,
                 "queue_size": self.config.queue_size,
-                "queue_timeout_seconds": self.config.queue_timeout_seconds,
-                "job_retention_days": self.config.job_retention_days,
             },
-            "timeout_semantics": (
-                "媒体操作在独立工作进程执行；取消或超时后先协作退出，"
-                "两秒内未结束则终止进程，确认退出后释放资源"
-            ),
-            "tools": [
-                "pixelprobe_get_capabilities",
-                "pixelprobe_inspect_media", "pixelprobe_get_frame",
-                "pixelprobe_read_pixels", "pixelprobe_analyze_region",
-                "pixelprobe_find_changes", "pixelprobe_generate_representation",
-                "pixelprobe_evidence",
-                "pixelprobe_workflow",
-                "pixelprobe_list_artifacts", "pixelprobe_read_artifact",
-                "pixelprobe_submit_job", "pixelprobe_get_job",
-                "pixelprobe_resume_job",
-                "pixelprobe_maintain_storage",
-                "pixelprobe_cancel_job", "pixelprobe_get_job_result",
-            ],
-            "guarantees": [
-                "帧号按显示顺序从 0 开始", "坐标基于原始存储像素",
-                "精确工具不静默缩放", "Preview 与 DataArtifact 分离",
-                "图片存储通道、分析通道与视觉输出通道分别描述",
-                "图片异常候选包含精度、来源、证据与覆盖范围",
-            ],
-        }
-        return ToolEnvelope(data=data)
-
-    def inspect_media(self, params: InspectInput) -> ToolEnvelope:
-        path, identity = self._resolve_media(params.media_path)
-        is_image = detect_media_type(path) == "image"
-        image_metadata: NativeImageMetadata | None = None
-        image_analysis: ImageContentAnalysis | None = None
-        image_engine_semantics: str | None = None
-        image_conversion_flags: tuple[str, ...] = ()
-        if is_image:
-            # ImageReader.open 已完成解码；在同一实例取得基础信息与原生样本描述，
-            # 避免 quick 检查为同一图片重复解码。
-            with ImageReader() as reader:
-                reader.open(path)
-                info = reader.get_info()
-                image_metadata = reader.get_native_metadata()
-                image_analysis = reader.get_content_analysis()
-                image_engine_semantics = reader.engine_sample_semantics()
-                image_conversion_flags = reader.engine_conversion_flags()
-        else:
-            info = core.get_media_info(path)
-        accuracy = {
-            "file_size_bytes": "exact", "width": "decoded", "height": "decoded",
-        }
-        if info.media_type == "video":
-            accuracy["frame_count"] = (
-                "estimated" if info.frame_count_estimated else "decoded"
-            )
-        data: dict[str, Any] = {
-            "info": info.model_dump(mode="json"),
-            "accuracy": accuracy,
-        }
-        if image_metadata is not None and image_engine_semantics is not None:
-            data["image_samples"] = {
-                "native": _native_image_metadata_payload(image_metadata),
-                "engine_sample_semantics": image_engine_semantics,
-                "engine_conversion_flags": list(image_conversion_flags),
-            }
-            assert image_analysis is not None
-            data["image_analysis"] = _image_content_analysis_payload(image_analysis)
-            data["flags"] = _image_analysis_flags(image_analysis)
-        else:
-            data["sample_semantics"] = "decoded_sample"
-        warnings: list[str] = []
-        if image_analysis is not None and image_analysis.is_indexed:
-            warnings.append(
-                "索引色图片：info.channels 表示存储索引通道，不等于展开后的显示通道"
-            )
-        if image_analysis is not None and image_analysis.pattern_assessment == "candidate":
-            warnings.append(
-                "检测到规则高频纹理候选；它可能影响视觉识别，但不能单独证明压缩、损坏或伪造"
-            )
-        if image_analysis is not None and image_analysis.transparent_ratio >= 0.95:
-            warnings.append("图片至少 95% 的像素完全透明，理解内容时请保留 Alpha 通道")
-        actions = [
-            NextAction(
-                tool="pixelprobe_get_frame",
-                reason="用 Agent 自身视觉理解原始画面；视频默认先看第 0 帧",
-                arguments={"media_path": str(path), "frame": 0} if info.media_type == "video"
-                else {"media_path": str(path)},
-            )
-        ]
-        pagination = None
-        if params.detail == "standard" and info.media_type == "video":
-            self._ensure_standard_budget(info)
-            scan = core.scan_media(path)
-            combined = [
-                {"category": "event", **event.to_dict()} for event in scan.events
-            ] + [
-                {"category": "anomaly", **anomaly} for anomaly in scan.anomalies
-            ]
-            page_items = combined[params.offset : params.offset + params.limit]
-            pagination = _page(len(combined), params.offset, len(page_items))
-            data.update({
-                "scan": {
-                    "effective_sample_every": scan.effective_sample_every,
-                    "frames_analyzed": scan.frames_analyzed,
-                    "representative_frames": [
-                        {"frame": frame, "time_seconds": timestamp}
-                        for frame, timestamp in zip(scan.sheet.frames, scan.sheet.times)
-                    ],
-                    "event_threshold_used": scan.event_threshold,
-                    "event_count": len(scan.events),
-                    "anomaly_count": len(scan.anomalies),
-                    "anomalies_truncated_at_source": scan.anomalies_truncated,
-                    "findings": page_items,
-                }
-            })
-            candidate_frames = sorted({
-                int(item["frame"] if "frame" in item else item["peak_frame"])
-                for item in page_items
-                if "frame" in item or "peak_frame" in item
-            })[:5]
-            if candidate_frames:
-                actions.append(NextAction(
-                    tool="pixelprobe_get_frame",
-                    reason="逐个查看候选帧，并结合相邻帧后再解释变化",
-                    arguments={"media_path": str(path), "frame": candidate_frames[0]},
-                ))
-            if scan.effective_sample_every > 1:
-                warnings.append(
-                    f"standard 扫描每 {scan.effective_sample_every} 帧采样一次；精确结论需缩小范围复查"
-                )
-        self._verify_media_unchanged(identity)
-        return _ensure_response_size(ToolEnvelope(
-            data=data, warnings=warnings, next_actions=actions, pagination=pagination,
-        ))
-
-    def get_frame(self, params: FrameInput) -> tuple[ToolEnvelope, bytes]:
-        path, identity = self._resolve_media(params.media_path)
-        source_info = core.get_media_info(path)
-        self._ensure_frame_budget(
-            source_info, params.crop, include_image_payload=True,
-        )
-        array, index, timestamp, info = core.get_frame(
-            path,
-            frame=params.frame,
-            time=params.time_seconds,
-            crop=_rect(params.crop),
-        )
-        native_image = None
-        visual_sample_semantics = "decoded_sample"
-        conversion_flags: list[str] = []
-        if info.media_type == "image":
-            metadata, engine_semantics, flags = _read_image_metadata(path)
-            native_image = _native_image_metadata_payload(metadata)
-            # core.get_frame 的图片分支返回既有 RGB8 计算帧；它是视觉展示值，
-            # 非 RGB8 原生图会经过显式转换，不能声称为 stored/decoded 原样本。
-            visual_sample_semantics = engine_semantics
-            conversion_flags = list(flags)
-            if metadata.has_alpha:
-                array = _read_alpha_visual_frame(path, _rect(params.crop))
-                if metadata.mode == "RGBA" and metadata.dtype == "uint8":
-                    visual_sample_semantics = "decoded_rgba8"
-                    conversion_flags = ["VISUAL_ALPHA_PRESERVED"]
-                else:
-                    visual_sample_semantics = "display_rgba8"
-                    conversion_flags = [
-                        "DISPLAY_RGBA8_CONVERSION",
-                        "NATIVE_IMAGE_PRESERVED",
-                        "VISUAL_ALPHA_PRESERVED",
-                    ]
-        png = _encode_png(array)
-        encoded_base64_bytes = ((len(png) + 2) // 3) * 4
-        if encoded_base64_bytes > self.config.max_image_bytes:
-            raise ValueError(
-                f"编码后的 MCP PNG 载荷为 {encoded_base64_bytes} 字节，超过限制 "
-                f"{self.config.max_image_bytes}；请提供 crop 分区查看。服务不会静默缩放"
-            )
-        self._verify_media_unchanged(identity)
-        response = ToolEnvelope(
-            data={
-                "path": str(path), "media_type": info.media_type,
-                "frame": index, "time_seconds": timestamp,
-                "source_width": info.width, "source_height": info.height,
-                "returned_width": int(array.shape[1]),
-                "returned_height": int(array.shape[0]),
-                "crop": params.crop.model_dump() if params.crop else None,
-                "image_mime_type": "image/png", "image_bytes": len(png),
-                "image_base64_bytes": encoded_base64_bytes,
-                "resized": False, "sample_semantics": visual_sample_semantics,
-                "native_image": native_image,
-                "conversion_flags": conversion_flags,
-            },
-            next_actions=[NextAction(
-                tool="pixelprobe_read_pixels",
-                reason="对视觉判断中的关键位置读取确定性 RGB/HSV/Lab/亮度",
-                arguments={"media_path": str(path), "frame": index} if index is not None
-                else {"media_path": str(path)},
-            )],
-        )
-        return _ensure_response_size(response), png
-
-    def read_pixels(self, params: PixelInput) -> ToolEnvelope:
-        path, identity = self._resolve_media(params.media_path)
-        native: np.ndarray | None = None
-        native_metadata: NativeImageMetadata | None = None
-        if detect_media_type(path) == "image":
-            if params.frame is not None or params.time_seconds is not None:
-                # 与 core.load_frame 的兼容错误语义保持一致，避免图片把 frame/time
-                # 静默忽略成第 0 帧。
-                array, index, timestamp, info = core.load_frame(
-                    path, frame=params.frame, time=params.time_seconds,
-                )
-            else:
-                array, native, native_metadata, info = _read_image_samples(path)
-                index = timestamp = None
-        else:
-            array, index, timestamp, info = core.load_frame(
-                path, frame=params.frame, time=params.time_seconds,
-            )
-        samples = core.inspect_pixels(
-            array, [(point.x, point.y) for point in params.points],
-            frame=index, time_seconds=timestamp,
-        )
-        sample_semantics = "decoded_sample"
-        stored_sample_metadata = None
-        pixels = [sample.model_dump(mode="json") for sample in samples]
-        if native is not None and native_metadata is not None:
-            sample_semantics = "decoded_rgb8" if native_metadata.mode == "RGB" and native_metadata.dtype == "uint8" else "display_rgb8"
-            stored_sample_metadata = _native_image_metadata_payload(native_metadata)
-            for item, point in zip(pixels, params.points):
-                item["stored_sample"] = _native_sample_value(native, point.x, point.y)
-        self._verify_media_unchanged(identity)
-        return _ensure_response_size(ToolEnvelope(data={
-            "path": str(path), "media_type": info.media_type,
-            "width": info.width, "height": info.height,
-            "frame": index, "time_seconds": timestamp,
-            "coordinate_space": "storage_pixels",
-            "sample_semantics": sample_semantics,
-            "stored_sample_metadata": stored_sample_metadata,
-            "pixels": pixels,
-        }))
-
-    def analyze_region(self, params: RegionInput) -> ToolEnvelope:
-        path, identity = self._resolve_media(params.media_path)
-        native_metadata: NativeImageMetadata | None = None
-        if detect_media_type(path) == "image":
-            if params.frame is not None or params.time_seconds is not None:
-                array, index, timestamp, info = core.load_frame(
-                    path, frame=params.frame, time=params.time_seconds,
-                )
-            else:
-                array, _native, native_metadata, info = _read_image_samples(path)
-                index = timestamp = None
-        else:
-            array, index, timestamp, info = core.load_frame(
-                path, frame=params.frame, time=params.time_seconds,
-            )
-        statistics = core.analyze_region(array, params.rect.as_tuple())
-        sample_semantics = "decoded_sample"
-        stored_sample_metadata = None
-        warnings: list[str] = []
-        if native_metadata is not None:
-            sample_semantics = "decoded_rgb8" if native_metadata.mode == "RGB" and native_metadata.dtype == "uint8" else "display_rgb8"
-            stored_sample_metadata = _native_image_metadata_payload(native_metadata)
-            if sample_semantics == "display_rgb8":
-                warnings.append(
-                    "区域统计基于显示 RGB8 转换；原生位深、Alpha、调色板或颜色模式未被当作 RGB 数值统计"
-                )
-        self._verify_media_unchanged(identity)
-        return _ensure_response_size(ToolEnvelope(data={
-            "path": str(path), "media_type": info.media_type,
-            "frame": index, "time_seconds": timestamp,
-            "coordinate_space": "storage_pixels",
-            "sample_semantics": sample_semantics,
-            "stored_sample_metadata": stored_sample_metadata,
-            "statistics": statistics.model_dump(mode="json"),
-        }, warnings=warnings))
-
-    def find_changes(self, params: ChangesInput) -> ToolEnvelope:
-        path, identity = self._resolve_media(params.media_path)
-        self._ensure_changes_budget(core.get_media_info(path), params)
-        result = core.detect_changes(
-            path,
-            point=(params.point.x, params.point.y) if params.point else None,
-            rect=_rect(params.rect), grid=_rect(params.grid), step=params.grid_step,
-            start_frame=params.start_frame, end_frame=params.end_frame,
-            start=params.start_seconds, end=params.end_seconds,
-            sample_every=params.sample_every,
-        )
-        records = result.records
-        if params.sort == "score":
-            records = sorted(records, key=lambda item: (-item.score, item.frame))
-        page_records = records[params.offset : params.offset + params.limit]
-        pagination = _page(len(records), params.offset, len(page_records))
-        top_frame = page_records[0].frame if page_records else None
-        actions = []
-        if top_frame is not None:
-            actions.append(NextAction(
-                tool="pixelprobe_get_frame",
-                reason="变化分数没有语义；查看候选帧及其前后帧后再判断",
-                arguments={"media_path": str(path), "frame": top_frame},
-            ))
-        self._verify_media_unchanged(identity)
-        return _ensure_response_size(ToolEnvelope(
-            data={
-                "path": str(path), "mode": result.mode,
-                "width": result.width, "height": result.height,
-                "frames_analyzed": result.frames_analyzed,
-                "frame_range": {
-                    "start": result.frame_range.start,
-                    "end_inclusive": result.frame_range.end,
-                    "sample_every": result.frame_range.sample_every,
-                },
-                "sort": params.sort,
-                "records": [record.to_dict() for record in page_records],
-            },
-            warnings=["变化分数只表示像素差异，不能单独证明对象移动或事件发生"],
-            next_actions=actions,
-            pagination=pagination,
-        ))
-
-    def generate_representation(self, params: GenerateInput) -> ToolEnvelope:
-        path, identity = self._resolve_media(params.media_path)
-        request = RepresentationRequest.model_validate(params.request)
-        source_info = core.get_media_info(path)
-        self._ensure_generation_budget(source_info, request.selection)
-        request = request.model_copy(update={
-            "source": MediaSource(
-                source_id=request.source.source_id,
-                kind="file",
-                uri=str(path),
-                declared_media_type=request.source.declared_media_type,
-            ),
-            "output": OutputRequest(
-                format="zarr" if request.output.format == "zarr" else "bundle",
-                include_preview=request.output.include_preview,
-                preview_config=request.output.preview_config,
-                metadata_policy=request.output.metadata_policy,
-            ),
-            "resources": MCP_GENERATE_RESOURCES,
+            "capabilities": items,
         })
-        name = params.output_name or f"result-{uuid.uuid4().hex}.bundle"
-        if not name.endswith(".bundle"):
-            name += ".bundle"
-        output = self.config.prepare_artifact_target(name)
-        options = {"cancellation": self.cancellation} if self.cancellation is not None else {}
-        if self.checkpoint_id is not None:
-            from pixelprobe_mcp.config import PathAccessError, _is_reparse_point
-            root = self.config.checkpoint_directory(self.checkpoint_id, create=not self.resume)
-            for name in ("cache", "checkpoint.json"):
-                target = root / name
-                if target.is_symlink() or _is_reparse_point(target):
-                    raise PathAccessError("checkpoint 内容不能是链接或重解析点")
-            cache = root / "cache"
-            if cache.exists():
-                # 缓存内部条目也不能通过链接跳出受管目录。
-                import os
-                for directory, directories, files in os.walk(cache, followlinks=False):
-                    for name in directories + files:
-                        target = Path(directory) / name
-                        if target.is_symlink() or _is_reparse_point(target):
-                            raise PathAccessError("checkpoint 缓存内容不能是链接或重解析点")
-            options.update(cache_root=root / "cache", checkpoint_path=root / "checkpoint.json")
-            if self.resume:
-                options["resume_from"] = root / "checkpoint.json"
-        result = pixelprobe.generate(request, output_path=output, **options)
-        if result.bundle is None:
-            raise RuntimeError("生成完成但没有返回 Bundle")
-        self._verify_media_unchanged(identity)
-        data_records = [
-            record.artifact_id for record in result.bundle.manifest.artifacts
-            if record.kind == "data"
-        ]
-        return _ensure_response_size(ToolEnvelope(
-            data={
-                "bundle_path": str(result.bundle.root),
-                "bundle_id": result.bundle.manifest.bundle_id,
-                "schema_version": result.bundle.manifest.schema_version,
-                "plan_id": result.plan.plan_id,
-                "decode_passes": result.decode_passes,
-                "source_frames_decoded": getattr(result, "source_frames_decoded", None),
-                "frames_converted": getattr(result, "frames_converted", None),
-                "frames_stored": getattr(result, "frames_stored", None),
-                "artifact_count": len(result.bundle.manifest.artifacts),
-                "data_artifact_ids": data_records,
-            },
-            next_actions=[NextAction(
-                tool="pixelprobe_read_artifact",
-                reason="读取正式数值时按轴选择分页，Preview 不能替代 DataArtifact",
-                arguments={
-                    "bundle_path": str(result.bundle.root),
-                    "artifact_id": data_records[0] if data_records else "",
-                },
-            )],
-        ))
 
-    def evidence(self, params: EvidenceInput) -> ToolEnvelope:
-        path, identity = self._resolve_media(params.media_path)
-        name = params.output_name or f"evidence-{uuid.uuid4().hex}.bundle"
-        if not name.endswith(".bundle"):
-            name += ".bundle"
-        output = self.config.prepare_artifact_target(name)
-        result = analyze_evidence(
-            path, output_path=output, jpeg_quality=params.jpeg_quality,
-            block_size=params.block_size,
-            c2pa_trust_anchors_pem=params.c2pa_trust_anchors_pem,
+    def run_capability(
+        self, params: CapabilityInput,
+    ) -> tuple[ToolEnvelope, list[tuple[str, bytes]]]:
+        try:
+            item = capability(params.capability)
+        except KeyError as exc:
+            names = "、".join(sorted(c.name for c in all_capabilities()))
+            raise McpInputError(f"未知能力；可用：{names}") from exc
+        identities: list[FileIdentity] = []
+        media: Path
+        if not item.needs_media:
+            if params.media_path:
+                raise McpInputError(f"{item.name} 不接受 media_path")
+            media = Path(".")
+        elif item.name == "validate":
+            if not params.media_path:
+                raise McpInputError("validate 需要 media_path 指向结果包目录")
+            media = self.config.resolve_directory(params.media_path)
+        else:
+            if not params.media_path:
+                raise McpInputError(f"{item.name} 需要 media_path")
+            media, identity = self._resolve_media(params.media_path)
+            identities.append(identity)
+        reference = None
+        if item.name == "compare_media":
+            if not params.reference_path:
+                raise McpInputError("compare_media 需要 reference_path")
+            reference, reference_identity = self._resolve_media(params.reference_path)
+            identities.append(reference_identity)
+        elif params.reference_path:
+            raise McpInputError("只有 compare_media 接受 reference_path")
+        output_path = None
+        if item.writes_bundle:
+            name = params.output_name or f"{item.name}-{uuid.uuid4().hex}.bundle"
+            if not name.endswith(".bundle"):
+                name += ".bundle"
+            output_path = self.config.prepare_artifact_target(name)
+        address = parse_address(params.at, params.refs)
+        is_media = item.needs_media and item.name != "validate"
+        info = core.get_media_info(media) if is_media else None
+        index = None
+        if info is not None and info.media_type == "video":
+            index = media_sessions().index_for(media)
+        if info is not None:
+            self._ensure_budget(item, info, address, params.options, index)
+        settings: dict[str, Any] = {}
+        if item.name == "generate":
+            settings["resources"] = MCP_GENERATE_RESOURCES
+        outcome = item.invoke(
+            media, address, params.options,
+            index=index, reference=reference, output_path=output_path,
             cancellation=self.cancellation,
+            settings={**settings, **({"thumb_budget": MCP_INDEX_THUMB_BUDGET_BYTES}
+                                     if item.name == "index_build" else {})},
         )
-        self._verify_media_unchanged(identity)
-        report = dict(result.report)
-        metadata = dict(report.get("metadata") or {})
-        exif = metadata.pop("exif", {})
-        metadata["exif_fields"] = sorted(exif)[:100]
-        report["metadata"] = metadata
-        warnings = ["证据工具只报告可复核线索和适用边界，不自动判定媒体真伪"]
-        if report.get("c2pa", {}).get("status") == "unavailable":
-            reason = report["c2pa"].get("reason", "验证能力不可用")
-            warnings.append(f"C2PA 未完成检查：{reason}")
-        return _ensure_response_size(ToolEnvelope(
-            data=report,
-            warnings=warnings,
-            next_actions=[NextAction(
-                tool="pixelprobe_list_artifacts",
-                reason="查看 ELA、噪声、边缘热力图和结构化证据 Artifact",
-                arguments={"bundle_path": str(result.bundle.root)},
-            )],
-        ))
+        for identity in identities:
+            self._verify_media_unchanged(identity)
+        data = dict(outcome.data)
+        warnings = list(outcome.warnings)
+        if item.name in SEMANTIC_WARNINGS:
+            warnings.insert(0, SEMANTIC_WARNINGS[item.name])
+        if item.name == "info" and info is not None:
+            self._enrich_info(media, info, data, warnings)
+        elif item.name == "evidence" and isinstance(data.get("metadata"), dict):
+            # 完整 EXIF 可能很大（如厂商私有字段），只返回字段名；完整内容在结果包中
+            metadata = dict(data["metadata"])
+            metadata["exif_fields"] = sorted(metadata.pop("exif", None) or {})[:100]
+            data["metadata"] = metadata
+        elif (item.name in {"frame", "pixel", "region"} and info is not None
+              and info.media_type == "image" and params.options.get("sample") != "native"):
+            self._warn_display_conversion(info, warnings)
+        images: list[tuple[str, bytes]] = []
+        if params.images and outcome.images:
+            data["images"] = []
+            for name, factory in outcome.images.items():
+                rendered = self._render_image(item.name, name, factory(), data, outcome, params)
+                images.append((name, rendered.png))
+                data["images"].append({"name": name, "width": rendered.width,
+                                       "height": rendered.height, **rendered.meta})
+        if outcome.refs:
+            data["refs"] = dict(outcome.refs)
+        if item.writes_bundle and "bundle" in outcome.artifacts:
+            data["bundle_path"] = str(outcome.artifacts["bundle"].root)
+        pagination = _paginate(data, params.offset, params.limit)
+        response = ToolEnvelope(
+            data=data, warnings=warnings, pagination=pagination,
+            next_actions=self._next_actions(item, media, outcome),
+        )
+        return _ensure_response_size(response), images
 
-    def workflow(self, params: WorkflowInput) -> ToolEnvelope:
-        from pixelprobe.workflows import run_workflow
-        path, identity = self._resolve_media(params.media_path)
-        reference, reference_identity = (
-            self._resolve_media(params.reference_path) if params.reference_path else (None, None)
+    def _enrich_info(self, media: Path, info: MediaInfo, data: dict, warnings: list[str]) -> None:
+        if detect_media_type(media) == "image":
+            with ImageReader() as reader:
+                reader.open(media)
+                analysis = reader.get_content_analysis()
+                data["image_samples"] = {
+                    "native": _native_image_metadata_payload(reader.get_native_metadata()),
+                    "engine_sample_semantics": reader.engine_sample_semantics(),
+                    "engine_conversion_flags": list(reader.engine_conversion_flags()),
+                }
+            data["image_analysis"] = _image_content_analysis_payload(analysis)
+            data["flags"] = _image_analysis_flags(analysis)
+            if analysis.pattern_assessment == "candidate":
+                warnings.append("检测到规则高频纹理候选；它可能影响视觉识别，但不能单独证明压缩、损坏或伪造")
+            return
+        index = media_sessions().index_for(media)
+        if index is None:
+            data["index"] = {"status": "missing",
+                             "hint": "长视频可先 pixelprobe_index build（wait=false），之后整帧变化检测直接查表"}
+            return
+        segments = index.segments
+        data["index"] = {"status": "ready", **index.summary(), "segments": segments}
+        data["refs"] = {
+            f"seg{n}": f"f={item['start_frame']}..{item['end_frame']}"
+            for n, item in enumerate(segments, start=1)
+        }
+
+    @staticmethod
+    def _warn_display_conversion(info: MediaInfo, warnings: list[str]) -> None:
+        """透明或调色板图片的显示 RGB8 不等于存储样本，需明确告知（只看已读出的模式，不重新打开图片）。"""
+        mode = info.color_mode or ""
+        has_alpha = "A" in mode
+        if has_alpha or mode == "P":
+            warnings.append(
+                f"数值与预览来自显示 RGB8 转换（存储模式 {mode}，"
+                f"{'含 Alpha' if has_alpha else '调色板索引'}）；预览不保留透明度。"
+                "需要存储样本请用 pixelprobe_measure what=pixel options.sample=native"
+            )
+
+    def _render_image(self, cap: str, name: str, array: np.ndarray, data: dict,
+                      outcome: Outcome, params: CapabilityInput):
+        x_axis = y_axis = None
+        grid = False
+        title = f"{cap}:{name}"
+        height, width = array.shape[:2]
+        if cap in {"frame", "region", "reduce", "compare"} or name in {"flow", "magnitude"}:
+            # 刻度标原始存储坐标：裁剪/区域图从其左上角开始计
+            x0, y0 = 0, 0
+            if cap == "region":
+                x0, y0 = outcome.artifacts["rect"][:2]
+            else:
+                rect = data.get("crop") if cap == "frame" else data.get("rect")
+                if isinstance(rect, dict):
+                    x0, y0 = rect["x"], rect["y"]
+            x_axis = Axis("x", width, offset=x0)
+            y_axis = Axis("y", height, offset=y0)
+            # cell 网格按整幅画面划分，只在未裁剪的整幅图上叠加
+            grid = params.grid and (x0, y0) == (0, 0) and cap in {"frame", "reduce", "compare"}
+            if data.get("frame") is not None:
+                title = f"{cap} f={data['frame']}"
+        elif cap in {"xt", "yt"}:
+            x_axis = Axis("x" if cap == "xt" else "y", width)
+            y_axis = frame_axis(data.get("frames", list(range(height))))
+            title = f"{cap} {'row' if cap == 'xt' else 'col'}={data.get('fixed_coordinate')}"
+        elif cap == "track" and name == "follow":
+            # 横轴：相对跟踪点的水平偏移；纵轴：帧号
+            x_axis = Axis("dx", width, offset=-(width // 2))
+            y_axis = frame_axis(data.get("frames", list(range(height))))
+            title = "track follow"
+        elif cap == "track":
+            x_axis, y_axis = Axis("x", width), Axis("y", height)
+            title = f"track path f={data.get('start_frame')}..{data.get('end_frame')}"
+        elif cap == "timeline":
+            x_axis = frame_axis(data.get("frames", list(range(width))))
+            y_axis = Axis("point", height, label=lambda i: f"P{i + 1}")
+        return annotate(
+            array, x_axis=x_axis, y_axis=y_axis, grid=grid, title=title,
+            max_side=params.max_side, max_bytes=self.config.max_image_bytes,
         )
-        name = params.output_name or f"workflow-{uuid.uuid4().hex}.bundle"
-        if not name.endswith(".bundle"):
-            name += ".bundle"
-        output = self.config.prepare_artifact_target(name)
-        result = run_workflow(path, reference_path=reference, output_path=output,
-                              options=params.options,
-                              cancellation=self.cancellation)
-        self._verify_media_unchanged(identity)
-        if reference_identity is not None:
-            self._verify_media_unchanged(reference_identity)
-        return _ensure_response_size(ToolEnvelope(
-            data=result.report, warnings=result.report["limitations"],
-            next_actions=[NextAction(tool="pixelprobe_list_artifacts",
-                                     reason="分页读取正式数值、差异预览和覆盖范围",
-                                     arguments={"bundle_path": str(result.bundle.root)})],
-        ))
+
+    @staticmethod
+    def _next_actions(item: Capability, media: Path, outcome: Outcome) -> list[NextAction]:
+        actions: list[NextAction] = []
+        if "match1" in outcome.refs:
+            actions.append(NextAction(
+                tool="pixelprobe_look",
+                reason="搜索结果只是数值候选；用 @match1 查看第一个区间的画面",
+                arguments={"media_path": str(media), "view": "sheet", "at": "@match1"},
+            ))
+        if "event1" in outcome.refs:
+            actions.append(NextAction(
+                tool="pixelprobe_look",
+                reason="变化分数没有语义；用 @event1 查看该事件前后的网格画面",
+                arguments={"media_path": str(media), "view": "sheet", "at": "@event1"},
+            ))
+        if item.writes_bundle:
+            bundle = outcome.artifacts.get("bundle")
+            if bundle is not None:
+                actions.append(NextAction(
+                    tool="pixelprobe_bundle",
+                    reason="分页列出结果包中的正式数值与预览",
+                    arguments={"action": "list", "bundle_path": str(bundle.root)},
+                ))
+        return actions
+
+    # ---------------- 结果包读取 ----------------
 
     def list_artifacts(self, params: BundleListInput) -> ToolEnvelope:
         root = self.config.resolve_directory(params.bundle_path)
@@ -983,19 +637,19 @@ class PixelProbeService:
             actions: list[NextAction] = []
             if params.selection is None:
                 actions.append(NextAction(
-                    tool="pixelprobe_read_artifact",
+                    tool="pixelprobe_bundle",
                     reason="按 axes 顺序提供 selection 后读取有限数量正式数值",
                     arguments={
+                        "action": "read",
                         "bundle_path": str(root), "artifact_id": params.artifact_id,
                         "selection": [
-                            {"start": 0, "stop": min(axis.length, 1)}
-                            for axis in tensor.axes
+                            {"start": 0, "stop": min(axis.length, 1)} for axis in tensor.axes
                         ],
                     },
                 ))
             else:
                 if len(params.selection) != len(tensor.data.shape):
-                    raise ValueError(
+                    raise McpInputError(
                         f"selection 需要 {len(tensor.data.shape)} 个轴，实际 {len(params.selection)}"
                     )
                 selection: list[slice | int] = []
@@ -1007,11 +661,11 @@ class PixelProbeService:
                     start = 0 if item.start is None else item.start
                     stop = length if item.stop is None else item.stop
                     if start > stop or stop > length:
-                        raise ValueError(f"第 {axis} 轴切片必须满足 0 <= start <= stop <= {length}")
+                        raise McpInputError(f"第 {axis} 轴切片必须满足 0 <= start <= stop <= {length}")
                     selection.append(slice(start, stop, item.step))
                     count *= len(range(start, stop, item.step))
                 if count > params.max_values:
-                    raise ValueError(
+                    raise McpInputError(
                         f"选择包含 {count} 个标量，超过 max_values={params.max_values}；请缩小切片"
                     )
                 array = tensor.data.read(tuple(selection))
@@ -1019,9 +673,7 @@ class PixelProbeService:
                 data["selected_shape"] = list(array.shape)
                 data["value_count"] = int(array.size)
                 if np.iscomplexobj(array):
-                    data["values"] = {
-                        "real": array.real.tolist(), "imag": array.imag.tolist(),
-                    }
+                    data["values"] = {"real": array.real.tolist(), "imag": array.imag.tolist()}
                 else:
                     data["values"] = array.tolist()
             warnings = []
@@ -1030,9 +682,7 @@ class PixelProbeService:
                     "当前为 metadata 验证：已检查结构和文件大小，未重新计算全部 SHA-256；"
                     "需要完整内容完整性校验时请以 verify='full' 重试"
                 )
-            return _ensure_response_size(ToolEnvelope(
-                data=data, warnings=warnings, next_actions=actions,
-            ))
+            return _ensure_response_size(ToolEnvelope(data=data, warnings=warnings, next_actions=actions))
         finally:
             close = getattr(tensor.data, "close", None)
             if callable(close):

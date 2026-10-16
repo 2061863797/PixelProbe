@@ -22,6 +22,8 @@ _VIDEO_EXTS = {
     ".mp4", ".mkv", ".avi", ".mov", ".webm", ".m4v", ".mpg", ".mpeg",
     ".wmv", ".flv", ".ts",
 }
+# 只按扩展名判断、不读文件的场景（如 MCP 主进程选择能力）使用
+VIDEO_EXTENSIONS = frozenset(_VIDEO_EXTS)
 
 
 def detect_media_type(path: Path) -> Literal["image", "video"]:

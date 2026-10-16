@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pixelprobe
 from conftest import run_json
 from pixelprobe import core
 
@@ -24,7 +25,7 @@ def test_compat_h264_yuv420p_tolerance(compat_video: Path) -> None:
 
 def test_compat_pixel_cli(compat_video: Path) -> None:
     data = run_json(
-        "pixel", compat_video, "--frame", 9, "--point", "8,8", "--json"
+        "pixel", compat_video, "--at", "f=9 point(8,8)", "--json"
     )["data"]
     rgb = data["pixels"][0]["rgb"]
     assert abs(rgb["r"] - 200) <= 6
@@ -45,12 +46,15 @@ def test_timeline_decodes_video_once(test_video: Path, monkeypatch) -> None:
         return original(self, *args, **kwargs)
 
     monkeypatch.setattr(vr_module.VideoReader, "iter_frame_packets", counting_iter)
-    result = core.extract_timelines(
+    from pixelprobe.request_builders import timeline_matrix, timeline_request
+    request, _, _, _ = timeline_request(
         test_video,
         grid=(0, 0, 32, 32),
         step=2,  # 256 个采样点
     )
-    assert result.matrix.shape[0] == 256
+    result = pixelprobe.generate(request)
+    assert timeline_matrix(result.request_tensors[0][0]).shape[0] == 256
+    assert result.decode_passes == 1
     assert calls["n"] == 1, (
         f"应只解码一遍，实际 iter_frame_packets 调用 {calls['n']} 次"
     )

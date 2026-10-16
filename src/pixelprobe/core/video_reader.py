@@ -149,6 +149,17 @@ class VideoReader:
     # ---------- 基础属性 ----------
 
     @property
+    def container(self) -> "av.container.InputContainer":
+        """已打开的 PyAV 容器（供只读的码流结构分析使用）。"""
+        assert self._container is not None
+        return self._container
+
+    @property
+    def video_stream(self) -> "av.video.stream.VideoStream":
+        assert self._stream is not None
+        return self._stream
+
+    @property
     def time_base(self) -> Fraction:
         assert self._stream is not None
         return self._stream.time_base or Fraction(1, 90000)

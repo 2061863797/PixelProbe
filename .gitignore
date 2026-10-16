@@ -16,10 +16,11 @@ tests/assets/
 *.checkpoint.json
 evaluations/fixtures/
 
-# 本机开发工具配置
-.mcp.json
+# 本机开发工具配置（插件目录内的 .mcp.json 与 Codex 市场文件需要随仓库发布）
+/.mcp.json
 .codegraph/
-.agents/
+/.agents/*
+!/.agents/plugins/
 .npm-cache/
 
 # 本地架构设计文档；核心数据模型规范参与契约测试，必须随仓库发布

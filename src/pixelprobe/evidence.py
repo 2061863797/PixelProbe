@@ -77,14 +77,28 @@ def _c2pa(path: Path, *, trust_anchors_pem: str | None = None) -> dict[str, Any]
     return _json_safe(verify_c2pa(path, trust_anchors_pem=trust_anchors_pem))
 
 
+# 逐元素运算按行带分批，避免整图 float64/int16 临时数组；结果与整图计算逐位一致
+_BAND_ROWS = 256
+
+
+def _bands(height: int):
+    for y0 in range(0, height, _BAND_ROWS):
+        yield y0, min(y0 + _BAND_ROWS, height)
+
+
 def _colorize(values: np.ndarray) -> np.ndarray:
-    finite = np.nan_to_num(values.astype(np.float32), nan=0.0, posinf=0.0, neginf=0.0)
+    finite = np.nan_to_num(values.astype(np.float32, copy=False), nan=0.0, posinf=0.0, neginf=0.0)
     high = float(np.percentile(finite, 99.0)) if finite.size else 0.0
-    scaled = np.zeros(finite.shape, dtype=np.uint8)
-    if high > 0:
-        scaled = np.clip(finite / high * 255.0, 0, 255).astype(np.uint8)
-    green = np.clip(255 - np.abs(scaled.astype(np.int16) - 128) * 2, 0, 255)
-    return np.stack((scaled, green.astype(np.uint8), 255 - scaled), axis=-1)
+    out = np.empty((*finite.shape, 3), dtype=np.uint8)
+    for y0, y1 in _bands(finite.shape[0]):
+        scaled = np.zeros(finite[y0:y1].shape, dtype=np.uint8)
+        if high > 0:
+            scaled = np.clip(finite[y0:y1] / high * 255.0, 0, 255).astype(np.uint8)
+        green = np.clip(255 - np.abs(scaled.astype(np.int16) - 128) * 2, 0, 255)
+        out[y0:y1, :, 0] = scaled
+        out[y0:y1, :, 1] = green.astype(np.uint8)
+        out[y0:y1, :, 2] = 255 - scaled
+    return out
 
 
 def _block_candidates(
@@ -116,17 +130,27 @@ def _ela(rgb: np.ndarray, *, quality: int) -> tuple[np.ndarray, np.ndarray, dict
     buffer = io.BytesIO()
     Image.fromarray(rgb).save(buffer, format="JPEG", quality=quality, optimize=False)
     buffer.seek(0)
-    recompressed = np.asarray(Image.open(buffer).convert("RGB"), dtype=np.int16)
-    difference = np.abs(rgb.astype(np.int16) - recompressed)
-    maximum = int(difference.max(initial=0))
+    with Image.open(buffer) as decoded:
+        recompressed = np.asarray(decoded.convert("RGB"), dtype=np.uint8)
+    raw_diff = np.empty_like(rgb)
+    maximum = 0
+    total = 0
+    for y0, y1 in _bands(rgb.shape[0]):
+        band = np.abs(rgb[y0:y1].astype(np.int16) - recompressed[y0:y1].astype(np.int16))
+        raw_diff[y0:y1] = band
+        maximum = max(maximum, int(band.max(initial=0)))
+        total += int(band.sum(dtype=np.int64))  # 整数和精确，与整图 mean 的 float64 求和一致
+    del recompressed
     preview = np.zeros_like(rgb, dtype=np.uint8)
     if maximum:
-        preview = np.clip(difference * (255.0 / maximum), 0, 255).astype(np.uint8)
-    raw_diff = difference.astype(np.uint8)
+        for y0, y1 in _bands(rgb.shape[0]):
+            preview[y0:y1] = np.clip(
+                raw_diff[y0:y1].astype(np.int16) * (255.0 / maximum), 0, 255,
+            ).astype(np.uint8)
     return raw_diff, preview, {
         "status": "completed", "jpeg_quality": quality,
         "max_absolute_difference": maximum,
-        "mean_absolute_difference": round(float(difference.mean()), 6),
+        "mean_absolute_difference": round(float(total / raw_diff.size), 6),
         "recompressed_size_bytes": len(buffer.getbuffer()),
         "limitations": [
             "ELA 对保存质量、原始压缩历史和高纹理区域敏感",
@@ -136,15 +160,21 @@ def _ela(rgb: np.ndarray, *, quality: int) -> tuple[np.ndarray, np.ndarray, dict
 
 
 def _noise(rgb: np.ndarray, *, block_size: int) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]:
-    blurred = np.asarray(
-        Image.fromarray(rgb).filter(ImageFilter.BoxBlur(1)), dtype=np.float32,
-    )
-    residual = np.mean(np.abs(rgb.astype(np.float32) - blurred), axis=2)
+    blurred = np.asarray(Image.fromarray(rgb).filter(ImageFilter.BoxBlur(1)), dtype=np.uint8)
+    residual = np.empty(rgb.shape[:2], dtype=np.float32)
+    for y0, y1 in _bands(rgb.shape[0]):
+        residual[y0:y1] = np.mean(
+            np.abs(rgb[y0:y1].astype(np.float32) - blurred[y0:y1].astype(np.float32)), axis=2,
+        )
+    del blurred
     heat, candidates = _block_candidates(residual, block_size=block_size)
+    mean_residual = round(float(residual.mean()), 6)
+    std_residual = round(float(residual.std()), 6)
+    del residual
     return heat, _colorize(heat), {
         "status": "completed", "block_size": block_size,
-        "mean_residual": round(float(residual.mean()), 6),
-        "std_residual": round(float(residual.std()), 6),
+        "mean_residual": mean_residual,
+        "std_residual": std_residual,
         "candidate_regions": candidates,
         "limitations": [
             "纹理、锐化、降噪、景深和局部压缩都会改变噪声残差",
@@ -154,20 +184,26 @@ def _noise(rgb: np.ndarray, *, block_size: int) -> tuple[np.ndarray, np.ndarray,
 
 
 def _edges(rgb: np.ndarray, *, block_size: int) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]:
-    gray = (
-        0.299 * rgb[..., 0].astype(np.float32)
-        + 0.587 * rgb[..., 1].astype(np.float32)
-        + 0.114 * rgb[..., 2].astype(np.float32)
-    )
-    gx = np.zeros_like(gray)
-    gy = np.zeros_like(gray)
-    gx[:, 1:] = np.abs(np.diff(gray, axis=1))
-    gy[1:, :] = np.abs(np.diff(gray, axis=0))
-    magnitude = np.hypot(gx, gy)
+    magnitude = np.empty(rgb.shape[:2], dtype=np.float32)
+    for y0, y1 in _bands(rgb.shape[0]):
+        top = max(y0 - 1, 0)  # 多取上方一行，保证带间纵向差分与整图一致
+        part = rgb[top:y1]
+        gray = (
+            0.299 * part[..., 0].astype(np.float32)
+            + 0.587 * part[..., 1].astype(np.float32)
+            + 0.114 * part[..., 2].astype(np.float32)
+        )
+        gx = np.zeros_like(gray)
+        gy = np.zeros_like(gray)
+        gx[:, 1:] = np.abs(np.diff(gray, axis=1))
+        gy[1:, :] = np.abs(np.diff(gray, axis=0))
+        magnitude[y0:y1] = np.hypot(gx, gy)[y0 - top:]
     heat, candidates = _block_candidates(magnitude, block_size=block_size)
+    mean_gradient = round(float(magnitude.mean()), 6)
+    del magnitude
     return heat, _colorize(heat), {
         "status": "completed", "block_size": block_size,
-        "mean_gradient": round(float(magnitude.mean()), 6),
+        "mean_gradient": mean_gradient,
         "candidate_regions": candidates,
         "limitations": [
             "自然物体轮廓、文字和高对比纹理会产生强边缘",

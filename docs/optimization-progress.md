@@ -1,8 +1,29 @@
 # 优化实施检查点
 
-## 当前状态：2026-10-16 2.0 重构阶段 7：发布候选（本地验收通过，待合并、打标签与发布）
+## 当前状态：2026-10-16 PixelProbe 2.0.0 已发布
 
 本节优先于下方历史检查点。
+
+- PR #1 合并到 main（合并提交 6375356，内容与验收过的 170fecf 逐行相同）；`v2.0.0` 标签触发发布工作流：
+  Linux 测试、构建、GitHub Release 全部成功（https://github.com/2061863797/PixelProbe/releases/tag/v2.0.0）。
+- 发行物：wheel SHA256 `1ef2a5e97062dfbc9e42b801909c657a548b7a71c4a94c7d94a3e6d755774b60`，
+  sdist SHA256 `bd4f50bf573b8c9a0deb074acfdd10f06ec0ae2861d05adacd1063317f236f6b`，与 SHA256SUMS.txt 一致。
+  与本地候选逐文件比较：145 个文件清单相同，122 个逐字节相同，23 个仅换行符不同（Linux 构建为 LF），
+  另有 RECORD 因此不同。
+- 真实标签验证（Windows，Python 3.12）：
+  - uvx 空缓存冷启动 46 秒、缓存后 2 秒，版本 2.0.0；以 `git+…@v2.0.0` 运行 `tests/test_distribution.py` 4 passed
+    （git 来源不能用 `--offline`，uv 需要联网确认标签，因此该轮为联网运行）；
+  - 按插件 `.mcp.json` 原样启动：10 个工具，media_roots 留空时只允许 `CLAUDE_PROJECT_DIR`，项目外文件被拒绝，
+    find 与 `@match1` 正常；
+  - Codex 从 GitHub 仓库安装市场与插件成功，5 个 Skill 出现；通过工具搜索可找到 10 个
+    `mcp__pixelprobe_plugin__*` 工具，日志确认服务正常响应 ListTools。测试后已卸载，config.toml 与备份一致。
+  - 发现用户本机 Codex 手动配置的 `pixelprobe` 服务（uvx 未带 `[mcp]`、未固定版本）启动失败，与插件无关；
+    建议删除该手动配置。
+- 未执行：Claude Code 内安装插件后的会话调用（本机 Claude Code 命令行登录已过期）；macOS 实机运行。
+
+## 历史状态：2026-10-16 2.0 重构阶段 7：发布候选
+
+
 
 - 版本号 2.0.0；新增 `docs/migration-2.0.md`；README 中英文更新定位与 2.0 新增；安装与 uvx 文档固定 v2.0.0。
 - 代码审核修复（b604e6f）后重新构建并重做全部本地检查，当前候选：`build/release-2.0.0-20261016b/`

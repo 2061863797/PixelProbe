@@ -102,7 +102,7 @@ PixelProbe 用确定性计算补上这些短板，并让每个数字都能追溯
 | 3 | 媒体会话、分层索引（见 [媒体索引](media-index.md)）、MCP 常驻工作进程 | 完成 |
 | 4 | 能力登记表与对等测试、精简后的 MCP 工具（见 [MCP 工具与后台任务](mcp-jobs.md)）、带刻度的图、结果编号 | 完成 |
 | 5 | `find` 搜索语言（见 [条件搜索](find.md)）、新切法（见 [新切法](slices.md)）、码流结构（见 [码流结构](streams.md)）、块效应与动画时长 | 完成 |
-| 6 | Claude Code 与 Codex 插件（见 [插件安装](plugins.md)） | 配置完成：两边校验与本地安装通过，`v2.0.0` 标签冷启动待发布后验证 |
-| 7 | 发布 2.0 与迁移文档 | 未开始 |
+| 6 | Claude Code 与 Codex 插件（见 [插件安装](plugins.md)） | Codex 从 GitHub 安装验收通过（Windows）；Claude Code 校验与启动命令验证通过，会话内调用未执行 |
+| 7 | 发布 2.0 与迁移文档（见 [迁移到 2.0](migration-2.0.md)） | 已发布 v2.0.0 |
 
 2.0 直接切换到新接口，不保留旧 CLI 参数和旧 MCP 工具别名；迁移对照表见发布时的 `docs/migration-2.0.md`。

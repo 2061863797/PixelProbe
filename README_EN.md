@@ -4,7 +4,18 @@
 
 **Analyze images and videos with frame-, time-, coordinate-, and pixel-level precision.**
 
-PixelProbe is a local command-line tool for image and video analysis. It can locate key changes in a video, extract exact frames, read pixel colors, calculate regional statistics, and turn long videos into timelines, spatiotemporal slices, and statistical images. Media files are always processed locally.
+PixelProbe fills the gaps in how AI analyzes images and videos: the AI understands what the picture shows, while PixelProbe measures, locates, and gathers forensic clues, returning verifiable frame numbers, timestamps, coordinates, pixel values, change intervals, and stream-structure evidence. It is also a complete local command-line tool, and it is available to AI assistants through MCP and Claude Code / Codex plugins. Media files are always processed locally.
+
+> **Upgrading from 1.x?** 2.0 uses a single `--at` option for time and location, and MCP is reduced to 10 tools; old options and tool names were removed. See the mapping tables in [docs/migration-2.0.md](docs/migration-2.0.md) (Chinese).
+
+## New in 2.0
+
+- **Unified addresses**: `--at "t=3s..5s rect(400,200,200,150)"`, `cell(C4)`, `@event1`, identical in the CLI and MCP ([docs/address.md](docs/address.md)).
+- **Query search**: `find "black | flash | freeze >= 0.5s | gap"`, and `"animation in rect(...)"` to time UI animations ([docs/find.md](docs/find.md)).
+- **Media index**: decode a long video once into a per-frame table, then answer whole-frame questions by lookup ([docs/media-index.md](docs/media-index.md)).
+- **New slices**: difference slices, adaptive time axes, point tracking with follow slices ([docs/slices.md](docs/slices.md)).
+- **Stream structure**: container tags, keyframe intervals, timestamp gaps, and bytes per second as forensic and quality clues ([docs/streams.md](docs/streams.md)).
+- **AI-oriented output**: images carry coordinate rulers and grids, results carry reusable names, and the plugin ships four scenario Skills ([docs/plugins.md](docs/plugins.md)).
 
 ## Features
 
@@ -27,7 +38,7 @@ PixelProbe is a local command-line tool for image and video analysis. It can loc
 Official releases contain the Python wheel and source archive only. They do not publish a standalone executable containing third-party native libraries such as FFmpeg. Install a pinned release with Python 3.11 or later:
 
 ```bash
-python -m pip install "pixelprobe[mcp,flow,storage,evidence] @ git+https://github.com/2061863797/PixelProbe.git@v1.1.0"
+python -m pip install "pixelprobe[mcp,flow,storage,evidence] @ git+https://github.com/2061863797/PixelProbe.git@v2.0.0"
 pixelprobe --version
 ```
 

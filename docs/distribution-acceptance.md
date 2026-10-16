@@ -26,7 +26,7 @@ PIXELPROBE_TEST_COMMAND 是测试启动器的 JSON 数组，不是产品配置�
 ```powershell
 $env:PIXELPROBE_TEST_COMMAND = ConvertTo-Json -Compress -InputObject @(
   "uvx", "--offline", "--python", "3.12", "--from",
-  "pixelprobe[mcp,flow,storage,evidence] @ file:///C:/候选目录/pixelprobe-1.1.0-py3-none-any.whl",
+  "pixelprobe[mcp,flow,storage,evidence] @ file:///C:/候选目录/pixelprobe-2.0.0-py3-none-any.whl",
   "pixelprobe"
 )
 python -m pytest tests/test_distribution.py

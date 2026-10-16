@@ -4,9 +4,21 @@
 
 **把图片与视频分析精确到帧、时间、坐标和像素。**
 
-PixelProbe 是一个本地图片与视频分析命令行工具。它可以定位视频中的关键变化、
-提取指定画面、读取像素颜色、统计区域特征，并把长视频转换成时间线、时空切片
-和统计图。媒体文件始终在本机处理。
+PixelProbe 补齐 AI 分析图片和视频的短板：AI 负责看懂画面内容，PixelProbe 负责测量、定位和取证——
+给出可核实的帧号、时间、坐标、像素数值、变化区间和码流线索。它同时是一个完整的本地命令行工具，
+并通过 MCP 和 Claude Code / Codex 插件提供给 AI 助手使用。媒体文件始终在本机处理。
+
+> **从 1.x 升级？** 2.0 统一用 `--at` 写时间与位置，MCP 精简为 10 个工具，旧参数与旧工具名均已删除。
+> 对照表见 [迁移到 2.0](docs/migration-2.0.md)。
+
+## 2.0 新增
+
+- **统一地址**：`--at "t=3s..5s rect(400,200,200,150)"`、`cell(C4)`、`@event1`，命令行与 MCP 写法相同（[地址写法](docs/address.md)）。
+- **条件搜索**：`find "black | flash | freeze >= 0.5s | gap"`、`"animation in rect(...)"` 测动画时长（[条件搜索](docs/find.md)）。
+- **媒体索引**：长视频一次解码建立每帧体检表，之后整帧问题直接查表（[媒体索引](docs/media-index.md)）。
+- **新切法**：差分切片、自适应时间轴、点跟踪与跟随切片（[新切法](docs/slices.md)）。
+- **码流结构**：容器标签、关键帧间隔、时间戳空隙、每秒码率等取证与质量线索（[码流结构](docs/streams.md)）。
+- **面向 AI 的输出**：图片带坐标刻度与网格，结果带编号可直接引用；插件内置录屏、长视频、质量、取证 4 个场景 Skill（[插件安装](docs/plugins.md)）。
 
 ## 主要功能
 
@@ -38,7 +50,7 @@ MCP 用户可先参考 [uvx 启动与更新指南](docs/uvx.md)，无需手动�
 使用 Python 3.11+ 安装固定版本；需要完整能力时选择对应 extra：
 
 ```bash
-python -m pip install "pixelprobe[mcp,flow,storage,evidence] @ git+https://github.com/2061863797/PixelProbe.git@v1.1.0"
+python -m pip install "pixelprobe[mcp,flow,storage,evidence] @ git+https://github.com/2061863797/PixelProbe.git@v2.0.0"
 pixelprobe --version
 ```
 

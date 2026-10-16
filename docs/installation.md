@@ -18,26 +18,26 @@ pixelprobe --version
 也可固定到发布标签直接从 GitHub 安装：
 
 ```bash
-python -m pip install "pixelprobe @ git+https://github.com/2061863797/PixelProbe.git@v1.1.0"
+python -m pip install "pixelprobe @ git+https://github.com/2061863797/PixelProbe.git@v2.0.0"
 ```
 
 按需安装可选能力：
 
 ```bash
 # 光流分析
-python -m pip install "pixelprobe[flow] @ git+https://github.com/2061863797/PixelProbe.git@v1.1.0"
+python -m pip install "pixelprobe[flow] @ git+https://github.com/2061863797/PixelProbe.git@v2.0.0"
 
 # Zarr 分块存储
-python -m pip install "pixelprobe[storage] @ git+https://github.com/2061863797/PixelProbe.git@v1.1.0"
+python -m pip install "pixelprobe[storage] @ git+https://github.com/2061863797/PixelProbe.git@v2.0.0"
 
 # MCP 服务
-python -m pip install "pixelprobe[mcp] @ git+https://github.com/2061863797/PixelProbe.git@v1.1.0"
+python -m pip install "pixelprobe[mcp] @ git+https://github.com/2061863797/PixelProbe.git@v2.0.0"
 ```
 
 完整安装可一次选择全部 extra：
 
 ```bash
-python -m pip install "pixelprobe[mcp,flow,storage,evidence] @ git+https://github.com/2061863797/PixelProbe.git@v1.1.0"
+python -m pip install "pixelprobe[mcp,flow,storage,evidence] @ git+https://github.com/2061863797/PixelProbe.git@v2.0.0"
 ```
 
 ## 从源码安装（开发者）

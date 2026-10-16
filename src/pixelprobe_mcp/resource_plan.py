@@ -1,6 +1,8 @@
 """只读取媒体头的执行预算；展示帧使用顺序解码成本，绝不按平均帧率换算。"""
 from __future__ import annotations
 
+from pixelprobe.utils.resource_budget import EVIDENCE_BYTES_PER_PIXEL
+
 MIB = 1024 * 1024
 RUNTIME_BYTES = 128 * MIB
 CONTROL_BYTES = 4 * MIB
@@ -10,7 +12,9 @@ def media_plan(operation, info, payload):
     pixels = info.width * info.height
     decoded, stored, full_scan = 1, 1, False
     # 原生解码、RGB 转换、数组副本及算子浮点工作区。
-    memory = pixels * (128 if operation in {"evidence", "inspect_media"} else 32)
+    # evidence 用实测峰值校准的系数；inspect_media 尚未实测，保持原保守值
+    per_pixel = {"evidence": EVIDENCE_BYTES_PER_PIXEL, "inspect_media": 128}.get(operation, 32)
+    memory = pixels * per_pixel
     disk = 0
     if operation == "generate_representation":
         from pixelprobe.engine.request import RepresentationRequest

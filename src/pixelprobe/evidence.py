@@ -23,7 +23,9 @@ from pixelprobe.domain.references import ProvenanceRef
 from pixelprobe.domain.tensor import MemoryArrayHandle, TensorField
 from pixelprobe.engine.execution import CancellationToken
 from pixelprobe.operators.base import ResourcePolicy
-from pixelprobe.utils.resource_budget import ResourceBudget, budget_scope, require_memory, check_active
+from pixelprobe.utils.resource_budget import (
+    EVIDENCE_BYTES_PER_PIXEL, ResourceBudget, budget_scope, require_memory, check_active,
+)
 
 
 @dataclass(slots=True, frozen=True)
@@ -455,7 +457,7 @@ def _analyze_evidence(
     source_format = None
     # 限制必须在 Pillow 完整解码前检查，不能被逐项失败处理吞掉。
     with Image.open(path) as header:
-        require_memory(header.width * header.height * 128)
+        require_memory(header.width * header.height * EVIDENCE_BYTES_PER_PIXEL)
     try:
         with Image.open(path) as source:
             source_format = (source.format or "").upper() or None

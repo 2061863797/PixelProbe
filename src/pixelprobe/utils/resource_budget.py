@@ -15,6 +15,10 @@ import numpy as np
 
 _current: ContextVar[ResourceBudget | None] = ContextVar("pixelprobe_budget", default=None)
 
+# 图片证据分析每像素的内存预算（字节）。实测峰值约 70 字节/像素（JPEG，32～128 块大小无差异），
+# 取 80 留约 14% 边际；CLI 预检与 MCP 执行计划共用此值，避免两侧估算再次不一致
+EVIDENCE_BYTES_PER_PIXEL = 80
+
 
 class ResourceBudget:
     def __init__(self, memory: int, disk: int | None, check=None):

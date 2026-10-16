@@ -16,7 +16,7 @@ from pixelprobe.domain.errors import MaterializationLimitExceededError
 from pixelprobe.engine.errors import ResourcePlanUnsatisfiableError, ExecutionCancelledError
 from pixelprobe.engine.execution import LocalExecutionContext, CheckpointRecord, encoded_state
 from pixelprobe.operators.base import ResourcePolicy
-from pixelprobe.utils.resource_budget import ResourceBudget, budget_scope
+from pixelprobe.utils.resource_budget import EVIDENCE_BYTES_PER_PIXEL, ResourceBudget, budget_scope
 from pixelprobe_mcp.config import ServerConfig
 from pixelprobe_mcp.resource_plan import media_plan, plan_operation
 from pixelprobe_mcp.worker import run_operation_sync, shutdown_worker_pools, WorkerError
@@ -50,7 +50,17 @@ def test_plan_reads_header_without_loading_pixels(tmp_path, monkeypatch):
     result = plan_operation(ServerConfig((tmp_path,), tmp_path / "out"),
                             "capability", {"capability": "evidence", "media_path": str(source)})
     assert result["full_resolution_pixels"] == 2048
-    assert result["analysis_memory_bytes"] == 2048 * 128
+    assert result["analysis_memory_bytes"] == 2048 * EVIDENCE_BYTES_PER_PIXEL
+
+
+def test_evidence_default_budget_accepts_three_megapixel_image(tmp_path):
+    """回归：实测峰值约 70 字节/像素，默认 256 MiB 预算应放行 2000×1500 的照片。"""
+    from pixelprobe.evidence import analyze_evidence
+    source = tmp_path / "photo.jpg"
+    Image.new("RGB", (2000, 1500), (40, 80, 120)).save(source, quality=90)
+    assert 2000 * 1500 * EVIDENCE_BYTES_PER_PIXEL <= 256 * 1024 * 1024
+    result = analyze_evidence(source, output_path=tmp_path / "bundle")
+    assert result is not None
 
 
 def test_local_plan_uses_required_prefix_not_entire_long_video():

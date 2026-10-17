@@ -3,6 +3,22 @@
 只记录各版本的发布状态、验收结果和仍然有效的结论；逐步实施过程见 Git 历史
 （`git log -p -- docs/optimization-progress.md` 可查看本文件 2026-10-17 前的完整检查点）。
 
+## 2.1.1（2026-10-17 已发布）
+
+- 发布：标签 `v2.1.1`（提交 2fe002e），https://github.com/2061863797/PixelProbe/releases/tag/v2.1.1 。
+  发布工作流完整测试 605 passed，构建与 Release 成功；推送 main 的 CI 在 Linux Python 3.11/3.12/3.13 全部通过。
+- 发行物（与 SHA256SUMS.txt 一致）：
+  - `pixelprobe-2.1.1-py3-none-any.whl` `6cafb713124d578ba7965f9f695166c62b84f23d8b25a5dbc5a13783506c9ba0`
+  - `pixelprobe-2.1.1.tar.gz` `440783f9229b7977e468f1d57267e003aaa2efe3fbde488bad9ec79989d26de5`
+- 修复 2.1.0 复测遗留问题：
+  - capabilities 清单把 MCP 工具的顶层参数（generate 的 `requests`、find 的 `query`）列在 `arguments` 下，
+    不再写在 `options` 里导致照清单调用必失败；对等测试核对清单与工具参数一致。
+  - 插件此前只安装 `pixelprobe[mcp]`，环境里没有 OpenCV、Zarr、C2PA，光流、Zarr 输出与 C2PA 验证对所有插件用户
+    都不可用；现改为 `pixelprobe[mcp,flow,storage,evidence]`，缺依赖提示同时说明 pip 与 uvx/插件两种方式。
+  - `pixelprobe_job` 不传 `job_id` 时给出可读错误，不再返回 pydantic 原始校验信息。
+- 真实标签验证（Windows，Python 3.12）：按插件的 extra 用 uvx 空缓存冷启动 49 秒（含从 GitHub 拉取构建）、
+  缓存后 2 秒；`doctor` healthy，cv2、zarr、c2pa 均可用。
+
 ## 2.1.0（2026-10-17 已发布）
 
 - 发布：标签 `v2.1.0`（提交 3dbd131），https://github.com/2061863797/PixelProbe/releases/tag/v2.1.0 。

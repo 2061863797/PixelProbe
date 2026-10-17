@@ -23,7 +23,7 @@
 | `forensics` | 取证线索：EXIF、C2PA、ELA/噪声/边缘、视频码流结构，不判定真伪 |
 
 前提：安装 [uv](https://docs.astral.sh/uv/)。插件用 `uvx` 下载并启动固定版本的 PixelProbe（含光流、Zarr、C2PA
-全部能力），首次启动需要联网（约 30 秒），之后复用缓存（约 2 秒）。
+全部能力），首次启动需要联网（约 1 分钟），之后复用缓存（约 2 秒）。
 
 **Claude Code**
 

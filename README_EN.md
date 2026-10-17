@@ -60,7 +60,7 @@ When an AI looks at images and videos, it is good at saying *what* is in the pic
 Requires Python 3.11 or later. Install the command-line tool with every capability:
 
 ```bash
-python -m pip install "pixelprobe[mcp,flow,storage,evidence] @ git+https://github.com/2061863797/PixelProbe.git@v2.1.0"
+python -m pip install "pixelprobe[mcp,flow,storage,evidence] @ git+https://github.com/2061863797/PixelProbe.git@v2.1.1"
 pixelprobe --version
 ```
 

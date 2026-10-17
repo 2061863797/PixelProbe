@@ -28,7 +28,9 @@ class FindOptions(BaseModel):
     settle_seconds: float = Field(
         default=0.2, gt=0, le=60, description="animation：静止持续多少秒算停稳",
     )
-    limit: int = Field(default=200, ge=1, le=2000, description="最多返回的结果区间数")
+    limit: int = Field(default=200, ge=1, le=2000, description=(
+        "计算时最多保留的结果区间数；MCP 中写在 options 里，与工具顶层的 limit（分页每页条数）不同"
+    ))
 
 
 def _find(call: Invocation) -> Outcome:
@@ -102,5 +104,5 @@ FIND = register(Capability(
     name="find", summary="按搜索语句定位时刻与区间（黑帧、闪帧、切换、停住、掉帧、相似帧、指标条件、区域变化）",
     run=_find, cli="find", mcp_tool="pixelprobe_find", mcp_selector="query",
     address=AddressRule(frozenset({"all", "range"})),
-    options=FindOptions,
+    options=FindOptions, mcp_arguments=("query",),
 ))

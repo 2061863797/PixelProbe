@@ -38,7 +38,8 @@ def test_every_server_launches_the_same_pinned_release() -> None:
         assert server["command"] == "uvx", name
         source = server["args"][server["args"].index("--from") + 1]
         assert source.endswith(f".git@v{version}"), (name, source)
-        assert source.startswith("pixelprobe[mcp] @ git+https://github.com/"), name
+        # 回归：插件只装 [mcp] 时环境里没有 OpenCV、Zarr、C2PA，光流与取证 Skill 必然失败
+        assert source.startswith("pixelprobe[mcp,flow,storage,evidence] @ git+https://github.com/"), name
         assert server["args"][-1] == "pixelprobe-mcp", name
     # Claude Code 按插件自动加命名空间；Codex 不加，服务名避开用户手动配置的 "pixelprobe"
     assert set(_servers()[".mcp.json"]) == {"pixelprobe"}

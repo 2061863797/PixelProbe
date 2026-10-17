@@ -106,6 +106,18 @@ def test_dependency_missing_error(motion_video: Path, monkeypatch) -> None:
     assert "pixelprobe[flow]" in (excinfo.value.hint or "")
 
 
+def test_real_missing_cv2_hint_covers_pip_and_uvx(monkeypatch) -> None:
+    """回归：插件经 uvx 启动时环境里没有 OpenCV，提示只写 pip 安装对这类用户无效。"""
+    import sys
+    from pixelprobe.utils.optional_deps import require_cv2
+    monkeypatch.setitem(sys.modules, "cv2", None)
+    with pytest.raises(DependencyMissingError) as excinfo:
+        require_cv2()
+    hint = excinfo.value.hint or ""
+    assert 'pip install "pixelprobe[flow]"' in hint
+    assert "--from" in hint and "pixelprobe[mcp,flow]" in hint
+
+
 def test_flow_cli_json_reports_threshold(motion_video: Path) -> None:
     """成功的 CLI 光流分析必须输出请求的阈值，而不是在组装结果时崩溃。"""
     completed = run_cli(

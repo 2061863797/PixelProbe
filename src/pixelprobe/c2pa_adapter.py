@@ -26,8 +26,10 @@ def verify_c2pa(path: Path, *, trust_anchors_pem: str | None = None) -> dict[str
     try:
         from c2pa import Context, Reader, C2paError
     except ImportError:
+        from pixelprobe.utils.optional_deps import install_hint
         return {"status": "unavailable", "verification_state": "not_checked",
-                "reason": "未安装可选依赖 c2pa-python", "policy": policy}
+                "reason": "未安装可选依赖 c2pa-python", "hint": install_hint("evidence"),
+                "policy": policy}
     except (OSError, RuntimeError) as exc:
         return {"status": "unavailable", "verification_state": "not_checked",
                 "reason": "C2PA 原生依赖无法加载", "error_type": type(exc).__name__, "policy": policy}

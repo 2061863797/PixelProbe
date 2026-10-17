@@ -86,6 +86,9 @@ class Capability:
     needs_media: bool = True
     image_names: tuple[str, ...] = ()
     writes_bundle: bool = False
+    # MCP 工具把这些 options 字段作为顶层参数接收（如 find 的 query、generate 的 requests），
+    # 能力清单据此把它们列在 arguments 而不是 options 下，对等测试核对工具确有同名参数
+    mcp_arguments: tuple[str, ...] = ()
 
     def invoke(
         self,

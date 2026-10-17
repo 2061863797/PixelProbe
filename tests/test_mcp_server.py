@@ -578,6 +578,19 @@ async def test_mcp_rejects_paths_outside_allowlist(
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize("action", ["get", "cancel", "result"])
+async def test_mcp_job_without_job_id_gives_readable_error(
+    mcp_session: ClientSession, action: str,
+) -> None:
+    """回归：不传 job_id 时曾直接返回 pydantic 原始校验错误。"""
+    result = await mcp_session.call_tool("pixelprobe_job", {"action": action})
+    assert result.isError is True
+    text = _text(result)
+    assert f"action={action} 需要 job_id" in text
+    assert "validation error" not in text and "pydantic" not in text
+
+
+@pytest.mark.anyio
 async def test_mcp_stdio_transport_handshake(tmp_path: Path) -> None:
     """真实 stdio 子进程只能输出 MCP 消息，并能完成初始化与工具调用。"""
     if executable := os.environ.get("PIXELPROBE_TEST_EXECUTABLE"):

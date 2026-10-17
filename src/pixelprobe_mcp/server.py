@@ -466,10 +466,15 @@ async def pixelprobe_index(
     annotations=READ_ONLY,
 )
 async def pixelprobe_job(
-    action: Literal["get", "cancel", "result"], job_id: str,
+    action: Literal["get", "cancel", "result"], job_id: str | None = None,
 ) -> Annotated[CallToolResult, ToolEnvelope]:
     from pixelprobe_mcp.jobs import Job, JobNotFoundError
     from pixelprobe_mcp.worker import WorkerError
+    # 设为可选只为给出可读错误：缺参数时框架会直接抛出 pydantic 原文
+    if not job_id:
+        raise ToolError(
+            f"参数无效：action={action} 需要 job_id（提交任务时 wait=false 返回的 32 位任务 ID）"
+        )
     try:
         job_id = JobIdInput(job_id=job_id).job_id
         manager = _job_manager()

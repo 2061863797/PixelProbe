@@ -4,7 +4,7 @@
       "command": "uvx",
       "args": [
         "--python", "3.12",
-        "--from", "pixelprobe[mcp] @ git+https://github.com/2061863797/PixelProbe.git@v2.1.0",
+        "--from", "pixelprobe[mcp,flow,storage,evidence] @ git+https://github.com/2061863797/PixelProbe.git@v2.1.1",
         "pixelprobe-mcp"
       ]
     }

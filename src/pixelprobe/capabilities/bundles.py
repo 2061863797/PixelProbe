@@ -363,7 +363,7 @@ QUALITY_OVERVIEW = register(Capability(
 GENERATE = register(Capability(
     name="generate", summary="执行 RepresentationRequest，生成可校验的正式结果包",
     run=_generate, cli="generate", mcp_tool="pixelprobe_bundle", mcp_selector="generate",
-    options=GenerateOptions, writes_bundle=True,
+    options=GenerateOptions, writes_bundle=True, mcp_arguments=("requests",),
 ))
 VALIDATE = register(Capability(
     name="validate", summary="校验结果包的结构、大小与 SHA-256",

@@ -231,8 +231,9 @@ class PixelProbeService:
     # ---------------- 能力调用 ----------------
 
     def capabilities(self) -> ToolEnvelope:
-        items = [
-            {
+        def describe(item: Capability) -> dict[str, Any]:
+            fields = item.options.model_json_schema().get("properties", {})
+            return {
                 "name": item.name, "summary": item.summary,
                 "tool": item.mcp_tool, "selector": item.mcp_selector,
                 "cli": f"pixelprobe {item.cli}",
@@ -241,12 +242,16 @@ class PixelProbeService:
                     "shapes": sorted(item.address.shapes),
                     "step": item.address.step,
                 },
-                "options": item.options.model_json_schema().get("properties", {}),
+                # 顶层参数：直接写在工具调用里，例如 pixelprobe_bundle(action="generate", requests=[...])
+                "arguments": {name: fields[name] for name in item.mcp_arguments},
+                # 其余计算参数放在工具的 options 对象里
+                "options": {name: value for name, value in fields.items()
+                            if name not in item.mcp_arguments},
                 "images": list(item.image_names),
                 "writes_bundle": item.writes_bundle,
             }
-            for item in all_capabilities()
-        ]
+
+        items = [describe(item) for item in all_capabilities()]
         return ToolEnvelope(data={
             "server": "pixelprobe_mcp",
             "transport": "stdio",

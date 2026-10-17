@@ -72,7 +72,7 @@ PixelProbe 只提供可复核的证据和数值。详见[定位与路线图](doc
 需要 Python 3.11+。命令行安装全部能力：
 
 ```bash
-python -m pip install "pixelprobe[mcp,flow,storage,evidence] @ git+https://github.com/2061863797/PixelProbe.git@v2.1.0"
+python -m pip install "pixelprobe[mcp,flow,storage,evidence] @ git+https://github.com/2061863797/PixelProbe.git@v2.1.1"
 pixelprobe --version
 ```
 

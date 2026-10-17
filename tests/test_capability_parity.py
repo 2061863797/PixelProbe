@@ -53,6 +53,32 @@ async def test_every_capability_has_cli_and_mcp_entry() -> None:
 
 
 @pytest.mark.anyio
+async def test_capability_listing_matches_tool_parameters() -> None:
+    """回归：generate 的 requests 是工具顶层参数，清单却写在 options 下，照清单调用第一次必失败。
+
+    清单里列为 arguments 的字段必须是工具的顶层参数；工具顶层参数若与某能力的计算参数同名，
+    也必须登记为 arguments，不能再出现在 options 下。
+    """
+    tools = {tool.name: tool for tool in await server.mcp.list_tools()}
+    service = PixelProbeService(ServerConfig((Path.cwd(),), Path.cwd() / ".parity-artifacts"))
+    listing = {item["name"]: item for item in service.capabilities().data["capabilities"]}
+    for item in all_capabilities():
+        parameters = set(tools[item.mcp_tool].inputSchema["properties"])
+        entry = listing[item.name]
+        assert set(entry["arguments"]) <= parameters, (item.name, set(entry["arguments"]) - parameters)
+        # 工具用来选能力的参数（如 pixelprobe_system 的 action）和所有工具共用的分页参数，
+        # 与同名计算参数含义不同，不算顶层化；同名的计算参数须在说明里写明区别
+        selector = SELECTOR_PARAMETER.get(item.mcp_tool)
+        shared = set(entry["options"]) & parameters & {selector, "offset", "limit"}
+        for name in shared - {selector}:
+            assert "options" in entry["options"][name].get("description", ""), (item.name, name)
+        lifted = set(entry["options"]) & parameters - {"options"} - shared
+        assert not lifted, f"{item.name} 的 {lifted} 是 {item.mcp_tool} 的顶层参数，应登记为 mcp_arguments"
+    assert "requests" in listing["generate"]["arguments"] and "requests" not in listing["generate"]["options"]
+    assert "query" in listing["find"]["arguments"]
+
+
+@pytest.mark.anyio
 async def test_every_mcp_selector_dispatches_to_its_capability(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

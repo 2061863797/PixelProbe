@@ -75,8 +75,9 @@ def _zarr():
     try:
         module = importlib.import_module("zarr")
     except ImportError as exc:
+        from pixelprobe.utils.optional_deps import install_hint
         raise ZarrDependencyMissingError(
-            "Zarr 存储需要安装 pixelprobe[storage]"
+            "Zarr 存储需要可选依赖 zarr，但当前环境未安装", hint=install_hint("storage"),
         ) from exc
     if int(module.__version__.split(".", 1)[0]) != 3:
         raise ZarrDependencyMissingError("PixelProbe 只支持 Zarr Python 3.x")

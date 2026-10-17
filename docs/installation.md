@@ -1,7 +1,7 @@
 # 安装与接入
 
 正式发行只提供 Python wheel 和源码包，不发布包含 PyAV、FFmpeg、OpenCV、C2PA 等第三方原生库的
-独立程序。下文命令中的 `v2.1.0` 是当前版本标签，升级时换成新标签即可。
+独立程序。下文命令中的 `v2.1.1` 是当前版本标签，升级时换成新标签即可。
 
 | 你要做什么 | 推荐方式 |
 |---|---|
@@ -22,8 +22,8 @@
 | `quality` | 质量与异常：模糊、块效应、冻结重复、闪烁、条纹、码率骤降 |
 | `forensics` | 取证线索：EXIF、C2PA、ELA/噪声/边缘、视频码流结构，不判定真伪 |
 
-前提：安装 [uv](https://docs.astral.sh/uv/)。插件用 `uvx` 下载并启动固定版本的 PixelProbe，
-首次启动需要联网（约 15 秒），之后复用缓存（约 2 秒）。
+前提：安装 [uv](https://docs.astral.sh/uv/)。插件用 `uvx` 下载并启动固定版本的 PixelProbe（含光流、Zarr、C2PA
+全部能力），首次启动需要联网（约 30 秒），之后复用缓存（约 2 秒）。
 
 **Claude Code**
 
@@ -67,7 +67,7 @@ Codex 插件的服务名特意用 `pixelprobe-plugin`，因为同名时手动配
       "command": "uvx",
       "args": [
         "--python", "3.12",
-        "--from", "pixelprobe[mcp] @ git+https://github.com/2061863797/PixelProbe.git@v2.1.0",
+        "--from", "pixelprobe[mcp,flow,storage,evidence] @ git+https://github.com/2061863797/PixelProbe.git@v2.1.1",
         "pixelprobe-mcp"
       ],
       "env": {"PIXELPROBE_MCP_ROOTS": "C:/Media"}
@@ -77,13 +77,13 @@ Codex 插件的服务名特意用 `pixelprobe-plugin`，因为同名时手动配
 ```
 
 - 把允许目录改成你的媒体目录；多个目录 Windows 用分号、macOS/Linux 用冒号分隔。服务拒绝读取其他路径。
-- 需要光流与 Zarr 时把 extra 改为 `[mcp,flow,storage]`。
+- 上面装的是全部能力（光流、Zarr、C2PA）；只需要基础功能时可改为 `[mcp]`，首次下载更小，但光流、Zarr 和 C2PA 验证不可用。
 - 内存默认按本机自动分配，详见[资源控制](resource-control.md)。
 
 连接客户端前可先用同一 `--from` 预热环境：
 
 ```bash
-uvx --python 3.12 --from "pixelprobe[mcp] @ git+https://github.com/2061863797/PixelProbe.git@v2.1.0" pixelprobe --version
+uvx --python 3.12 --from "pixelprobe[mcp,flow,storage,evidence] @ git+https://github.com/2061863797/PixelProbe.git@v2.1.1" pixelprobe --version
 ```
 
 预热成功只说明环境能启动，仍须在客户端里实际调用一次确认 MCP 连接正常。
@@ -93,7 +93,7 @@ uvx --python 3.12 --from "pixelprobe[mcp] @ git+https://github.com/2061863797/Pi
 需要 Python 3.11 或更高版本。固定到发布标签安装全部能力：
 
 ```bash
-python -m pip install "pixelprobe[mcp,flow,storage,evidence] @ git+https://github.com/2061863797/PixelProbe.git@v2.1.0"
+python -m pip install "pixelprobe[mcp,flow,storage,evidence] @ git+https://github.com/2061863797/PixelProbe.git@v2.1.1"
 pixelprobe --version
 ```
 
